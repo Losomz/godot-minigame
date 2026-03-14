@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godot WeChat Adapter"
+  short_description: "Port official Godot to WeChat Mini Game"
+  default_prompt: "Use $godot-wechat-minigame-adapter to port this fresh Godot 4.x checkout to WeChat Mini Game."
