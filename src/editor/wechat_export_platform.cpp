@@ -57,14 +57,14 @@ static String _describe_export_error(Error p_error) {
 static Ref<Texture2D> _load_wechat_logo_fallback() {
     const char *logo_paths[] = {
         "res://resources/assets/mini_game_icon.png",
-        "res://addons/toolkit-addons/resources/assets/mini_game_icon.png",
+        "res://addons/godot-minigame/resources/assets/mini_game_icon.png",
         nullptr
     };
 
     for (int i = 0; logo_paths[i] != nullptr; i++) {
         Ref<Texture2D> tex = ResourceLoader::get_singleton()->load(String::utf8(logo_paths[i]));
         if (tex.is_valid()) {
-            UtilityFunctions::print("[Toolkit Addons][WeChatExportPlatform] fallback logo loaded from ", String::utf8(logo_paths[i]));
+            UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] fallback logo loaded from ", String::utf8(logo_paths[i]));
             return tex;
         }
     }
@@ -73,7 +73,7 @@ static Ref<Texture2D> _load_wechat_logo_fallback() {
     Ref<Image> image = Image::create_empty(48, 48, false, Image::FORMAT_RGBA8);
     if (image.is_valid()) {
         image->fill(Color(0.16, 0.67, 0.35, 1.0));
-        UtilityFunctions::print("[Toolkit Addons][WeChatExportPlatform] using generated placeholder logo");
+        UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] using generated placeholder logo");
         return ImageTexture::create_from_image(image);
     }
 
@@ -349,7 +349,7 @@ String WeChatExportPlatform::_get_os_name() const {
 Ref<Texture2D> WeChatExportPlatform::_get_logo() const {
     static bool printed = false;
     if (!printed) {
-        UtilityFunctions::print("[Toolkit Addons][WeChatExportPlatform] _get_logo called, logo valid=", logo.is_valid());
+        UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] _get_logo called, logo valid=", logo.is_valid());
         printed = true;
     }
     return logo;
@@ -596,17 +596,17 @@ bool WeChatExportPlatform::_get_export_option_visibility(const Ref<EditorExportP
 
 WeChatExportPlatform::WeChatExportPlatform() {
 #ifdef EMBED_RESOURCES
-    UtilityFunctions::print("[Toolkit Addons][WeChatExportPlatform] ctor, EMBED_RESOURCES=ON");
+    UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] ctor, EMBED_RESOURCES=ON");
 #else
-    UtilityFunctions::print("[Toolkit Addons][WeChatExportPlatform] ctor, EMBED_RESOURCES=OFF");
+    UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] ctor, EMBED_RESOURCES=OFF");
 #endif
     logo = load_embedded_icon("resources/assets/mini_game_icon.png");
-    UtilityFunctions::print("[Toolkit Addons][WeChatExportPlatform] embedded logo valid=", logo.is_valid());
+    UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] embedded logo valid=", logo.is_valid());
     if (!logo.is_valid()) {
         logo = _load_wechat_logo_fallback();
     }
     if (!logo.is_valid()) {
-        UtilityFunctions::printerr("[Toolkit Addons][WeChatExportPlatform] logo is still null after all fallbacks");
+        UtilityFunctions::printerr("[GodotMinigame][WeChatExportPlatform] logo is still null after all fallbacks");
     }
 }
 

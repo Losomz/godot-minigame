@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你愿意为 Toolkit Addons 做贡献。
+感谢你愿意为 Godot Minigame 做贡献。
 
 ## 提交 Issue
 
@@ -41,7 +41,7 @@ scons platform=macos arch=universal target=template_release embed_resources=yes
 
 构建产物会安装到：
 
-- `demo/addons/toolkit-addons/bin/<platform>/`
+- `demo/addons/godot-minigame/bin/<platform>/`
 
 ## 模板分发与测试
 

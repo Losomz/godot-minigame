@@ -283,9 +283,9 @@ void MinigamePanel::download_and_extract_template(const String& filename) {
 void MinigamePanel::extract_template_and_finish(const String& filename, bool from_embedded) {
     set_status(String::utf8("正在解压模板..."));
 
-    // Check for GodotToolkit for extraction functionality
-    if (Engine::get_singleton()->has_singleton("GodotToolkit")) {
-        Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotToolkit");
+    // Check for GodotMinigame for extraction functionality
+    if (Engine::get_singleton()->has_singleton("GodotMinigame")) {
+        Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotMinigame");
         if (toolkit_core && toolkit_core->has_method("extract_template")) {
             Variant result = toolkit_core->call("extract_template", filename, "minigame");
 
@@ -298,11 +298,11 @@ void MinigamePanel::extract_template_and_finish(const String& filename, bool fro
             }
         } else {
             set_status(String::utf8("解压功能不可用"));
-            TOOLKIT_LOG("GodotToolkit extract_template method not available");
+            TOOLKIT_LOG("GodotMinigame extract_template method not available");
         }
     } else {
         set_status(String::utf8("核心系统不可用"));
-        TOOLKIT_LOG("GodotToolkit singleton not available");
+        TOOLKIT_LOG("GodotMinigame singleton not available");
     }
 }
 
@@ -339,8 +339,8 @@ void MinigamePanel::_on_template_download_finished(const String& filename, bool 
         set_status(String::utf8("模板下载完成，开始解压..."));
         // Determine if it was the test button that triggered this
         if (filename == "minigame4.3.0.3.tpz") { // A bit of a hack, but works for this test case
-             if (Engine::get_singleton()->has_singleton("GodotToolkit")) {
-                Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotToolkit");
+             if (Engine::get_singleton()->has_singleton("GodotMinigame")) {
+                Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotMinigame");
                 if (toolkit_core && toolkit_core->has_method("extract_template")) {
                     Variant extract_result = toolkit_core->call("extract_template", filename, "test_remote_minigame");
                     if (extract_result.get_type() == Variant::BOOL && bool(extract_result)) {

@@ -1,4 +1,4 @@
-# Custom build configuration for toolkit-addons
+# Custom build configuration for godot-minigame
 # This file allows for custom SCons configuration
 
 # Add any custom build options or configurations here

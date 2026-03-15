@@ -116,7 +116,7 @@ void SettingsPanel::create_interface() {
 	repo_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	repo_input->set_custom_minimum_size(Vector2(160, 0));
 	repo_input->set_stretch_ratio(1.6f);
-	repo_input->set_placeholder("toolkit-addons");
+	repo_input->set_placeholder("godot-minigame");
 	release_config_row->add_child(repo_input);
 
 	tag_label = memnew(Label);

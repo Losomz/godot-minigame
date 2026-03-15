@@ -14,11 +14,11 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="Toolkit Addons Demo"
+config/name="Godot Minigame Demo"
 run/main_scene="uid://crfhw3utblg8t"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/toolkit-addons/plugin.cfg", "res://addons/zylann.editor_debugger/plugin.cfg")
+enabled=PackedStringArray("res://addons/godot-minigame/plugin.cfg", "res://addons/zylann.editor_debugger/plugin.cfg")

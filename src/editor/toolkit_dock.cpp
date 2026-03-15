@@ -41,8 +41,8 @@ namespace toolkit
             TOOLKIT_LOG("ToolkitDock: Ready");
             
             // Ensure template system is initialized even if MinigamePanel is hidden
-            if (Engine::get_singleton()->has_singleton("GodotToolkit")) {
-                Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotToolkit");
+            if (Engine::get_singleton()->has_singleton("GodotMinigame")) {
+                Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotMinigame");
                 if (toolkit_core && toolkit_core->has_method("initialize_template_system")) {
                     toolkit_core->call("initialize_template_system");
                 }

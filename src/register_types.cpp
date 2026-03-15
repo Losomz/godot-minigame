@@ -66,9 +66,9 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 
 			// Initialize and register ToolkitCore singleton
 			toolkit_core_singleton = memnew(ToolkitCore);
-			Engine::get_singleton()->register_singleton("GodotToolkit", toolkit_core_singleton);
+			Engine::get_singleton()->register_singleton("GodotMinigame", toolkit_core_singleton);
 
-			TOOLKIT_LOG("Toolkit Addons: Plugin initialized for Godot 4.4");
+			TOOLKIT_LOG("Godot Minigame: Plugin initialized for Godot 4.4");
 			break;
 		}
 		default:
@@ -83,14 +83,14 @@ void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
 				break;
 			}
 
-			if (Engine::get_singleton()->has_singleton("GodotToolkit")) {
-				Engine::get_singleton()->unregister_singleton("GodotToolkit");
+			if (Engine::get_singleton()->has_singleton("GodotMinigame")) {
+				Engine::get_singleton()->unregister_singleton("GodotMinigame");
 			}
 			if (toolkit_core_singleton) {
 				toolkit_core_singleton = nullptr;
 			}
 
-			TOOLKIT_LOG("Toolkit Addons: Plugin terminated");
+			TOOLKIT_LOG("Godot Minigame: Plugin terminated");
 			break;
 		}
 		case MODULE_INITIALIZATION_LEVEL_SCENE: {
@@ -115,7 +115,7 @@ void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
 extern "C"
 {
 	// Initialization
-	GDExtensionBool GDE_EXPORT toolkit_addons_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization)
+	GDExtensionBool GDE_EXPORT godot_minigame_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization)
 	{
 		GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
 		init_obj.register_initializer(initialize_gdextension_types);

@@ -471,7 +471,7 @@ bool toolkit::UpdateManager::perform_update() {
 	}
 
 	PackedStringArray files = zip_reader->get_files();
-	String addon_path = ProjectSettings::get_singleton()->globalize_path("res://addons/toolkit-addons/");
+	String addon_path = ProjectSettings::get_singleton()->globalize_path("res://addons/godot-minigame/");
 
 	for (int i = 0; i < files.size(); i++) {
 		String file_path = files[i];
@@ -500,7 +500,7 @@ bool toolkit::UpdateManager::perform_update() {
 	if (remote_version_info.has("version")) {
 		String new_version = remote_version_info.get("version", "0.0.0");
 		Ref<ConfigFile> config_file = memnew(ConfigFile);
-		String config_path = "res://addons/toolkit-addons/plugin.cfg";
+		String config_path = "res://addons/godot-minigame/plugin.cfg";
 		if (config_file->load(config_path) == OK) {
 			config_file->set_value("plugin", "version", new_version);
 			config_file->save(config_path);

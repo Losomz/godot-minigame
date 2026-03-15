@@ -1,6 +1,6 @@
 # Sample configuration file for embedding
 plugin:
-  name: "Toolkit Addons"
+  name: "Godot Minigame"
   version: "1.0.0"
   author: "Claude Code"
   description: "Comprehensive Godot editor plugin"

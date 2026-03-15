@@ -1,4 +1,4 @@
-# Toolkit Addons
+# Godot Minigame
 
 面向 Godot 4.4+ 的 C++ 编辑器插件，提供小游戏模板适配、下载、缓存、解压和导出能力。
 
@@ -31,11 +31,11 @@ git submodule update --init --recursive
 
 构建产物默认会安装到：
 
-`demo/addons/toolkit-addons/bin/<platform>/`
+`demo/addons/godot-minigame/bin/<platform>/`
 
 ## 使用
 
-1. 将 `demo/addons/toolkit-addons/` 放到你的 Godot 项目 `res://addons/toolkit-addons/`
+1. 将 `demo/addons/godot-minigame/` 放到你的 Godot 项目 `res://addons/godot-minigame/`
 2. 在编辑器里启用插件
 3. 在设置面板配置模板分发源：
    `Source / Owner / Repo / Tag`

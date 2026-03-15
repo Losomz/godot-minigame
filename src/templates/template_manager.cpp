@@ -36,7 +36,8 @@ namespace templates {
 static bool _parse_http_url(const String &url, String &host, int &port, String &path, bool &use_tls);
 
 namespace {
-constexpr const char *TOOLKIT_EDITOR_METADATA_SECTION = "toolkit_addons";
+constexpr const char *TOOLKIT_EDITOR_METADATA_SECTION = "godot_minigame";
+constexpr const char *TOOLKIT_EDITOR_METADATA_SECTION_LEGACY = "toolkit_addons";
 constexpr const char *TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER = "distribution_provider";
 constexpr const char *TOOLKIT_EDITOR_METADATA_GITHUB_OWNER = "github_owner";
 constexpr const char *TOOLKIT_EDITOR_METADATA_GITHUB_REPO = "github_repo";
@@ -1853,42 +1854,95 @@ void TemplateManager::load_distribution_preferences() {
         return;
     }
 
-    github_repo_owner = String(editor_settings->get_project_metadata(
+    String github_owner_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
-            github_repo_owner)).strip_edges();
-    github_repo_name = String(editor_settings->get_project_metadata(
+            String("")));
+    if (github_owner_value.is_empty()) {
+        github_owner_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
+                github_repo_owner));
+    }
+    github_repo_owner = github_owner_value.strip_edges();
+
+    String github_repo_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
-            github_repo_name)).strip_edges();
-    github_release_tag = String(editor_settings->get_project_metadata(
+            String("")));
+    if (github_repo_value.is_empty()) {
+        github_repo_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
+                github_repo_name));
+    }
+    github_repo_name = github_repo_value.strip_edges();
+
+    String github_tag_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
-            github_release_tag)).strip_edges();
+            String("")));
+    if (github_tag_value.is_empty()) {
+        github_tag_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
+                github_release_tag));
+    }
+    github_release_tag = github_tag_value.strip_edges();
     if (github_release_tag.is_empty()) {
         github_release_tag = "latest";
     }
 
-    gitee_repo_owner = String(editor_settings->get_project_metadata(
+    String gitee_owner_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
-            gitee_repo_owner)).strip_edges();
-    gitee_repo_name = String(editor_settings->get_project_metadata(
+            String("")));
+    if (gitee_owner_value.is_empty()) {
+        gitee_owner_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
+                gitee_repo_owner));
+    }
+    gitee_repo_owner = gitee_owner_value.strip_edges();
+
+    String gitee_repo_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_GITEE_REPO,
-            gitee_repo_name)).strip_edges();
-    gitee_release_tag = String(editor_settings->get_project_metadata(
+            String("")));
+    if (gitee_repo_value.is_empty()) {
+        gitee_repo_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_GITEE_REPO,
+                gitee_repo_name));
+    }
+    gitee_repo_name = gitee_repo_value.strip_edges();
+
+    String gitee_tag_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
-            gitee_release_tag)).strip_edges();
+            String("")));
+    if (gitee_tag_value.is_empty()) {
+        gitee_tag_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
+                gitee_release_tag));
+    }
+    gitee_release_tag = gitee_tag_value.strip_edges();
     if (gitee_release_tag.is_empty()) {
         gitee_release_tag = "latest";
     }
 
-    String provider = editor_settings->get_project_metadata(
+    String provider_value = String(editor_settings->get_project_metadata(
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
-            String("github"));
+            String("")));
+    if (provider_value.is_empty()) {
+        provider_value = String(editor_settings->get_project_metadata(
+                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
+                TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
+                String("github")));
+    }
+    String provider = provider_value;
     apply_distribution_provider(provider, false, false);
 
     // Allow headless tests and CI to inject release source config without

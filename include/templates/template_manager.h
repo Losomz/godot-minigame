@@ -36,11 +36,11 @@ private:
     static TemplateManager* singleton;
 
     DistributionProvider distribution_provider = DistributionProvider::GITHUB_RELEASE;
-    String github_repo_owner = "citizenll";
-    String github_repo_name = "toolkit-addons";
+    String github_repo_owner = "godothub";
+    String github_repo_name = "godot-minigame";
     String github_release_tag = "latest";
-    String gitee_repo_owner = "citizenll";
-    String gitee_repo_name = "toolkit-addons";
+    String gitee_repo_owner = "godothub";
+    String gitee_repo_name = "godot-minigame";
     String gitee_release_tag = "latest";
 
     Dictionary versions_cache;
