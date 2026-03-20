@@ -29,6 +29,8 @@ git submodule update --init --recursive
 - `./build_linux.sh`
 - `./build_osx.sh`
 
+这些脚本默认都会以 `embed_resources=yes` 构建 release 产物。
+
 构建产物默认会安装到：
 
 `demo/addons/godot-minigame/bin/<platform>/`
