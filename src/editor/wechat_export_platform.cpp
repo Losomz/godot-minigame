@@ -81,6 +81,26 @@ static String _describe_export_error(Error p_error) {
     }
 }
 
+static void _product_log(const String &message) {
+    UtilityFunctions::print("[GodotMinigame] ", message);
+}
+
+static String _format_release_source(templates::TemplateManager *tm) {
+    if (!tm) {
+        return "unknown";
+    }
+
+    Dictionary config = tm->get_current_release_config();
+    String owner = String(config.get("owner", "")).strip_edges();
+    String repo = String(config.get("repo", "")).strip_edges();
+    String tag = String(config.get("release_tag", "latest")).strip_edges();
+    if (tag.is_empty()) {
+        tag = "latest";
+    }
+
+    return tm->get_distribution_provider() + " " + owner + "/" + repo + "@" + tag;
+}
+
 static Ref<Texture2D> _load_wechat_logo_fallback() {
     const char *logo_paths[] = {
         "res://resources/assets/icon.svg",
@@ -91,7 +111,6 @@ static Ref<Texture2D> _load_wechat_logo_fallback() {
     for (int i = 0; logo_paths[i] != nullptr; i++) {
         Ref<Texture2D> tex = _load_wechat_logo_svg(String::utf8(logo_paths[i]));
         if (tex.is_valid()) {
-            UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] fallback logo loaded from ", String::utf8(logo_paths[i]));
             return tex;
         }
     }
@@ -104,7 +123,6 @@ static Ref<Texture2D> _load_wechat_logo_fallback() {
     Ref<Image> image = Image::create_empty(logo_size, logo_size, false, Image::FORMAT_RGBA8);
     if (image.is_valid()) {
         image->fill(Color(0.16, 0.67, 0.35, 1.0));
-        UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] using generated placeholder logo");
         return ImageTexture::create_from_image(image);
     }
 
@@ -378,11 +396,6 @@ String WeChatExportPlatform::_get_os_name() const {
 }
 
 Ref<Texture2D> WeChatExportPlatform::_get_logo() const {
-    static bool printed = false;
-    if (!printed) {
-        UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] _get_logo called, logo valid=", logo.is_valid());
-        printed = true;
-    }
     return logo;
 }
 
@@ -471,6 +484,7 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
         }
 
         templates::TemplateManager* tm = templates::TemplateManager::get_singleton();
+        _product_log("Template source: " + _format_release_source(tm) + ", editor " + tm->get_current_godot_version());
         Error init_err = tm->initialize_template_system();
         if (init_err != OK) {
             String msg = "Template system init failed: " + _describe_export_error(init_err) + " (" + String::num_int64(init_err) + ")";
@@ -481,19 +495,26 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
 
         Error remote_versions_err = tm->load_versions_from_remote_sync();
         if (remote_versions_err != OK) {
+            _product_log("Template index refresh failed, using cached data. error=" + _describe_export_error(remote_versions_err));
             TOOLKIT_LOG("WeChatExportPlatform: remote versions refresh failed, falling back to cached versions. error=", remote_versions_err);
+        } else {
+            _product_log("Template index loaded: " + String::num_int64(tm->get_available_versions().size()) + " version(s)");
         }
 
         String best_template_ref = tm->get_best_available_template_for_editor();
         
         if (best_template_ref.is_empty()) {
-            UtilityFunctions::push_warning("No template available for current editor version.");
+            String detailed_warning = String("No compatible template for editor ")
+                    + tm->get_current_godot_version()
+                    + " from " + _format_release_source(tm)
+                    + ".";
+            UtilityFunctions::push_warning(detailed_warning);
             return ERR_FILE_NOT_FOUND;
         }
 
         if (best_template_ref.begins_with("remote://")) {
             String filename = best_template_ref.replace("remote://", "");
-            TOOLKIT_LOG("WeChatExportPlatform: template not found locally, downloading ", filename);
+            _product_log("Selected template: " + filename + " (download)");
 
             active_download_filename = filename;
             _set_export_progress(16.0, String::utf8("模板缺失，准备下载..."));
@@ -512,6 +533,14 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
                 UtilityFunctions::push_warning("Template download finished but local template file is still missing.");
                 return ERR_FILE_NOT_FOUND;
             }
+        } else {
+            String selected_template = best_template_ref;
+            if (best_template_ref.begins_with("embedded://")) {
+                selected_template = best_template_ref.replace("embedded://", "") + " (embedded)";
+            } else {
+                selected_template = best_template_ref.get_file() + " (cached)";
+            }
+            _product_log("Selected template: " + selected_template);
         }
 
         TOOLKIT_LOG("WeChatExportPlatform: extracting template from ", best_template_ref);
@@ -626,13 +655,7 @@ bool WeChatExportPlatform::_get_export_option_visibility(const Ref<EditorExportP
 }
 
 WeChatExportPlatform::WeChatExportPlatform() {
-#ifdef EMBED_RESOURCES
-    UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] ctor, EMBED_RESOURCES=ON");
-#else
-    UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] ctor, EMBED_RESOURCES=OFF");
-#endif
     logo = load_embedded_icon("resources/assets/icon.svg");
-    UtilityFunctions::print("[GodotMinigame][WeChatExportPlatform] embedded logo valid=", logo.is_valid());
     if (!logo.is_valid()) {
         logo = _load_wechat_logo_fallback();
     }

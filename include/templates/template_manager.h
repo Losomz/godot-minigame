@@ -182,6 +182,7 @@ private:
     Array parse_version_components(const String& version) const;
     String dictionary_to_simple_yaml(const Dictionary& dict) const;
     String get_distribution_cache_root_dir() const;
+    Array build_available_versions_from_cache() const;
 
     // Signal handlers
     void _on_template_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& filename, const String& output_path);

@@ -6,11 +6,9 @@ var wechat_platform
 var wechat_platform_added := false
 
 func _enter_tree():
-	print("[GodotMinigame][plugin.gd] _enter_tree")
 	_initialize_plugin()
 
 func _exit_tree():
-	print("[GodotMinigame][plugin.gd] _exit_tree")
 	_unregister_wechat_platform()
 
 	# The editor is responsible for cleaning up the dock control.
@@ -41,9 +39,7 @@ func _instantiate_dock():
 	return null
 
 func _register_wechat_platform():
-	print("[GodotMinigame][plugin.gd] _register_wechat_platform begin")
 	if wechat_platform_added and wechat_platform and is_instance_valid(wechat_platform):
-		print("[GodotMinigame][plugin.gd] platform already added, skip")
 		return
 
 	if not wechat_platform or not is_instance_valid(wechat_platform):
@@ -51,11 +47,8 @@ func _register_wechat_platform():
 		if not wechat_platform:
 			return
 
-		print("[GodotMinigame][plugin.gd] new WeChatExportPlatform -> ", wechat_platform)
-
 	add_export_platform(wechat_platform)
 	wechat_platform_added = true
-	print("[GodotMinigame][plugin.gd] add_export_platform success, added=", wechat_platform_added)
 
 func _instantiate_wechat_platform():
 	const PLATFORM_CLASS_NAME := "WeChatExportPlatform"
@@ -73,10 +66,8 @@ func _instantiate_wechat_platform():
 	return null
 
 func _unregister_wechat_platform():
-	print("[GodotMinigame][plugin.gd] _unregister_wechat_platform begin, added=", wechat_platform_added, " valid=", is_instance_valid(wechat_platform))
 	if wechat_platform_added and wechat_platform and is_instance_valid(wechat_platform):
 		remove_export_platform(wechat_platform)
-		print("[GodotMinigame][plugin.gd] remove_export_platform success")
 
 	wechat_platform_added = false
 	wechat_platform = null

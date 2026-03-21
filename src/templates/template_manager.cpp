@@ -537,6 +537,7 @@ Error TemplateManager::load_versions_from_remote_sync() {
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Remote versions URL is empty, provider config is invalid.[/color]");
         return ERR_INVALID_PARAMETER;
     }
+    TOOLKIT_LOG("TemplateManager: Loading versions synchronously from ", versions_url);
 
     PackedByteArray response_body;
     int response_code = 0;
@@ -549,14 +550,19 @@ Error TemplateManager::load_versions_from_remote_sync() {
         OS::get_singleton()->delay_msec(250 * (attempt + 1));
     }
     if (request_err != OK) {
+        TOOLKIT_LOG("TemplateManager: Synchronous versions request failed. error=", request_err, ", response_code=", response_code);
         return request_err;
     }
+    TOOLKIT_LOG("TemplateManager: Synchronous versions request completed. response_code=", response_code, ", body_size=", response_body.size());
 
     String yaml_content = response_body.get_string_from_utf8();
     Error parse_err = parse_versions_yaml(yaml_content);
     if (parse_err != OK) {
+        TOOLKIT_LOG("TemplateManager: Failed to parse remote versions synchronously. parse_err=", parse_err);
         return parse_err;
     }
+
+    TOOLKIT_LOG("TemplateManager: Remote versions parsed successfully. available_versions=", available_versions);
 
     return save_versions_to_local_cache();
 }
@@ -640,7 +646,7 @@ Error TemplateManager::parse_versions_yaml(const String& yaml_content) {
 
         Dictionary versions = parsed[current_major];
         if (current_version_entry.has("file") || current_version_entry.has("filename")) {
-            versions[current_version] = current_version_entry;
+            versions[current_version] = current_version_entry.duplicate(true);
             parsed[current_major] = versions;
         }
         current_version = "";
@@ -791,6 +797,13 @@ Error TemplateManager::parse_versions_yaml(const String& yaml_content) {
 }
 
 Array TemplateManager::get_available_versions() const {
+    if (available_versions.is_empty() && !versions_cache.is_empty()) {
+        Array rebuilt = build_available_versions_from_cache();
+        if (!rebuilt.is_empty()) {
+            TOOLKIT_LOG("TemplateManager: Rebuilt available_versions from versions_cache on demand: ", rebuilt);
+            return rebuilt;
+        }
+    }
     return available_versions;
 }
 
@@ -1752,11 +1765,13 @@ String TemplateManager::get_best_available_template_for_editor() const {
     // Get the best template filename first
     String best_filename = get_best_version_for_editor();
     if (best_filename.is_empty()) {
+        TOOLKIT_LOG("TemplateManager: No best filename resolved for editor version ", current_version, " (", major_version, ")");
         return "";
     }
 
     // Check availability with priority: embedded -> cached -> remote
     String template_path = get_template_path(best_filename);
+    TOOLKIT_LOG("TemplateManager: Best template for editor version ", current_version, " (", major_version, ") is filename=", best_filename, ", path=", template_path);
     return template_path;
 }
 
@@ -1985,6 +2000,46 @@ Array TemplateManager::parse_version_components(const String& version) const {
     }
 
     return components;
+}
+
+Array TemplateManager::build_available_versions_from_cache() const {
+    Array rebuilt_versions;
+
+    Dictionary dict = versions_cache;
+    Array godot_majors = dict.keys();
+
+    for (int i = 0; i < godot_majors.size(); i++) {
+        String major = String(godot_majors[i]);
+        Variant versions_variant = dict[godot_majors[i]];
+        if (versions_variant.get_type() != Variant::DICTIONARY) {
+            continue;
+        }
+
+        Dictionary versions = versions_variant;
+        Array version_keys = versions.keys();
+        for (int j = 0; j < version_keys.size(); j++) {
+            Variant version_key = version_keys[j];
+            String version = String(version_key);
+
+            Variant entry_variant = versions.has(version_key) ? versions[version_key] : versions[version];
+            Dictionary normalized_entry = normalize_template_entry(entry_variant, "");
+            String filename = String(normalized_entry.get("filename", "")).strip_edges();
+            if (filename.is_empty() || filename == "<null>") {
+                continue;
+            }
+
+            Dictionary version_info;
+            version_info["godot_major"] = major;
+            version_info["version"] = version;
+            version_info["filename"] = filename;
+            version_info["release_tag"] = String(normalized_entry.get("release_tag", "")).strip_edges();
+            version_info["is_embedded"] = is_template_embedded(filename);
+
+            rebuilt_versions.append(version_info);
+        }
+    }
+
+    return rebuilt_versions;
 }
 
 // Simple YAML serialization helper
