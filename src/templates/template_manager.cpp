@@ -597,22 +597,29 @@ Error TemplateManager::load_versions_from_embedded() {
     }
 #endif
 
-    // Fallback: try to read from file system
-    Ref<FileAccess> file = FileAccess::open("res://versions.yaml", FileAccess::READ);
-    if (file.is_null()) {
-        TOOLKIT_LOG_RICH("[color=yellow]Warning: versions.yaml not found, using fallback[/color]");
-        // Create a minimal fallback version structure
-        versions_cache["godot4"] = Dictionary();
-        Dictionary godot4 = versions_cache["godot4"];
-        godot4["4.4.0"] = "minigame4.4.0.1.tpz";
-        godot4["4.3.0"] = "minigame4.3.0.3.tpz";
-        versions_loaded = true;
-        return OK;
+    // Fallback: try to read from file system.
+    const char *versions_paths[] = {
+        "res://resources/versions.yaml",
+        "res://addons/godot-minigame/resources/versions.yaml",
+        "res://versions.yaml",
+        nullptr
+    };
+
+    for (int i = 0; versions_paths[i] != nullptr; i++) {
+        Ref<FileAccess> file = FileAccess::open(String::utf8(versions_paths[i]), FileAccess::READ);
+        if (file.is_valid()) {
+            String yaml_content = file->get_as_text();
+            file->close();
+            return parse_versions_yaml(yaml_content);
+        }
     }
 
-    String yaml_content = file->get_as_text();
-    file->close();
-    return parse_versions_yaml(yaml_content);
+    TOOLKIT_LOG_RICH("[color=yellow]Warning: versions.yaml not found, using builtin fallback[/color]");
+    const String fallback_yaml =
+            "godot4:\n"
+            "  4.4.0: minigame4.4.0.1.tpz\n"
+            "  4.3.0: minigame4.3.0.3.tpz\n";
+    return parse_versions_yaml(fallback_yaml);
 }
 
 Error TemplateManager::parse_versions_yaml(const String& yaml_content) {
@@ -841,6 +848,15 @@ String TemplateManager::get_best_version_for_editor() const {
         }
     }
 
+    // Prefer the latest template from the same major.minor line before falling back
+    // to older minors. Example: 4.5.0 should prefer 4.5.1 over 4.4.x.
+    String same_minor_filename = get_latest_version_for_minor_line(current_version, major_version);
+    TOOLKIT_LOG("TemplateManager: Same minor-line filename: '", same_minor_filename, "'");
+    if (!same_minor_filename.is_empty() && is_template_available_anywhere(same_minor_filename)) {
+        TOOLKIT_LOG("TemplateManager: Same minor-line match is available");
+        return same_minor_filename;
+    }
+
     // Try nearest compatible version using just-close matching principle
     String nearest_filename = get_nearest_compatible_version(current_version, major_version);
     TOOLKIT_LOG("TemplateManager: Nearest compatible filename: '", nearest_filename, "'");
@@ -878,6 +894,11 @@ String TemplateManager::resolve_template_filename_for_version(const String &targ
         if (!exact_filename.is_empty()) {
             return exact_filename;
         }
+    }
+
+    String same_minor_filename = get_latest_version_for_minor_line(resolved_target_version, resolved_major_version);
+    if (!same_minor_filename.is_empty()) {
+        return same_minor_filename;
     }
 
     String nearest_filename = get_nearest_compatible_version(resolved_target_version, resolved_major_version);
@@ -1841,6 +1862,57 @@ String TemplateManager::get_nearest_compatible_version(const String& target_vers
     }
 
     TOOLKIT_LOG("TemplateManager: Final best match: '", best_match, "' -> '", best_filename, "'");
+    return best_filename;
+}
+
+String TemplateManager::get_latest_version_for_minor_line(const String& target_version, const String& major_version) const {
+    if (!versions_cache.has(major_version)) {
+        return "";
+    }
+
+    PackedStringArray target_parts = target_version.split(".");
+    if (target_parts.size() < 2) {
+        return "";
+    }
+
+    String target_major = String(target_parts[0]).strip_edges();
+    String target_minor = String(target_parts[1]).strip_edges();
+    if (target_major.is_empty() || target_minor.is_empty()) {
+        return "";
+    }
+
+    Dictionary versions = versions_cache[major_version];
+    Array version_keys = versions.keys();
+
+    String best_version = "";
+    String best_filename = "";
+
+    for (int i = 0; i < version_keys.size(); i++) {
+        Variant candidate_key = version_keys[i];
+        String candidate_version = String(candidate_key).strip_edges();
+        PackedStringArray candidate_parts = candidate_version.split(".");
+        if (candidate_parts.size() < 2) {
+            continue;
+        }
+
+        if (String(candidate_parts[0]).strip_edges() != target_major ||
+                String(candidate_parts[1]).strip_edges() != target_minor) {
+            continue;
+        }
+
+        Variant entry_variant = versions.has(candidate_key) ? versions[candidate_key] : versions[candidate_version];
+        Dictionary normalized_entry = normalize_template_entry(entry_variant, "");
+        String candidate_filename = String(normalized_entry.get("filename", "")).strip_edges();
+        if (candidate_filename.is_empty() || candidate_filename == "<null>") {
+            continue;
+        }
+
+        if (best_version.is_empty() || compare_version_numbers(candidate_version, best_version) > 0) {
+            best_version = candidate_version;
+            best_filename = candidate_filename;
+        }
+    }
+
     return best_filename;
 }
 

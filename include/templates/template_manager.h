@@ -177,6 +177,7 @@ private:
     Error http_get_sync_follow_redirects(const String& url, PackedByteArray& r_body, int& r_response_code, Dictionary* r_response_headers = nullptr) const;
     Dictionary normalize_template_entry(const Variant& entry, const String& fallback_release_tag = "") const;
     String find_release_tag_for_filename(const String& filename) const;
+    String get_latest_version_for_minor_line(const String& target_version, const String& major_version) const;
     int compare_version_numbers(const String& version1, const String& version2) const;
     Array parse_version_components(const String& version) const;
     String dictionary_to_simple_yaml(const Dictionary& dict) const;
