@@ -1,38 +1,62 @@
 # Validation Checklist
 
-Run these checks from the target repo root. Use them after each module and again before declaring the port complete.
+Run these checks from the target Godot repo root after applying the public bundle.
 
-## 1. Static Anchors
+## 0. Base Verification
+
+Confirm the target commit:
+
+```powershell
+git rev-parse HEAD
+```
+
+Expected exact base for the default path:
+
+- `a16e481cf424f8e39dc2cdea1a6bdc1e309acdc1`
+
+If it differs, say so explicitly in the final report.
+
+## 1. Apply Verification
+
+If you used the bundled script, record the exact command:
+
+```powershell
+python <skill-dir>\scripts\apply_godot_patchset.py <target-repo>
+```
+
+If optional modules were included, record them too.
+
+## 2. Static Anchors
 
 Verify the expected WeChat hooks are present:
 
 ```powershell
-rg -n "WXMEMFS|enableChunked|onChunkReceived|getWindowInfo|showKeyboard|wx.exitMiniProgram|wasm_simd" platform/web modules version.py
+rg -n "WXMEMFS|enableChunked|write_offset|getWindowInfo|showKeyboard|wx.exitMiniProgram|wasm_simd|wasm\\.br" platform/web modules
 ```
 
-If you are replacing the old external SDK, also verify the bootstrap globals:
+If the runtime shell is vendored downstream, also verify:
 
 ```powershell
 rg -n "GODOTSDK\\.|fsUtils\\.|__globalAdapter\\.|nowPolyfill|GodotLoader" platform/web modules
 ```
 
-## 2. Build Smoke Test
+## 3. Build Smoke Test
 
-Build a web template with conservative defaults:
+Build with conservative defaults:
 
 ```powershell
 scons platform=web target=template_release threads=no wasm_simd=no
 ```
 
-If the repo uses a different target or helper script, keep the same intent:
+Intent:
 
 - no browser-only threading assumptions
 - no default SIMD
-- generate the standard web export bundle before post-processing
+- standard web bundle produced before post-processing
 
-## 3. Packaging Smoke Test
+## 4. Packaging Smoke Test
 
-Run the bundled scripts with the repo root as the current working directory:
+Run the bundled helpers:
 
 ```powershell
 node <skill-dir>\scripts\godot_process.js
@@ -47,84 +71,75 @@ Test-Path .\bin\.web_zip\godot.wasm
 Test-Path .\bin\.web_zip\godot.wasm.br
 ```
 
-## 4. Generated JS Sanity
-
-Check the final generated JS for the expected runtime hooks:
+## 5. Generated JS Sanity
 
 ```powershell
 rg -n "FS.mount\\(WXMEMFS|nowPolyfill|wx.exitMiniProgram|wasm\\.br" .\bin\.web_zip\godot.js platform/web/js/engine
 ```
 
-## 5. File System Smoke Test
+## 6. File System Smoke Test
 
-In WeChat DevTools or through a minimal Godot test scene:
+In WeChat DevTools or a minimal scene:
 
 - write a file under `user://`
 - close it
-- reopen it immediately and read it back
+- reopen it immediately
 - restart the app and read it again
 
-Failure modes to watch:
+Failure modes:
 
-- write succeeds but immediate read returns stale data
+- stale read after write
 - file exists only until restart
-- `IDBFS` is still mounted instead of `WXMEMFS`
+- `IDBFS` still mounted instead of `WXMEMFS`
 
-## 6. Network Smoke Test
+## 7. Network Smoke Test
 
-Use a payload large enough to require multiple chunk callbacks.
+Use a payload large enough to span multiple internal chunks.
 
-Expected results:
+Expected:
 
 - headers parse correctly
-- body length matches expectation
-- downloaded bytes are not corrupted
+- bytes are not corrupted
+- small payloads still work when only `res.data` is returned
 
-Failure mode to watch:
+## 8. Audio Smoke Test
 
-- body corruption caused by missing `write_offset` in `godot_js_fetch_read_chunk`
-
-## 7. Audio Smoke Test
-
-Test all three paths:
+Test:
 
 - play once
 - stop early
-- replay or loop
+- replay
+- loop
 
-Expected results:
+Expected:
 
 - no crash on stop
-- no duplicate or stuck playback objects
-- repeated reuse does not exhaust the context pool
+- no stuck playback objects
+- no leaked pooled contexts
 
-## 8. Display And Input Smoke Test
+## 9. Display And Input Smoke Test
 
-Check on an actual WeChat device or DevTools simulation:
+Check:
 
-- image is sharp on high-DPI screens
-- window size matches expected full-screen area
-- keyboard can type, replace, confirm, and dismiss text cleanly
+- sharp output on high-DPI screens
+- correct fullscreen/window sizing
+- keyboard type/replace/confirm/dismiss behavior
 
-Failure modes to watch:
-
-- blurry rendering from browser `devicePixelRatio` fallback
-- duplicate characters from bad IME replay
-- wrong fullscreen size from browser `window.innerWidth` assumptions
-
-## 9. Exit And Lifecycle Smoke Test
+## 10. Exit And Lifecycle Smoke Test
 
 Confirm:
 
-- runtime exit follows `wx.exitMiniProgram()`
-- JS eval path stays disabled and does not crash
+- exit follows `wx.exitMiniProgram()`
+- disabled JS eval path does not crash the runtime
 
-## 10. Completion Bar
+## 11. Completion Bar
 
-Call the migration complete only when all are true:
+Call the public package healthy only when all are true:
 
+- exact-base or mismatch status was recorded
+- apply step was recorded
 - build passes
-- post-processing and compression produce the expected files
+- post-processing produced expected files
 - WXMEMFS persistence works
 - large HTTP bodies are correct
 - audio replay is stable

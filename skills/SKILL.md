@@ -1,137 +1,141 @@
 ---
 name: godot-wechat-minigame-adapter
-description: Port a fresh official Godot 4.x checkout to WeChat Mini Game / 微信小游戏, or refresh an existing port after upstream sync. Use when adapting `platform/web`, replaying proven WeChat runtime patches, auditing moved files across Godot versions, or fixing WeChat-specific runtime issues such as WXMEMFS persistence, `wx.request` chunk handling, `wasm_simd` gating, `wx.getWindowInfo`, `wx.showKeyboard`, `.wasm.br` loading, and `wx.exitMiniProgram`.
+description: Apply the bundled self-contained Godot WeChat Mini Game adapter kit to an official Godot checkout. Use when the user wants to port official Godot to WeChat Mini Game, refresh a nearby 4.6-based port, or inspect the shipped patch/source bundle for WXMEMFS, `wx.request`, audio cleanup, `wx.getWindowInfo`, `wx.showKeyboard`, `.wasm.br`, and `wx.exitMiniProgram`. This skill is version-locked to the bundled upstream base and must not be described as a generic “Godot 4.x” patch dump.
 ---
 
 # Godot WeChat Minigame Adapter
 
-Use this skill as a migration workflow, not as a loose patch dump. The goal is to let an AI or human take a clean upstream Godot checkout and port it to WeChat Mini Game in a controlled order, with clear module ownership and targeted verification after each module.
+This skill is an open-source, self-contained adapter kit. It must work from:
+
+- an official Godot checkout at the bundled base commit
+- this skill directory
+
+Do not rely on any private donor repo. If the target repo is not aligned to the bundled base, say that clearly and switch to a delta-refresh workflow instead of claiming drop-in support.
+
+## Supported Base
+
+- Primary supported upstream: `origin/4.6` at commit `a16e481cf424f8e39dc2cdea1a6bdc1e309acdc1`
+- Public bundle id: `godot-4.6.2-rc-a16e481cf4`
+
+Read `references/compatibility-matrix.md` before editing if the target is not exactly on that base.
 
 ## Start Mode
 
 Pick one mode before editing:
 
-1. **Fresh port**
-   - You have an official Godot repo with no WeChat work.
-   - Follow the module order in `references/migration-modules.md`.
-   - Rebuild and validate after each module instead of landing one giant patch.
+1. **Exact-base apply**
+   - Recommended.
+   - The target repo is an official Godot checkout at `a16e481cf424f8e39dc2cdea1a6bdc1e309acdc1`.
+   - Run the bundled apply script first.
 
-2. **Delta refresh**
-   - You already have a WeChat branch and just merged or rebased upstream.
-   - First search for moved symbols with:
-     ```powershell
-     rg -n "WXMEMFS|enableChunked|onChunkReceived|getWindowInfo|showKeyboard|wx.exitMiniProgram|wasm_simd" platform/web modules version.py
-     ```
-   - Then replay only the missing module changes.
-   - Read `references/recent-commit-deltas.md` before touching 4.6+ runtime compatibility.
+2. **Near-base refresh**
+   - The target repo is close to the bundled base, but not exact.
+   - Use the bundled sources and patches as the public source of truth.
+   - Expect manual conflict resolution and replay only after checking `references/recent-commit-deltas.md`.
 
 ## Hard Rules
 
-- Port in module order: build/package -> file system -> network -> audio -> display/input -> runtime glue -> optional export and branding.
-- Validate each module before moving on. Do not wait until the end to find the first breakage.
-- Prefer readable donor sources over shipping copies. In the current donor repo, `platform/web/js/libs/library_godot_memfs.js` is the semantic source for WXMEMFS; `library_godot_fs.js` is a shipping copy and harder to reason about.
-- Do not reintroduce deprecated file names. The active audio entry is `library_godot_audio.js`, not `library_godot_wx_audio.js`.
-- Treat `audio.worker.js` as optional unless the target branch still references it. Current 4.6 runtime logic lives primarily in `library_godot_audio.js`.
-- If upstream moved files or refactored APIs, update the routing first and only then replay logic.
-- When replacing the old external `godot-minigame-sdk`, vendor the minimal runtime files from `assets/min-runtime/` instead of carrying the old SDK directory.
+- Treat `patches/` and `sources/` in this skill as the authoritative public package.
+- Apply core first. Optional modules come later.
+- Do not pull missing code from `C:\toolkit\godot4-custom` or any other machine-local repo.
+- Do not describe this skill as “supports all Godot 4.x” or “works on any 4.6 build” unless you actually verified that target.
+- Keep donor-only features out of the default public path.
 
 ## Workflow
 
-### 1. Preflight
+### 1. Verify the Target
 
-- Confirm the target branch and upstream base.
-- Inspect the current web platform surface:
+- Confirm the repo root and current commit:
   ```powershell
-  git diff --name-only origin/<upstream-branch>..HEAD
-  rg -n "WXMEMFS|wx.request|enableChunked|getWindowInfo|showKeyboard|wx.exitMiniProgram|wasm_simd" platform/web modules version.py
+  git rev-parse HEAD
+  git status --short
   ```
-- If you are porting from this donor repo, use the latest minigame-specific commits in `references/recent-commit-deltas.md` as the final delta layer, not as the starting point.
+- If the target is on the supported base, use exact-base apply.
+- If not, state the mismatch and read `references/compatibility-matrix.md`.
 
-### 2. Port by Module
+### 2. Apply the Public Bundle
 
-- Open `references/migration-modules.md`.
-- Work module by module.
-- For each module:
-  1. Port the owned files.
-  2. Search the anchor strings listed for that module.
-  3. Run the module-specific verification.
-  4. Only continue if that module is green.
+Run from anywhere:
 
-### 3. Replay Recent Compatibility Deltas
+```powershell
+python <skill-dir>\scripts\apply_godot_patchset.py <target-repo>
+```
 
-- After the baseline port works, open `references/recent-commit-deltas.md`.
-- Explicitly check whether the target branch is still missing:
-  - fetch chunk copy `write_offset`
-  - `wasm_simd` default off plus `-msimd128` gating
-  - the audio/display/input cleanup bundle that moved the runtime back onto `library_godot_audio.js`
+Useful flags:
+
+- `--include-optional audio-worker`
+- `--include-optional dev-types`
+- `--allow-base-mismatch`
+- `--allow-dirty`
+
+The script copies the bundled public source files, then applies the bundled patch series.
+
+### 3. Vendor the Runtime Shell
+
+If the downstream minigame host project still expects the old external SDK globals:
+
+```powershell
+python <skill-dir>\scripts\install_min_runtime.py <dest-dir>
+```
+
+Then load:
+
+1. `godot-sdk.js`
+2. `godot-loader.js`
+3. generated `godot.js`
 
 ### 4. Build and Package
 
-Run packaging from the target repo root. The bundled scripts assume the current working directory is the repo root.
+Run from the target Godot repo root:
 
-- If the target still depends on external bootstrap files, first vendor the minimal runtime shell:
-  ```powershell
-  python <skill-dir>\scripts\install_min_runtime.py <dest-dir>
-  ```
-  Then load `godot-sdk.js` before `godot-loader.js`, and load both before generated `godot.js`.
+```powershell
+scons platform=web target=template_release threads=no wasm_simd=no
+node <skill-dir>\scripts\godot_process.js
+cmd /c <skill-dir>\scripts\compress_wasm.bat
+```
 
-- Patch generated JS:
-  ```powershell
-  node <skill-dir>\scripts\godot_process.js
-  ```
-- Compress WASM:
-  ```powershell
-  cmd /c <skill-dir>\scripts\compress_wasm.bat
-  ```
-  or
-  ```bash
-  sh <skill-dir>/scripts/compress_wasm.sh
-  ```
+On Unix-like shells:
 
-### 5. Final Validation
+```bash
+sh <skill-dir>/scripts/compress_wasm.sh
+```
 
-- Open `references/validation-checklist.md`.
-- Do not call the port complete until:
-  - `.wasm.br` loading works
-  - WXMEMFS save/load survives restart
-  - large HTTP responses no longer corrupt body copies
-  - audio play/stop/replay does not leak or crash
-  - high-DPI and keyboard input behave correctly in WeChat
+### 5. Validate
+
+- Read `references/validation-checklist.md`.
+- Do not call the port complete until the runtime shell, WXMEMFS persistence, large fetches, audio replay, display/input, and exit path all pass.
+
+## Package Layout
+
+- `patches/godot-4.6.2-rc-a16e481cf4/`
+  - Version-locked patch bundle for the supported upstream base.
+- `sources/godot-4.6.2-rc-a16e481cf4/`
+  - Public source files copied into the target repo before patch application.
+- `assets/min-runtime/`
+  - Minimal replacement for the old external `godot-minigame-sdk`.
+
+Read `references/migration-modules.md` for the exact core vs optional module split.
 
 ## References
 
+- `references/compatibility-matrix.md`
+  - Supported base, near-base policy, and intentionally excluded donor features.
 - `references/migration-modules.md`
-  - Read this first for full module ownership, required edits, stale-path warnings, and module-specific acceptance checks.
+  - Public package map: which files are shipped as source, which ship as patch, and which are optional.
 - `references/recent-commit-deltas.md`
-  - Read this when targeting 4.6+ or when an older port works except for iOS/WebKit, large downloads, or recent input/audio regressions.
+  - Recent deltas already baked into the bundled base, plus what to replay when moving forward from it.
 - `references/runtime-shell.md`
-  - Read this when removing the external `godot-minigame-sdk` dependency while preserving the old global names.
+  - The minimal runtime shell contract for `godot-sdk.js` and `godot-loader.js`.
 - `references/validation-checklist.md`
-  - Read this at the end or whenever a module needs a focused smoke test.
-
-## Bundled Scripts
-
-- `scripts/godot_process.js`
-  - Post-processes generated `bin/.web_zip/godot.js`.
-  - Replaces `IDBFS` mount with `WXMEMFS`, patches i64 accessors, swaps unsupported window-title behavior, and keeps the generated JS aligned with WeChat runtime constraints.
-- `scripts/compress_wasm.bat`
-- `scripts/compress_wasm.sh`
-  - Compress `bin/.web_zip/godot.wasm` and then run the post-processor.
-- `scripts/install_min_runtime.py`
-  - Copies `assets/min-runtime/godot-sdk.js` and `assets/min-runtime/godot-loader.js` into a target directory.
-
-## Bundled Runtime Assets
-
-- `assets/min-runtime/godot-sdk.js`
-  - Minimal compatibility shell that preserves `GameGlobal.GODOTSDK`, `fsUtils`, `__globalAdapter`, and `nowPolyfill`.
-- `assets/min-runtime/godot-loader.js`
-  - Independent loader script that preserves `GameGlobal.GodotLoader`.
+  - Build, packaging, and smoke-test gates.
 
 ## Output Standard
 
 When using this skill on a real repo, always leave behind:
 
-- a module-by-module change summary
+- the exact upstream commit or mismatch you worked against
+- the apply command you ran
+- which optional modules were included, if any
 - the exact validation steps run
-- any upstream file moves or renamed anchors that forced deviations from the default route
-- a short list of deltas that were intentionally skipped because the target branch did not use that code path
+- any patch rejects or manual conflict resolutions
+- any intentionally skipped donor features that remain out of scope

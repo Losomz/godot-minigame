@@ -1,26 +1,22 @@
 # Recent Commit Deltas
 
-Use this file after the baseline port is working. These are not the whole WeChat migration. They are the latest compatibility deltas that must be replayed if the target branch still misses them.
+These deltas are already baked into the bundled `godot-4.6.2-rc-a16e481cf4` core package. Do not re-apply them when the target repo is exactly on the supported base and you used `scripts/apply_godot_patchset.py`.
 
-## Which commits to use
+Use this file only when:
 
-For migration purposes, use the latest **minigame-specific non-merge commits**. Ignore pure upstream merge commits and plain version bumps when extracting runtime behavior.
+- the target repo is newer than `a16e481cf424f8e39dc2cdea1a6bdc1e309acdc1`
+- you are replaying the public bundle forward onto a nearby upstream commit
+- the bundled patch applies with manual conflict resolution and you need to verify that specific regression fixes survived
 
 ## Delta 1: Fetch chunk copy offset
 
 - Commit: `9f1e9f8ad6`
 - Subject: `web/minigame: fix fetch chunk copy offset corruption on large responses`
-- Owned file:
-  - `platform/web/js/libs/library_godot_fetch.js`
-
-### What changed
-
-- `godot_js_fetch_read_chunk` now tracks a cumulative `write_offset`.
-- Each chunk copy writes into `p_buf + write_offset` instead of repeatedly writing to the same base pointer.
+- Current package status: included in shipped `library_godot_fetch.js`
 
 ### Why it matters
 
-Without this fix, large HTTP responses can overwrite previously copied bytes, so the reconstructed body is corrupted even though chunk callbacks succeed.
+Without cumulative `write_offset`, large HTTP bodies overwrite earlier copied bytes and the final payload is corrupted.
 
 ### Replay check
 
@@ -28,27 +24,15 @@ Without this fix, large HTTP responses can overwrite previously copied bytes, so
 rg -n "write_offset|p_buf \\+ write_offset|chunks\\[0\\] = chunk.slice" platform/web/js/libs/library_godot_fetch.js
 ```
 
-### Acceptance signal
-
-- Large downloads are byte-correct.
-- Small downloads still work.
-
 ## Delta 2: Disable WASM SIMD by default
 
 - Commit: `6e53a06012`
 - Subject: `web: disable wasm simd by default for iOS minigame compatibility`
-- Owned files:
-  - `platform/web/detect.py`
-  - `modules/raycast/SCsub`
-
-### What changed
-
-- `wasm_simd` default changed from enabled to disabled.
-- `-msimd128` is only appended when `env["wasm_simd"]` is true.
+- Current package status: included in core patch
 
 ### Why it matters
 
-Older iOS WebKit inside WeChat Mini Game can fail badly with SIMD-enabled builds. The safe default is off, with an opt-in flag for controlled testing.
+Older iOS WebKit in WeChat Mini Game can fail with SIMD-enabled defaults. The safe default is off.
 
 ### Replay check
 
@@ -56,71 +40,32 @@ Older iOS WebKit inside WeChat Mini Game can fail badly with SIMD-enabled builds
 rg -n "wasm_simd|msimd128" platform/web/detect.py modules/raycast/SCsub
 ```
 
-### Acceptance signal
-
-- Default build works on iOS WeChat.
-- SIMD can still be re-enabled intentionally for experiments.
-
-## Delta 3: Audio, display, and input cleanup bundle
+## Delta 3: Audio, display, and input cleanup
 
 - Commit: `bbdf3b0c80`
 - Subject: `fix:修复音频和输入bug&分辨率`
-- Owned files:
-  - `platform/web/SCsub`
-  - `platform/web/js/libs/library_godot_audio.js`
-  - `platform/web/js/libs/library_godot_display.js`
-  - `platform/web/js/libs/library_godot_input.js`
-  - `platform/web/js/libs/lib.wx.api.d.ts`
-
-### What changed
-
-- `platform/web/SCsub` switched the active audio entry back to `library_godot_audio.js`.
-- `library_godot_audio.js` gained reusable audio-context pooling and stronger cleanup:
-  - `MAX_POOL_SIZE`
-  - `resetContext`
-  - `destroyContext`
-  - `cleanupPlayback`
-  - better `onStop` and `onError` cleanup
-  - explicit `loop` and `startTime` handling
-- `library_godot_display.js` now prefers `wx.getWindowInfo()` for pixel ratio and window size.
-- `library_godot_input.js` now bridges WeChat keyboard input by replaying key events against Godot's IME path instead of relying on browser DOM behavior.
-- `lib.wx.api.d.ts` gained `WindowInfo` and `getWindowInfo()` typing.
+- Current package status: included in shipped source files plus core patch
 
 ### Why it matters
 
-This bundle moves the current runtime toward stable repeatable behavior on real devices:
+This bundle is what makes the public package stable on real devices:
 
-- fewer audio leaks and stuck playbacks
-- correct high-DPI sizing
-- more reliable text replacement and confirm/complete flows
+- pooled/reused audio contexts
+- stronger playback cleanup
+- `wx.getWindowInfo()` sizing
+- WeChat keyboard bridge
 
 ### Replay check
 
 ```powershell
-rg -n "library_godot_audio|contextPool|cleanupPlayback|getWindowInfo|showKeyboard|WindowInfo" platform/web/SCsub platform/web/js/libs
+rg -n "contextPool|cleanupPlayback|getWindowInfo|showKeyboard" platform/web/js/libs
 ```
 
-### Acceptance signal
+## Forward-Port Rule
 
-- repeated sound playback remains stable
-- screen size and DPI are correct on WeChat devices
-- keyboard input replaces text cleanly and confirm/complete behave
+If the target repo is newer than the supported base:
 
-## Replay Order
-
-Apply these in this order:
-
-1. Delta 3 if your runtime still looks like the older audio/input/display path
-2. Delta 2 if your build still enables SIMD by default
-3. Delta 1 if your fetch bridge lacks `write_offset`
-
-That order keeps runtime wiring stable before you debug network corruption.
-
-## Non-deltas to ignore
-
-Do not treat these as migration deltas:
-
-- upstream merge commits
-- plain version bumps such as `a16e481cf4`
-
-They may be relevant to branch hygiene, but they do not explain the WeChat runtime behavior.
+1. apply the public bundle as far as it will go
+2. resolve conflicts module by module
+3. re-run the replay checks above
+4. validate runtime behavior, not just anchors
