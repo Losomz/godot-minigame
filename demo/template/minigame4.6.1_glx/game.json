@@ -8,5 +8,7 @@
             "root": "engine/"
         }
     ],
-    "plugins": {}
+    "plugins": {},
+    "appId": "biligame2195b75ef4e07bd3",
+    "version": "1.0.0"
 }
