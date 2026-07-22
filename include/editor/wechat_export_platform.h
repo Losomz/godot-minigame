@@ -4,6 +4,8 @@
 #include <godot_cpp/classes/editor_export_preset.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 
 namespace godot {
 class Control;
@@ -26,6 +28,8 @@ private:
     godot::ProgressBar *download_progress_bar = nullptr;
     godot::String active_download_filename;
     double export_progress_value = 0.0;
+    godot::Array previous_native_audio_subpackages;
+    godot::PackedStringArray previous_native_audio_output_paths;
 
 protected:
 	static void _bind_methods();
@@ -37,7 +41,7 @@ public:
 	virtual godot::String _get_name() const override;
 	virtual godot::String _get_os_name() const override;
 	virtual godot::Ref<godot::Texture2D> _get_logo() const override;
-	
+
     virtual godot::Error _export_project(const godot::Ref<godot::EditorExportPreset> &p_preset, bool p_debug, const godot::String &p_path, godot::BitField<godot::EditorExportPlatform::DebugFlags> p_flags) override;
 	virtual godot::Error _export_pack(const godot::Ref<godot::EditorExportPreset> &p_preset, bool p_debug, const godot::String &p_path, godot::BitField<godot::EditorExportPlatform::DebugFlags> p_flags) override;
     virtual godot::Error _export_zip(const godot::Ref<godot::EditorExportPreset> &p_preset, bool p_debug, const godot::String &p_path, godot::BitField<godot::EditorExportPlatform::DebugFlags> p_flags) override;
@@ -53,6 +57,9 @@ public:
     godot::Error _setup_wechat_template(const godot::Ref<godot::EditorExportPreset> &p_preset, const godot::String &p_path);
     void _modify_json_configs(const godot::Ref<godot::EditorExportPreset> &p_preset, const godot::String &p_path);
     void _copy_export_images(const godot::Ref<godot::EditorExportPreset> &p_preset, const godot::String &p_path);
+    godot::Error _prepare_native_audio_runtime(const godot::Ref<godot::EditorExportPreset> &p_preset, const godot::String &p_path);
+    godot::Error _finalize_native_audio_runtime(const godot::String &p_path, bool p_plugin_exported);
+    godot::Error _merge_native_audio_subpackages(const godot::String &p_path);
     void _show_download_progress_dialog(const godot::String &p_filename);
     void _hide_download_progress_dialog();
     void _set_export_progress(double p_progress, const godot::String &p_text = "");

@@ -28,7 +28,7 @@ Always work in this order:
 | Core build and runtime glue | `patches/.../core/001-build-and-runtime-glue.patch` | `modules/raycast/SCsub`, `platform/web/SCsub`, `platform/web/detect.py`, `platform/web/javascript_bridge_singleton.cpp`, `platform/web/js/engine/{config.js,engine.js,features.js,preloader.js}`, `platform/web/js/libs/{library_godot_javascript_singleton.js,library_godot_os.js}` | Yes | Aligns official Godot with WeChat runtime assumptions and bundled source files |
 | File system and persistence | `sources/.../platform/web/js/libs/library_godot_fs.js` plus `godot_process.js` | `platform/web/js/libs/library_godot_fs.js`, repo-root `godot_process.js` | Yes | Ships the public readable WXMEMFS implementation under the actual filename loaded by `platform/web/SCsub` so `user://` works without donor access |
 | HTTP and download pipeline | `sources/.../platform/web/js/libs/library_godot_fetch.js` plus engine patch | `platform/web/js/libs/library_godot_fetch.js`, `platform/web/js/engine/{engine.js,preloader.js,config.js}` | Yes | Replaces browser fetch assumptions with WeChat-compatible loading and chunk handling |
-| Audio runtime | `sources/.../platform/web/js/libs/library_godot_audio.js` | `platform/web/js/libs/library_godot_audio.js` | Yes | Ships the current stable WeChat audio path with pooled context cleanup |
+| Audio runtime | `sources/.../platform/web/js/libs/library_godot_audio.js` plus `patches/.../core/002-native-audio-routing.patch` | `platform/web/audio_driver_web.cpp`, `platform/web/godot_audio.h`, `platform/web/js/libs/library_godot_audio.js` | Yes | Keeps short samples on WebAudio and routes long audio to `InnerAudioContext` through either an 8 MiB bounded cache or package manifest |
 | Display and input | `sources/.../platform/web/js/libs/{library_godot_display.js,library_godot_input.js}` | `platform/web/js/libs/library_godot_display.js`, `platform/web/js/libs/library_godot_input.js` | Yes | Fixes DPI, window sizing, and keyboard bridge behavior |
 | Runtime shell | `assets/min-runtime/*` and `scripts/install_min_runtime.py` | downstream host project files `godot-sdk.js`, `godot-loader.js` | Yes for host runtime | Removes dependency on the old machine-local `godot-minigame-sdk` |
 | Packaging helpers | `sources/.../{compress_wasm.bat,compress_wasm.sh,godot_process.js}` | repo-root helper scripts | Yes | Post-processes generated `godot.js` and produces `.wasm.br` |
@@ -46,6 +46,7 @@ Its contents are the readable WXMEMFS implementation used by the public package.
 
 - `patches/godot-4.6.2-rc-a16e481cf4/core/series.txt`
 - `patches/godot-4.6.2-rc-a16e481cf4/core/001-build-and-runtime-glue.patch`
+- `patches/godot-4.6.2-rc-a16e481cf4/core/002-native-audio-routing.patch`
 
 ### Core source root
 
@@ -61,6 +62,7 @@ Its contents are the readable WXMEMFS implementation used by the public package.
 - exposes WeChat feature checks in `library_godot_os.js`
 - disables `JavaScriptBridge::eval(...)` in WeChat
 - preloads the public blob/crypto/fs files before normal web libraries
+- routes long WeChat audio through native playback with content-addressed cache limits
 
 ### Search anchors
 

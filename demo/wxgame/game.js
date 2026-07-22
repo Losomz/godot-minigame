@@ -1,3 +1,5 @@
+import './native-audio-config'
+import './native-audio-manifest'
 import './weapp-adapter'
 import './godot-loader'
 function checkUpdate() {
@@ -55,11 +57,11 @@ const config = {
             bottom: 20,
         },
     },
-    materialConfig: { // 背景图或背景视频，两者都填时，先展示背景图，视频可播放后，播放视频 
+    materialConfig: { // 背景图或背景视频，两者都填时，先展示背景图，视频可播放后，播放视频
         backgroundImage: 'images/background.jpg',
         backgroundVideo: '',
         iconImage: 'images/logo.png',
-        // icon图片，一般不更换 
+        // icon图片，一般不更换
     },
 };
 GameGlobal.godotLoader = new GodotLoader(canvas, config);

@@ -4,8 +4,8 @@ const GODOT_JS_PATH = "./bin/.web_zip/godot.js";
 const WASM_IMPORTS_MARKER = "var wasmImports={";
 
 /**
- * Post-process the generated Emscripten glue so the WeChat runtime stays
- * compatible with Godot's output.
+ * Post-process the generated Emscripten glue so the WeChat runtime and the
+ * experimental EmscriptenGLX path stay compatible with Godot's output.
  *
  * Keep this file focused on generated-JS compatibility only. Build-time
  * decisions such as compiler/linker flags belong in platform/web/detect.py.
@@ -47,11 +47,16 @@ const REPLACE_RULES = [
         match: `e instanceof WebAssembly.RuntimeError`,
         replace: `e`,
     },
-    {
-        name: "wasm-runtimeerror-constructor",
-        match: `var e=new WebAssembly.RuntimeError(what);`,
-        replace: `var e=(typeof WebAssembly!=="undefined"&&typeof WebAssembly.RuntimeError==="function")?new WebAssembly.RuntimeError(what):new Error(what);`,
-    },
+	{
+		name: "wasm-runtimeerror-constructor",
+		match: `var e=new WebAssembly.RuntimeError(what);`,
+		replace: `var e=(typeof WebAssembly!=="undefined"&&typeof WebAssembly.RuntimeError==="function")?new WebAssembly.RuntimeError(what):new Error(what);`,
+	},
+	{
+		name: "wx-glx-after-do-frame-wrapper",
+		match: `Module.wxContextGlobal.registerAfterDoFrame(Module._glxCommandBufferFlush)`,
+		replace: `Module.wxContextGlobal.registerAfterDoFrame(function(){return Module._glxCommandBufferFlush();})`,
+	},
     {
         name: "stat-ino-guard",
         match: `HEAP64[buf+88>>3]=BigInt(stat.ino);`,
