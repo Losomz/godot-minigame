@@ -1,0 +1,2 @@
+GameGlobal.__godotMinigameNativeAudioMinDurationSeconds = 3;
+GameGlobal.__godotMinigameNativeAudioCacheLimitBytes = 8388608;
