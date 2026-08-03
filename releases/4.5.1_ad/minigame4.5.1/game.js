@@ -1,5 +1,4 @@
 import './weapp-adapter'
-import './wx-ad-bridge'
 import './godot-loader'
 function checkUpdate() {
     const updateManager = wx.getUpdateManager();
