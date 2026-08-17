@@ -116,6 +116,7 @@ jobs:
         run: |
           cd godot
           rg -n "WXMEMFS|write_offset|getWindowInfo|showKeyboard|wx.exitMiniProgram|wasm_simd|wasm\.br" platform/web modules || true
+          node ../godot-minigame/skills/scripts/validate_template_runtime.js ../godot-minigame/demo/wxgame wxglx
 
       # ============================================================
       # 7. 编译 2D 裁剪模板
