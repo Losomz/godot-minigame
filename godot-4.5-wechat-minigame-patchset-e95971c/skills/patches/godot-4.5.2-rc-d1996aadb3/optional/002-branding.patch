@@ -1,0 +1,16 @@
+diff --git a/version.py b/version.py
+index 309e2f17f536eaa60b3418fad7e8ccfd6e85e4e5..624ee2e6ea59ea4562f9294dd21b6e4f3f01548d 100644
+--- a/version.py
++++ b/version.py
+@@ -1,9 +1,9 @@
+ short_name = "godot"
+-name = "Godot Engine"
++name = "Godot Engine for Wechat"
+ major = 4
+ minor = 5
+ patch = 2
+ status = "rc"
+ module_config = ""
+-website = "https://godotengine.org"
++website = "https://get.godots.app"
+ docs = "4.5"
