@@ -1,1 +1,446 @@
-GameGlobal.GodotLoader=class{constructor(t,i){this.onScreenCanvas=t,this.offScreenCanvas=document.createElement("canvas"),this.config=i,this.progress=0,this.currentText=i.textConfig.firstStartText,this.backgroundImage=null,this.iconImage=null,this.dpr=window.devicePixelRatio||1,this.initWebGL(),this.loadImages(),this.resizeCanvases(),window.addEventListener("resize",(()=>this.resizeCanvases())),this.render(),this.loadGameEngine()}initWebGL(){if(this.gl=this.onScreenCanvas.getContext("webgl2",{alpha:!1,antialias:!1,depth:!0,enableExtensionsByDefault:1,explicitSwapControl:1,failIfMajorPerformanceCaveat:!1,majorVersion:2,minorVersion:0,powerPreference:"default",premultipliedAlpha:!0,preserveDrawingBuffer:!0,proxyContextToMainThread:0,renderViaOffscreenBackBuffer:!0,stencil:!1}),!this.gl)return void console.error("Unable to initialize WebGL. Your browser may not support it.");const t=this.createShader(this.gl.VERTEX_SHADER,"\n            attribute vec2 a_position;\n            attribute vec2 a_texCoord;\n            varying vec2 v_texCoord;\n            void main() {\n                gl_Position = vec4(a_position, 0, 1);\n                v_texCoord = vec2(a_texCoord.x, 1.0 - a_texCoord.y);\n            }\n        "),i=this.createShader(this.gl.FRAGMENT_SHADER,"\n            precision highp float;\n            uniform sampler2D u_image;\n            varying vec2 v_texCoord;\n            void main() {\n                gl_FragColor = texture2D(u_image, v_texCoord);\n            }\n        ");this.program=this.createProgram(t,i),this.positionLocation=this.gl.getAttribLocation(this.program,"a_position"),this.texCoordLocation=this.gl.getAttribLocation(this.program,"a_texCoord"),this.positionBuffer=this.gl.createBuffer(),this.gl.bindBuffer(this.gl.ARRAY_BUFFER,this.positionBuffer),this.gl.bufferData(this.gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),this.gl.STATIC_DRAW),this.texCoordBuffer=this.gl.createBuffer(),this.gl.bindBuffer(this.gl.ARRAY_BUFFER,this.texCoordBuffer),this.gl.bufferData(this.gl.ARRAY_BUFFER,new Float32Array([0,0,1,0,0,1,1,1]),this.gl.STATIC_DRAW),this.texture=this.gl.createTexture(),this.gl.bindTexture(this.gl.TEXTURE_2D,this.texture),this.gl.texParameteri(this.gl.TEXTURE_2D,this.gl.TEXTURE_WRAP_S,this.gl.CLAMP_TO_EDGE),this.gl.texParameteri(this.gl.TEXTURE_2D,this.gl.TEXTURE_WRAP_T,this.gl.CLAMP_TO_EDGE),this.gl.texParameteri(this.gl.TEXTURE_2D,this.gl.TEXTURE_MIN_FILTER,this.gl.LINEAR),this.gl.texParameteri(this.gl.TEXTURE_2D,this.gl.TEXTURE_MAG_FILTER,this.gl.LINEAR)}createShader(t,i){const e=this.gl.createShader(t);return this.gl.shaderSource(e,i),this.gl.compileShader(e),this.gl.getShaderParameter(e,this.gl.COMPILE_STATUS)?e:(console.error("An error occurred compiling the shaders: "+this.gl.getShaderInfoLog(e)),this.gl.deleteShader(e),null)}createProgram(t,i){const e=this.gl.createProgram();return this.gl.attachShader(e,t),this.gl.attachShader(e,i),this.gl.linkProgram(e),this.gl.getProgramParameter(e,this.gl.LINK_STATUS)?e:(console.error("Unable to initialize the shader program: "+this.gl.getProgramInfoLog(e)),null)}loadImages(){this.config.materialConfig.backgroundImage&&(this.backgroundImage=new Image,this.backgroundImage.src=this.config.materialConfig.backgroundImage,this.backgroundImage.onload=()=>this.render()),this.config.materialConfig.iconImage&&(this.iconImage=new Image,this.iconImage.src=this.config.materialConfig.iconImage,this.iconImage.onload=()=>this.render())}resizeCanvases(){const t=window.innerWidth,i=window.innerHeight;this.onScreenCanvas.width=t*this.dpr,this.onScreenCanvas.height=i*this.dpr,this.onScreenCanvas.style.width=`${t}px`,this.onScreenCanvas.style.height=`${i}px`,this.offScreenCanvas.width=t*this.dpr,this.offScreenCanvas.height=i*this.dpr,this.gl.viewport(0,0,this.onScreenCanvas.width,this.onScreenCanvas.height),this.render()}render(){const t=this.offScreenCanvas.getContext("2d"),{width:i,height:e}=this.offScreenCanvas;t.clearRect(0,0,i,e),t.imageSmoothingEnabled=!0,t.imageSmoothingQuality="high",this.backgroundImage&&t.drawImage(this.backgroundImage,0,0,i,e);const r=this.config.barConfig.style,s=this.config.iconConfig.style,h=(i-r.width*this.dpr)/2,o=e-s.bottom*this.dpr-s.height*this.dpr-30*this.dpr-r.height*this.dpr;if(t.fillStyle=r.backgroundColor,this.drawRoundedRect(t,h,o,r.width*this.dpr,r.height*this.dpr,r.borderRadius*this.dpr),this.progress>0){t.fillStyle=r.foregroundColor;const i=Math.max(0,(r.width*this.dpr-2*r.padding*this.dpr)*this.progress);this.drawRoundedRect(t,h+r.padding*this.dpr,o+r.padding*this.dpr,i,r.height*this.dpr-2*r.padding*this.dpr,(r.borderRadius-r.padding)*this.dpr)}const a=this.config.textConfig;if(t.font=a.style.fontSize*this.dpr+"px Arial",t.fillStyle=a.style.color,t.textAlign="center",t.textBaseline="middle",t.fillText(this.currentText,i/2,o+r.height*this.dpr/2),this.config.iconConfig.visible&&this.iconImage){const r=(i-s.width*this.dpr)/2,h=e-s.bottom*this.dpr-s.height*this.dpr;t.drawImage(this.iconImage,r,h,s.width*this.dpr,s.height*this.dpr)}this.renderToWebGL()}drawRoundedRect(t,i,e,r,s,h){r<2*h&&(h=r/2),s<2*h&&(h=s/2),t.beginPath(),t.moveTo(i+h,e),t.arcTo(i+r,e,i+r,e+s,h),t.arcTo(i+r,e+s,i,e+s,h),t.arcTo(i,e+s,i,e,h),t.arcTo(i,e,i+r,e,h),t.closePath(),t.fill()}renderToWebGL(){this.gl.bindTexture(this.gl.TEXTURE_2D,this.texture),this.gl.texImage2D(this.gl.TEXTURE_2D,0,this.gl.RGBA,this.gl.RGBA,this.gl.UNSIGNED_BYTE,this.offScreenCanvas),this.gl.useProgram(this.program),this.gl.bindBuffer(this.gl.ARRAY_BUFFER,this.positionBuffer),this.gl.enableVertexAttribArray(this.positionLocation),this.gl.vertexAttribPointer(this.positionLocation,2,this.gl.FLOAT,!1,0,0),this.gl.bindBuffer(this.gl.ARRAY_BUFFER,this.texCoordBuffer),this.gl.enableVertexAttribArray(this.texCoordLocation),this.gl.vertexAttribPointer(this.texCoordLocation,2,this.gl.FLOAT,!1,0,0),this.gl.drawArrays(this.gl.TRIANGLE_STRIP,0,4)}updateProgress(t,i){this.progress=t,i&&(this.currentText=i),this.render()}loadGameEngine(){wx.loadSubpackage({complete:t=>{},name:"engine",success:()=>{this.progress=1,this.updateProgress(this.progress,this.config.textConfig.initText)}}).onProgressUpdate((({progress:t})=>{console.log("progress:",t),this.progress=t/100,this.updateProgress(this.progress,this.config.textConfig.downloadingText[0])}))}cleanup(){window.removeEventListener("resize",this.resizeHandler),this.gl.deleteProgram(this.program),this.gl.deleteBuffer(this.positionBuffer),this.gl.deleteBuffer(this.texCoordBuffer),this.gl.deleteTexture(this.texture),this.gl.bindBuffer(this.gl.ARRAY_BUFFER,null),this.gl.bindTexture(this.gl.TEXTURE_2D,null),this.gl.useProgram(null),this.gl.disable(this.gl.BLEND),this.gl.disable(this.gl.DEPTH_TEST),this.gl.disable(this.gl.CULL_FACE),this.gl.viewport(0,0,this.gl.canvas.width,this.gl.canvas.height),this.gl.clearColor(0,0,0,0),this.gl.clear(this.gl.COLOR_BUFFER_BIT)}};
+(function (global) {
+    const root = global;
+    const windowObject = root.window || root;
+    const gameGlobal = root.GameGlobal || (root.GameGlobal = {});
+    const wxApi = root.wx;
+
+    class GodotLoader {
+        constructor(onScreenCanvas, config) {
+            this.onScreenCanvas = onScreenCanvas;
+            this.offScreenCanvas = document.createElement("canvas");
+            this.config = config;
+            this.progress = 0;
+            this.currentText = config.textConfig.firstStartText;
+            this.backgroundImage = null;
+            this.iconImage = null;
+            this.dpr = this.getDevicePixelRatio();
+            this.resizeHandler = this.resizeCanvases.bind(this);
+
+            this.initWebGL();
+            this.loadImages();
+            this.resizeCanvases();
+            windowObject.addEventListener("resize", this.resizeHandler);
+
+            this.render();
+            this.loadGameEngine();
+        }
+
+        getWindowInfo() {
+            if (wxApi && typeof wxApi.getWindowInfo === "function") {
+                return wxApi.getWindowInfo();
+            }
+            if (wxApi && typeof wxApi.getSystemInfoSync === "function") {
+                return wxApi.getSystemInfoSync();
+            }
+            return null;
+        }
+
+        getDevicePixelRatio() {
+            const info = this.getWindowInfo();
+            const ratio = Math.max(
+                1,
+                Number(info && (info.pixelRatio || info.devicePixelRatio)) ||
+                Number(gameGlobal.__godotMinigamePixelRatio) ||
+                Number(windowObject.devicePixelRatio) ||
+                1
+            );
+
+            gameGlobal.__godotMinigamePixelRatio = ratio;
+            this.syncWindowDevicePixelRatio(ratio);
+            return ratio;
+        }
+
+        syncWindowDevicePixelRatio(ratio) {
+            try {
+                const descriptor = Object.getOwnPropertyDescriptor(windowObject, "devicePixelRatio");
+                if (!descriptor || descriptor.configurable) {
+                    Object.defineProperty(windowObject, "devicePixelRatio", {
+                        configurable: true,
+                        get: () => gameGlobal.__godotMinigamePixelRatio || ratio,
+                    });
+                } else if (descriptor.writable || descriptor.set) {
+                    windowObject.devicePixelRatio = ratio;
+                }
+            } catch (err) {
+                try {
+                    windowObject.devicePixelRatio = ratio;
+                } catch (assignErr) {}
+            }
+        }
+
+        getViewportSize() {
+            const info = this.getWindowInfo();
+            if (info && info.windowWidth && info.windowHeight) {
+                return {
+                    width: info.windowWidth,
+                    height: info.windowHeight,
+                };
+            }
+            return {
+                width: windowObject.innerWidth,
+                height: windowObject.innerHeight,
+            };
+        }
+
+        initWebGL() {
+            const attrs = {
+                alpha: false,
+                antialias: false,
+                depth: true,
+                enableExtensionsByDefault: 1,
+                explicitSwapControl: 1,
+                failIfMajorPerformanceCaveat: false,
+                majorVersion: 2,
+                minorVersion: 0,
+                powerPreference: "default",
+                premultipliedAlpha: true,
+                preserveDrawingBuffer: true,
+                proxyContextToMainThread: 0,
+                renderViaOffscreenBackBuffer: true,
+                stencil: false,
+            };
+
+            const useWXGLX =
+                gameGlobal.__GODOT_DISABLE_WXGLX !== true &&
+                !!wxApi &&
+                !!wxApi.env &&
+                !!wxApi.env.isSupportEmscriptenGLX;
+            gameGlobal.__godotMinigameWXGLXEnabled = useWXGLX;
+            const contextType = useWXGLX ? "wxwebgl2" : "webgl2";
+            this.gl = this.onScreenCanvas.getContext(contextType, attrs);
+            if (!this.gl) {
+                console.error(`Unable to initialize ${contextType}.`);
+                return;
+            }
+
+            const vertexShaderSource = `
+                attribute vec2 a_position;
+                attribute vec2 a_texCoord;
+                varying vec2 v_texCoord;
+                void main() {
+                    gl_Position = vec4(a_position, 0.0, 1.0);
+                    v_texCoord = vec2(a_texCoord.x, 1.0 - a_texCoord.y);
+                }
+            `;
+
+            const fragmentShaderSource = `
+                precision highp float;
+                uniform sampler2D u_image;
+                varying vec2 v_texCoord;
+                void main() {
+                    gl_FragColor = texture2D(u_image, v_texCoord);
+                }
+            `;
+
+            const vertexShader = this.createShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+            const fragmentShader = this.createShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+            this.program = this.createProgram(vertexShader, fragmentShader);
+            this.positionLocation = this.gl.getAttribLocation(this.program, "a_position");
+            this.texCoordLocation = this.gl.getAttribLocation(this.program, "a_texCoord");
+
+            this.positionBuffer = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+            this.gl.bufferData(
+                this.gl.ARRAY_BUFFER,
+                new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+                this.gl.STATIC_DRAW
+            );
+
+            this.texCoordBuffer = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.texCoordBuffer);
+            this.gl.bufferData(
+                this.gl.ARRAY_BUFFER,
+                new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]),
+                this.gl.STATIC_DRAW
+            );
+
+            this.texture = this.gl.createTexture();
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texture);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+        }
+
+        createShader(type, source) {
+            const shader = this.gl.createShader(type);
+            this.gl.shaderSource(shader, source);
+            this.gl.compileShader(shader);
+            if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+                console.error("Shader compile failed: " + this.gl.getShaderInfoLog(shader));
+                this.gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        createProgram(vertexShader, fragmentShader) {
+            const program = this.gl.createProgram();
+            this.gl.attachShader(program, vertexShader);
+            this.gl.attachShader(program, fragmentShader);
+            this.gl.linkProgram(program);
+            if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+                console.error("Program link failed: " + this.gl.getProgramInfoLog(program));
+                return null;
+            }
+            return program;
+        }
+
+        imageSourceFallbacks(src) {
+            if (!src || /^(https?:|data:|wxfile:|file:)/.test(src)) {
+                return src ? [src] : [];
+            }
+
+            const relative = src.charAt(0) === "/" ? src.slice(1) : src;
+            return [relative, "/" + relative].filter((item, index, list) => item && list.indexOf(item) === index);
+        }
+
+        loadImage(src, label, assign) {
+            const sources = this.imageSourceFallbacks(src);
+            if (!sources.length) {
+                return;
+            }
+
+            const image = new Image();
+            let index = 0;
+            image.onload = () => {
+                assign(image);
+                this.render();
+            };
+            image.onerror = (event) => {
+                if (index + 1 < sources.length) {
+                    index += 1;
+                    image.src = sources[index];
+                    return;
+                }
+                console.warn("[godot-loader] image load failed", label, image.src, event && (event.errMsg || event.message || event));
+            };
+            image.src = sources[index];
+        }
+
+        loadImages() {
+            const materialConfig = this.config.materialConfig || {};
+            this.loadImage(materialConfig.backgroundImage, "background", (image) => {
+                this.backgroundImage = image;
+            });
+            this.loadImage(materialConfig.iconImage, "icon", (image) => {
+                this.iconImage = image;
+            });
+        }
+
+        resizeCanvases() {
+            const viewport = this.getViewportSize();
+            const width = viewport.width;
+            const height = viewport.height;
+
+            this.dpr = this.getDevicePixelRatio();
+            this.onScreenCanvas.width = width * this.dpr;
+            this.onScreenCanvas.height = height * this.dpr;
+            this.onScreenCanvas.style.width = width + "px";
+            this.onScreenCanvas.style.height = height + "px";
+            this.offScreenCanvas.width = width * this.dpr;
+            this.offScreenCanvas.height = height * this.dpr;
+
+            if (this.gl) {
+                this.gl.viewport(0, 0, this.onScreenCanvas.width, this.onScreenCanvas.height);
+            }
+
+            this.render();
+        }
+
+        drawRoundedRect(ctx, x, y, width, height, radius) {
+            if (width < 2 * radius) {
+                radius = width / 2;
+            }
+            if (height < 2 * radius) {
+                radius = height / 2;
+            }
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.arcTo(x + width, y, x + width, y + height, radius);
+            ctx.arcTo(x + width, y + height, x, y + height, radius);
+            ctx.arcTo(x, y + height, x, y, radius);
+            ctx.arcTo(x, y, x + width, y, radius);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        drawCoverImage(ctx, image, width, height) {
+            if (!image.width || !image.height) {
+                ctx.drawImage(image, 0, 0, width, height);
+                return;
+            }
+
+            const scale = Math.max(width / image.width, height / image.height);
+            const drawWidth = image.width * scale;
+            const drawHeight = image.height * scale;
+            ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+        }
+
+        render() {
+            if (!this.gl) {
+                return;
+            }
+
+            const ctx = this.offScreenCanvas.getContext("2d");
+            const width = this.offScreenCanvas.width;
+            const height = this.offScreenCanvas.height;
+
+            ctx.clearRect(0, 0, width, height);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+
+            if (this.backgroundImage) {
+                this.drawCoverImage(ctx, this.backgroundImage, width, height);
+            }
+
+            const barConfig = this.config.barConfig.style;
+            const iconConfig = this.config.iconConfig.style;
+            const barX = (width - barConfig.width * this.dpr) / 2;
+            const barY =
+                height -
+                iconConfig.bottom * this.dpr -
+                iconConfig.height * this.dpr -
+                30 * this.dpr -
+                barConfig.height * this.dpr;
+
+            ctx.fillStyle = barConfig.backgroundColor;
+            this.drawRoundedRect(
+                ctx,
+                barX,
+                barY,
+                barConfig.width * this.dpr,
+                barConfig.height * this.dpr,
+                barConfig.borderRadius * this.dpr
+            );
+
+            if (this.progress > 0) {
+                const progressWidth = Math.max(
+                    0,
+                    (barConfig.width * this.dpr - 2 * barConfig.padding * this.dpr) * this.progress
+                );
+                ctx.fillStyle = barConfig.foregroundColor;
+                this.drawRoundedRect(
+                    ctx,
+                    barX + barConfig.padding * this.dpr,
+                    barY + barConfig.padding * this.dpr,
+                    progressWidth,
+                    barConfig.height * this.dpr - 2 * barConfig.padding * this.dpr,
+                    (barConfig.borderRadius - barConfig.padding) * this.dpr
+                );
+            }
+
+            const textConfig = this.config.textConfig;
+            ctx.font = textConfig.style.fontSize * this.dpr + "px Arial";
+            ctx.fillStyle = textConfig.style.color;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(this.currentText, width / 2, barY + (barConfig.height * this.dpr) / 2);
+
+            if (this.config.iconConfig.visible && this.iconImage) {
+                const iconX = (width - iconConfig.width * this.dpr) / 2;
+                const iconY = height - iconConfig.bottom * this.dpr - iconConfig.height * this.dpr;
+                ctx.drawImage(this.iconImage, iconX, iconY, iconConfig.width * this.dpr, iconConfig.height * this.dpr);
+            }
+
+            this.renderToWebGL();
+        }
+
+        renderToWebGL() {
+            if (!this.gl) {
+                return;
+            }
+
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texture);
+            this.gl.texImage2D(
+                this.gl.TEXTURE_2D,
+                0,
+                this.gl.RGBA,
+                this.gl.RGBA,
+                this.gl.UNSIGNED_BYTE,
+                this.offScreenCanvas
+            );
+
+            this.gl.useProgram(this.program);
+
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+            this.gl.enableVertexAttribArray(this.positionLocation);
+            this.gl.vertexAttribPointer(this.positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.texCoordBuffer);
+            this.gl.enableVertexAttribArray(this.texCoordLocation);
+            this.gl.vertexAttribPointer(this.texCoordLocation, 2, this.gl.FLOAT, false, 0, 0);
+
+            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+
+            if (typeof this.gl.flush === "function") {
+                this.gl.flush();
+            }
+            if (typeof this.gl.commit === "function") {
+                this.gl.commit();
+            }
+        }
+
+        normalizeProgress(progress) {
+            const value = Number(progress) || 0;
+            return Math.max(0, Math.min(1, value > 1 ? value / 100 : value));
+        }
+
+        updateProgress(progress, text) {
+            const normalized = this.normalizeProgress(progress);
+            this.progress = Math.max(this.progress || 0, normalized);
+            if (text) {
+                this.currentText = text;
+            }
+            this.render();
+
+            if (typeof windowObject.requestAnimationFrame === "function") {
+                windowObject.requestAnimationFrame(() => this.render());
+            }
+        }
+
+        loadGameEngine() {
+            if (!wxApi || typeof wxApi.loadSubpackage !== "function") {
+                return;
+            }
+
+            const task = wxApi.loadSubpackage({
+                name: "engine",
+                success: () => {
+                    this.progress = 1;
+                    this.updateProgress(this.progress, this.config.textConfig.initText);
+                },
+            });
+
+            if (task && typeof task.onProgressUpdate === "function") {
+                task.onProgressUpdate(({ progress }) => {
+                    this.updateProgress(progress, this.config.textConfig.downloadingText[0]);
+                });
+            }
+        }
+
+        cleanup() {
+            windowObject.removeEventListener("resize", this.resizeHandler);
+
+            if (!this.gl) {
+                return;
+            }
+
+            this.gl.deleteProgram(this.program);
+            this.gl.deleteBuffer(this.positionBuffer);
+            this.gl.deleteBuffer(this.texCoordBuffer);
+            this.gl.deleteTexture(this.texture);
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, null);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, null);
+            this.gl.useProgram(null);
+            this.gl.disable(this.gl.BLEND);
+            this.gl.disable(this.gl.DEPTH_TEST);
+            this.gl.disable(this.gl.CULL_FACE);
+            this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+            this.gl.clearColor(0, 0, 0, 0);
+            this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        }
+    }
+
+    gameGlobal.GodotLoader = GodotLoader;
+})(typeof globalThis !== "undefined" ? globalThis : this);
