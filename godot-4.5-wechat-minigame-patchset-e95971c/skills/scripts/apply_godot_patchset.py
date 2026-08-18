@@ -13,8 +13,22 @@ SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_BUNDLE = "godot-4.6.2-rc-a16e481cf4"
 
 
-def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
+def run(
+    cmd: list[str], cwd: Path, input_text: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, text=True, input=input_text, capture_output=True)
+
+
+def run_patch(cmd: list[str], cwd: Path, patch_path: Path) -> subprocess.CompletedProcess[bytes]:
+    patch_bytes = patch_path.read_bytes().replace(b"\r\n", b"\n")
+    return subprocess.run(cmd, cwd=cwd, input=patch_bytes, capture_output=True)
+
+
+def process_error(result: subprocess.CompletedProcess) -> str:
+    output = result.stderr or result.stdout
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace").strip()
+    return output.strip()
 
 
 def git_output(target_repo: Path, *args: str) -> str:
@@ -80,23 +94,23 @@ def copy_optional_files(src_root: Path, dst_root: Path, rel_paths: list[str]) ->
 
 
 def apply_patch(target_repo: Path, patch_path: Path) -> None:
-    check = run(["git", "apply", "--check", str(patch_path)], target_repo)
+    check = run_patch(["git", "apply", "--check", "-"], target_repo, patch_path)
     if check.returncode != 0:
         raise RuntimeError(
-            f"Patch check failed: {patch_path}\n{check.stderr.strip() or check.stdout.strip()}"
+            f"Patch check failed: {patch_path}\n{process_error(check)}"
         )
-    apply = run(["git", "apply", str(patch_path)], target_repo)
+    apply = run_patch(["git", "apply", "-"], target_repo, patch_path)
     if apply.returncode != 0:
         raise RuntimeError(
-            f"Patch apply failed: {patch_path}\n{apply.stderr.strip() or apply.stdout.strip()}"
+            f"Patch apply failed: {patch_path}\n{process_error(apply)}"
         )
 
 
 def check_patch(target_repo: Path, patch_path: Path) -> None:
-    check = run(["git", "apply", "--check", str(patch_path)], target_repo)
+    check = run_patch(["git", "apply", "--check", "-"], target_repo, patch_path)
     if check.returncode != 0:
         raise RuntimeError(
-            f"Patch check failed: {patch_path}\n{check.stderr.strip() or check.stdout.strip()}"
+            f"Patch check failed: {patch_path}\n{process_error(check)}"
         )
 
 
