@@ -43,10 +43,10 @@ Windows 下应将 Godot 源码放在短路径（例如 `C:\g`），避免最终 
 保留 2D、中文、音频、网络和常见资源格式的通用小游戏裁切构建：
 
 ```powershell
-scons platform=web target=template_release threads=no wasm_simd=no profile=configs/wechat_2d_minimal.py
+scons platform=web target=template_release threads=no wasm_simd=no profile=configs/wechat_2d.py
 ```
 
-`configs/wechat_2d_minimal.py` 按当前约 4.9 MB 产物记录每个关键模块的实际
+`configs/wechat_2d.py` 按当前约 4.9 MB 产物记录每个关键模块的实际
 开关状态和中文说明，可直接修改后构建新的裁切变体。
 
 ## 小游戏运行壳

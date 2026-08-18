@@ -16,7 +16,18 @@
         "showShadowRootInWxmlPanel": false,
         "packNpmRelationList": [],
         "ignoreUploadUnusedFiles": true,
-        "swc": false
+        "swc": false,
+        "compileWorklet": false,
+        "uglifyFileName": false,
+        "uploadWithSourceMap": true,
+        "packNpmManually": false,
+        "minifyWXSS": true,
+        "minifyWXML": true,
+        "localPlugins": false,
+        "disableUseStrict": false,
+        "useCompilerPlugins": false,
+        "condition": false,
+        "disableSWC": true
     },
     "compileType": "game",
     "libVersion": "latest",
@@ -29,6 +40,7 @@
         "ignore": [],
         "include": []
     },
-    "appid": "wxf40904ea6120ad08",
-    "simulatorPluginLibVersion": {}
+    "appid": "wxf9ba648c9c9836fb",
+    "simulatorPluginLibVersion": {},
+    "isGameTourist": false
 }

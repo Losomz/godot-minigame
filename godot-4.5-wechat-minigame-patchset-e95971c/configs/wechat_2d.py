@@ -1,4 +1,4 @@
-# Godot 4.5 WeChat Mini Game 2D minimal profile.
+# Godot 4.5 WeChat Mini Game 2D profile.
 #
 # 这是当前约 4.9 MB Brotli WASM 产物的裁切状态，不是下一轮建议值：
 # - True 表示当前保留或关闭总开关已生效。
@@ -6,7 +6,7 @@
 #
 # 构建命令：
 # scons platform=web target=template_release threads=no wasm_simd=no \
-#   profile=<patch-kit>/configs/wechat_2d_minimal.py
+#   profile=<patch-kit>/configs/wechat_2d.py
 #
 # threads 和 wasm_simd 属于微信平台兼容参数，继续放在构建命令中，不在
 # 这里重复配置。命令行参数优先级高于本文件。

@@ -1,6 +1,6 @@
-# Godot 4.5.1 Minimal WeChat Template
+# Godot 4.5.1 2D WeChat Template
 
-这是 Godot 4.5 微信小游戏的候选极简模板变体，目前不在
+这是 Godot 4.5 微信小游戏的候选 2D 模板变体，目前不在
 `resources/versions.yaml` 中发布，不会替换现有正式模板。
 
 ## 引擎基线
@@ -14,12 +14,12 @@
 
 配置文件：
 
-`godot-4.5-wechat-minigame-patchset-e95971c/configs/wechat_2d_minimal.py`
+`godot-4.5-wechat-minigame-patchset-e95971c/configs/wechat_2d.py`
 
 构建命令：
 
 ```powershell
-scons platform=web target=template_release threads=no wasm_simd=no profile=<patch-kit>/configs/wechat_2d_minimal.py
+scons platform=web target=template_release threads=no wasm_simd=no profile=<patch-kit>/configs/wechat_2d.py
 ```
 
 当前主要裁切完整 3D 和 XR，保留 2D 物理、2D 导航、中文、音频、
