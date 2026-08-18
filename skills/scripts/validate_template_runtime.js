@@ -47,6 +47,15 @@ function validateTemplateRuntime(templateDir, mode = "webgl2") {
 
     const enginePath = path.join(root, "engine", "godot.js");
     const engine = fs.readFileSync(enginePath, "utf8");
+    if (/var\s+_emscripten_webgl_commit_frame\s*=\s*function\s*\(\s*\)\s*\{\s*\}\s*;/.test(engine)) {
+        throw new Error(`${enginePath} replaces Emscripten's frame commit with a no-op`);
+    }
+    if (
+        engine.includes("_emscripten_webgl_do_commit_frame") &&
+        !engine.includes("__godotMinigameOriginalCommitFrame")
+    ) {
+        throw new Error(`${enginePath} does not wrap Emscripten's frame commit for WeChat presentation`);
+    }
     const ratioStart = engine.indexOf("getPixelRatio:function()");
     const ratioBlock = ratioStart >= 0 ? engine.slice(ratioStart, ratioStart + 700) : "";
     if (!ratioBlock.includes("getWindowInfo")) {

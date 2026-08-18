@@ -116,7 +116,7 @@ jobs:
         run: |
           cd godot
           rg -n "WXMEMFS|write_offset|getWindowInfo|showKeyboard|wx.exitMiniProgram|wasm_simd|wasm\.br" platform/web modules || true
-          node ../godot-minigame/skills/scripts/validate_template_runtime.js ../godot-minigame/demo/wxgame wxglx
+          node ../godot-minigame/skills/tests/test_godot_process_commit_frame.js
 
       # ============================================================
       # 7. 编译 2D 裁剪模板
@@ -169,11 +169,21 @@ jobs:
 
           rg -q "FS.mount\\(WXMEMFS" action-artifact/engine/godot.js
           rg -q "nowPolyfill" action-artifact/engine/godot.js
+          rg -Fq "var __godotMinigameOriginalCommitFrame=_emscripten_webgl_commit_frame;" action-artifact/engine/godot.js
           rg -q "root.fsUtils = fsUtils" action-artifact/engine/godot-sdk.js
+          if rg -Fq "var _emscripten_webgl_commit_frame=function(){};" action-artifact/engine/godot.js; then
+            echo "godot.js replaces Emscripten frame commit with a no-op"
+            exit 1
+          fi
           if rg -q "FS.mount\\(IDBFS" action-artifact/engine/godot.js; then
             echo "godot.js was not post-processed"
             exit 1
           fi
+
+          mkdir -p action-runtime
+          cp ../godot-minigame/demo/wxgame/godot-loader.js action-runtime/godot-loader.js
+          cp -r action-artifact/engine action-runtime/engine
+          node ../godot-minigame/skills/scripts/validate_template_runtime.js action-runtime wxglx
 
       # ============================================================
       # 9. 显示编译结果
