@@ -16,12 +16,12 @@ bcee2939a2331977fc6b74e651b4a6b184a1ac6a0cb6fd19a0aa7df6bb1fb6d5  skills/referen
 2db01a300bb5386482c686511c9fbd2768d749ea87ea12a26d50a632d4d7d2e4  skills/scripts/install_min_runtime.py
 07f42d08dfa082408e0d27b41c9467b050b0006c3b814ba7bc67eda564972127  skills/sources/godot-4.5.2-rc-d1996aadb3/compress_wasm.bat
 543643c4437c26d0641c899b254d3a7ef0594319bb70a690da573176042e8d91  skills/sources/godot-4.5.2-rc-d1996aadb3/compress_wasm.sh
-42b4e965dd08ae72ac35cef73aef9d73d2237e95ee9ca9f1d69a2ede04b937cb  skills/sources/godot-4.5.2-rc-d1996aadb3/godot_process.js
+132d15cb1d5541e4ace6e0ab2a661b5222d8aa84337c9d02cd557100878a3028  skills/sources/godot-4.5.2-rc-d1996aadb3/godot_process.js
 36f6f4192181533e6e9a835c86b077b10825171c6c4f5c0c06a38991c467d098  skills/sources/godot-4.5.2-rc-d1996aadb3/optional/platform/web/js/libs/lib.wx.api.d.ts
 daf511fa6f6b99d067a36e98ceae914f101544e4535b827fd8ecb113d21405de  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_blob.js
 af0c108ac68fceba5b2b216561de137873a27408e58259389524916a6de26e8a  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_audio.js
 7b9f43d56bd9769a4f264b04d1c8d262307b80059104e8a28f39d7b7deb7ddb1  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_crypto.js
-c7e43ba6e421528d17e17ac110a90cefdda87be74d41492a4d275fb50212e62d  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_display.js
+4408355a868a24447913d0aa1b24a1c5dcb6899510b0cd1f6f47de9d9f568a79  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_display.js
 ffb778cb3e66f2046308ccffa2aa5c9d8dd8ae76346d2dfe44352254fe20b071  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_fetch.js
 02aa8c87e966d66d669a80590ef3fc40066df7c65b4f92225f9114392c82c025  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_fs.js
 28f6a191be760833493794dc7fd16044df78d1b2a58fe7c61091f5496fe3801c  skills/sources/godot-4.5.2-rc-d1996aadb3/platform/web/js/libs/library_godot_input.js

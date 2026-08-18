@@ -227,13 +227,23 @@ const GodotDisplayScreen = {
 			if (!GodotDisplayScreen.hidpi) {
 				return 1;
 			}
-			if (typeof wx !== "undefined" && wx.getWindowInfo) {
-				const info = wx.getWindowInfo();
-				if (info && info.pixelRatio) {
-					return info.pixelRatio;
+			let ratio = Number(
+				(typeof GameGlobal !== "undefined" && GameGlobal.__godotMinigamePixelRatio)
+				|| window.devicePixelRatio
+			) || 1;
+			try {
+				if (typeof wx !== "undefined") {
+					const info = wx.getWindowInfo
+						? wx.getWindowInfo()
+						: (wx.getSystemInfoSync ? wx.getSystemInfoSync() : null);
+					if (info) {
+						ratio = Number(info.pixelRatio || info.devicePixelRatio || ratio) || ratio;
+					}
 				}
+			} catch (e) {
+				// Keep the best available fallback when the host API is unavailable.
 			}
-			return window.devicePixelRatio || 1;
+			return Math.max(1, ratio);
 		},
 		isFullscreen: function () {
 			const elem = document.fullscreenElement || document.mozFullscreenElement
