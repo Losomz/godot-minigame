@@ -1,0 +1,12 @@
+{
+  "name": "godot-minigame-obfuscation",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Deterministic light obfuscation for Godot WeChat template entry scripts",
+  "scripts": {
+    "obfuscate": "node obfuscate_template.js"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "5.5.0"
+  }
+}

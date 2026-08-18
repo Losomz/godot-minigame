@@ -55,3 +55,4 @@ demo/minigame
 GITHUB_SECRETS.md
 dist
 latest.json
+/tools/obfuscation/node_modules/
