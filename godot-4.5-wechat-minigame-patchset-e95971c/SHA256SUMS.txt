@@ -3,7 +3,7 @@
 b194a705f7c87377073d6471b5237882285009e4f90b4692439eac156db04bc1  README.md
 50b83d250bc58484de59bf31d6d04eb72b08a1829abb6c09a80b795f79828caa  configs/wechat_2d.py
 dee69787af822abb1cb9166b8731f14362b942c33fc8569fb95104b7d6d50313  skills/assets/min-runtime/godot-loader.js
-fb3241543cd5445e75a008d2e1dbae819868bd851681a20c8b30bca85848e489  skills/assets/min-runtime/godot-sdk.js
+e62df63462cdb452b8ff600f87e032d32e6cd5be9dee6cbe1271651875355917  skills/assets/min-runtime/godot-sdk.js
 d2a6afe98410c65ecd1ca35a8af5d4d19b39286f5cbee27575b47e03763caa26  skills/patches/godot-4.5.2-rc-d1996aadb3/core/001-build-and-runtime-glue.patch
 168e63d678310159dc40f7f264743cee7577d6980f2e566181d7b363d70ab60e  skills/patches/godot-4.5.2-rc-d1996aadb3/core/series.txt
 43aeb56b5369aef1dd473d99e159d4a30d399939b405874c678226c990d85274  skills/patches/godot-4.5.2-rc-d1996aadb3/manifest.json

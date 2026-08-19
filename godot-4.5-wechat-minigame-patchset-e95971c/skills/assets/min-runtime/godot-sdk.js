@@ -4,6 +4,14 @@
     const gameGlobal = root.GameGlobal || (root.GameGlobal = {});
     const wxApi = root.wx;
 
+    const windowInfo = wxApi && typeof wxApi.getWindowInfo === "function"
+        ? wxApi.getWindowInfo()
+        : (wxApi && typeof wxApi.getSystemInfoSync === "function" ? wxApi.getSystemInfoSync() : null);
+    gameGlobal.__godotMinigamePixelRatio = Math.max(
+        1,
+        Number(windowInfo && (windowInfo.pixelRatio || windowInfo.devicePixelRatio)) || 1
+    );
+
     const nowStart = Date.now();
     function nowPolyfill() {
         return Date.now() - nowStart;

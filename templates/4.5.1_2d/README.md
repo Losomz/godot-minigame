@@ -27,8 +27,8 @@ HTTP/WebSocket、TLS、常见图片格式和 JavaScriptBridge。
 
 ## 当前产物
 
-- `engine/godot.wasm.br`: 5,082,353 bytes，约 4.85 MiB
-- `engine/godot.js`: 333,659 bytes
+- `engine/godot.wasm.br`: 5,081,102 bytes，约 4.85 MiB
+- `engine/godot.js`: 333,649 bytes
 - `engine/demo-pck.bin`: 3,128 bytes
 
 正式发布前仍需完成微信开发者工具和真机功能回归。
