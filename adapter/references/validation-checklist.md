@@ -21,7 +21,7 @@ If it differs, say so explicitly in the final report.
 If you used the bundled script, record the exact command:
 
 ```powershell
-python <skill-dir>\scripts\apply_godot_patchset.py <target-repo>
+python adapter\scripts\apply_godot_patchset.py
 ```
 
 If optional modules were included, record them too.
@@ -59,8 +59,8 @@ Intent:
 Run the bundled helpers:
 
 ```powershell
-node <skill-dir>\scripts\godot_process.js
-cmd /c <skill-dir>\scripts\compress_wasm.bat
+node .\godot_process.js
+cmd /c .\compress_wasm.bat
 ```
 
 Then confirm:

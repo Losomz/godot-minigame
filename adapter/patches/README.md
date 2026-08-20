@@ -5,10 +5,8 @@ This bundle reproduces the committed WeChat Mini Game adapter from downstream co
 ## Apply
 
 ```powershell
-git clone https://github.com/godotengine/godot.git godot-4.5-wechat
-cd godot-4.5-wechat
-git checkout d1996aadb3672d877a7ae5df772b45127cf2c77a
-python <kit>\scripts\apply_godot_patchset.py . --bundle godot-4.5.2-rc-d1996aadb3
+git submodule update --init godot
+python adapter\scripts\apply_godot_patchset.py
 ```
 
 The apply script rejects dirty trees and mismatched bases by default. This is deliberate: the patchset is a reproducible development baseline, not a best-effort patch for arbitrary 4.5 revisions.

@@ -6,7 +6,7 @@
 #
 # 构建命令：
 # scons platform=web target=template_release threads=no wasm_simd=no \
-#   profile=<patch-kit>/configs/wechat_2d.py
+#   profile=adapter/configs/wechat_2d.py
 #
 # threads 和 wasm_simd 属于微信平台兼容参数，继续放在构建命令中，不在
 # 这里重复配置。命令行参数优先级高于本文件。

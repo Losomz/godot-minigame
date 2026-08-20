@@ -6,7 +6,7 @@
 ## 引擎基线
 
 - Godot base: `d1996aadb3672d877a7ae5df772b45127cf2c77a`
-- Patch bundle: `godot-4.5.2-rc-d1996aadb3`
+- Adapter baseline: repository branch `4.5`
 - Emscripten: `4.0.10`
 - Template compatibility bucket: `4.5.1`
 
@@ -14,12 +14,12 @@
 
 配置文件：
 
-`godot-4.5-wechat-minigame-patchset-e95971c/configs/wechat_2d.py`
+`adapter/configs/wechat_2d.py`
 
 构建命令：
 
 ```powershell
-scons platform=web target=template_release threads=no wasm_simd=no profile=<patch-kit>/configs/wechat_2d.py
+scons platform=web target=template_release threads=no wasm_simd=no profile=adapter/configs/wechat_2d.py
 ```
 
 当前主要裁切完整 3D 和 XR，保留 2D 物理、2D 导航、中文、音频、

@@ -4,7 +4,7 @@
 
 插件本体更新不通过模板分发流程管理。模板通过 Release 资产分发，插件本身建议通过 Godot Asset Library 或仓库源码安装更新。
 
-如果要用 AI 协助做适配移植，请直接使用仓库里的 `skills/` 目录。
+如果要用 AI 协助做适配移植，请使用 `.agent/skills/godot-wechat-minigame-adapter/`。
 
 ## 功能
 
@@ -14,13 +14,13 @@
 - 导出时自动解压模板并生成小游戏目录
 - 支持将资源嵌入扩展产物
 - 提供可选的微信小游戏广告接入组件
-- 提供 `skills/` 作为 AI 适配移植技能目录
+- 提供独立的 Godot 4.5 微信适配源码与 Agent Skill
 
 ## 构建
 
 ```bash
 git clone <repo-url>
-git submodule update --init --recursive
+git submodule update --init godot-cpp
 ./build_osx.sh
 ```
 
@@ -76,10 +76,19 @@ godot4:
 - `include/`：头文件
 - `resources/`：嵌入资源
 - `templates/`：完整模板快照与可选模板组件
-- `skills/`：AI 适配移植技能目录
+- `adapter/`：Godot 4.5 微信适配代码、运行壳、工具和测试
+- `.agent/skills/`：Agent Skills 说明目录
 - `demo/`：示例项目
 - `tools/`：构建辅助脚本
 - `godot-cpp/`：submodule
+- `godot/`：可选的官方 Godot 4.5 submodule，由 gitlink 锁定精确基线
+
+维护引擎适配时再初始化官方 Godot 源码；普通克隆不会下载该子模块：
+
+```bash
+git submodule update --init godot
+python adapter/scripts/apply_godot_patchset.py
+```
 
 ## License
 

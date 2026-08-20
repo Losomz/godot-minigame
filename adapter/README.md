@@ -10,10 +10,8 @@
 ## 应用补丁
 
 ```powershell
-git clone https://github.com/godotengine/godot.git godot-4.5-wechat
-cd godot-4.5-wechat
-git checkout d1996aadb3672d877a7ae5df772b45127cf2c77a
-python <补丁包>\skills\scripts\apply_godot_patchset.py . --bundle godot-4.5.2-rc-d1996aadb3
+git submodule update --init godot
+python adapter\scripts\apply_godot_patchset.py
 ```
 
 脚本默认拒绝脏工作区和错误基线。不要使用 `--allow-base-mismatch` 作为常规安装方式。
@@ -21,7 +19,7 @@ python <补丁包>\skills\scripts\apply_godot_patchset.py . --bundle godot-4.5.2
 如果目标是工具箱导出流程，首次应用时改用下面的命令，同时加入编辑器导出 API。不要先执行上面的核心命令再重复应用：
 
 ```powershell
-python <补丁包>\skills\scripts\apply_godot_patchset.py . --bundle godot-4.5.2-rc-d1996aadb3 --include-optional export-api
+python adapter\scripts\apply_godot_patchset.py --include-optional export-api
 ```
 
 其他可选项：`branding` 只修改版本标识；`dev-types` 只安装微信 API 类型声明。
@@ -43,10 +41,10 @@ Windows 下应将 Godot 源码放在短路径（例如 `C:\g`），避免最终 
 保留 2D、中文、音频、网络和常见资源格式的通用小游戏裁切构建：
 
 ```powershell
-scons platform=web target=template_release threads=no wasm_simd=no profile=configs/wechat_2d.py
+scons platform=web target=template_release threads=no wasm_simd=no profile=adapter/configs/wechat_2d.py
 ```
 
-`configs/wechat_2d.py` 按当前约 4.9 MB 产物记录每个关键模块的实际
+`adapter/configs/wechat_2d.py` 按当前约 4.9 MB 产物记录每个关键模块的实际
 开关状态和中文说明，可直接修改后构建新的裁切变体。
 
 ## 小游戏运行壳
@@ -54,7 +52,7 @@ scons platform=web target=template_release threads=no wasm_simd=no profile=confi
 源码适配仍需要宿主提供 `fsUtils`、`GODOTSDK`、`nowPolyfill` 和加载器。安装包内最小运行壳：
 
 ```powershell
-python <补丁包>\skills\scripts\install_min_runtime.py <小游戏工程目录>
+python adapter\scripts\install_min_runtime.py <小游戏工程目录>
 ```
 
 加载顺序必须是 `godot-sdk.js`、`godot-loader.js`、生成的 `godot.js`。

@@ -1,12 +1,12 @@
 # Minimal SDK Runtime
 
-Use this reference when replacing the old external `godot-minigame-sdk` dependency with the public runtime shell shipped in this skill.
+Use this reference when replacing the old external `godot-minigame-sdk` dependency with the public runtime shell under `adapter/assets/min-runtime/`.
 
 ## Bundled Files
 
-- `assets/min-runtime/godot-sdk.js`
-- `assets/min-runtime/godot-loader.js`
-- `scripts/install_min_runtime.py`
+- `adapter/assets/min-runtime/godot-sdk.js`
+- `adapter/assets/min-runtime/godot-loader.js`
+- `adapter/scripts/install_min_runtime.py`
 
 ## What Current Godot Actually Uses
 

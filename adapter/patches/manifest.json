@@ -1,5 +1,4 @@
 {
-  "bundle": "godot-4.5.2-rc-d1996aadb3",
   "upstream_repo": "https://github.com/godotengine/godot",
   "base_ref": "d1996aadb3672d877a7ae5df772b45127cf2c77a",
   "base_label": "official 4.5 branch snapshot (4.5.2-rc, 2026-01-22)",

@@ -10,7 +10,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_DIR.parent
-DEFAULT_BUNDLE = "godot-4.6.2-rc-a16e481cf4"
+REPOSITORY_ROOT = SKILL_ROOT.parent
 
 
 def run(
@@ -38,8 +38,8 @@ def git_output(target_repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def load_manifest(bundle: str) -> tuple[Path, dict]:
-    manifest_path = SKILL_ROOT / "patches" / bundle / "manifest.json"
+def load_manifest() -> tuple[Path, dict]:
+    manifest_path = SKILL_ROOT / "patches" / "manifest.json"
     with manifest_path.open("r", encoding="utf-8") as fh:
         return manifest_path, json.load(fh)
 
@@ -118,8 +118,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Apply the bundled Godot WeChat Mini Game patch/source kit to an official checkout."
     )
-    parser.add_argument("target_repo", help="Path to the target Godot repo root")
-    parser.add_argument("--bundle", default=DEFAULT_BUNDLE, help="Bundle id to apply")
+    parser.add_argument(
+        "target_repo",
+        nargs="?",
+        default=str(REPOSITORY_ROOT / "godot"),
+        help="Path to the target Godot repo root (default: repository godot/ submodule)",
+    )
     parser.add_argument(
         "--include-optional",
         action="append",
@@ -142,7 +146,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     target_repo = Path(args.target_repo).resolve()
-    manifest_path, manifest = load_manifest(args.bundle)
+    manifest_path, manifest = load_manifest()
 
     try:
         ensure_repo_state(target_repo, manifest, args.allow_dirty, args.allow_base_mismatch)
@@ -151,14 +155,14 @@ def main() -> int:
         return 1
 
     patch_root = manifest_path.parent
-    source_root = SKILL_ROOT / "sources" / args.bundle
+    source_root = SKILL_ROOT / "sources"
 
     unknown_features = sorted(set(args.include_optional) - set(manifest["optional_features"]))
     if unknown_features:
         available = ", ".join(sorted(manifest["optional_features"])) or "none"
         print(
             f"Unknown optional feature(s): {', '.join(unknown_features)}\n"
-            f"Available for {args.bundle}: {available}",
+            f"Available: {available}",
             file=sys.stderr,
         )
         return 1
@@ -187,7 +191,7 @@ def main() -> int:
         for rel_patch in feature_meta.get("patches", []):
             apply_patch(target_repo, patch_root / rel_patch)
 
-    print(f"Applied bundle: {args.bundle}")
+    print("Applied adapter baseline")
     print(f"Target repo: {target_repo}")
     print(f"Base ref: {manifest['base_ref']}")
     if args.include_optional:

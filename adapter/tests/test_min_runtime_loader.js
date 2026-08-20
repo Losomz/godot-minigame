@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const vm = require("vm");
 
-const loaderPath = process.argv[2] || "skills/assets/min-runtime/godot-loader.js";
+const loaderPath = process.argv[2] || "adapter/assets/min-runtime/godot-loader.js";
 
 function create2DContext() {
 	return {
