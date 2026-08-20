@@ -9,7 +9,7 @@ index 309e2f17f536eaa60b3418fad7e8ccfd6e85e4e5..624ee2e6ea59ea4562f9294dd21b6e4f
  major = 4
  minor = 5
  patch = 2
- status = "rc"
+ status = "stable"
  module_config = ""
 -website = "https://godotengine.org"
 +website = "https://get.godots.app"

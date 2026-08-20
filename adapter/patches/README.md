@@ -1,6 +1,6 @@
 # Godot 4.5 WeChat Mini Game Patchset
 
-This bundle reproduces the committed WeChat Mini Game adapter from downstream commit `e95971c17e4890b24d52824eb1d045f7730f8771` on the exact official Godot base `d1996aadb3672d877a7ae5df772b45127cf2c77a`.
+This bundle ports the committed WeChat Mini Game adapter from downstream commit `e95971c17e4890b24d52824eb1d045f7730f8771` to the exact official Godot base `6ce3de25aa58466e14ef354703ba8d9791a417da` (`4.5.2-stable`).
 
 ## Apply
 
