@@ -12,16 +12,6 @@
 
 ## 裁切配置
 
-配置文件：
-
-`adapter/configs/wechat_2d.py`
-
-构建命令：
-
-```powershell
-scons platform=web target=template_release threads=no wasm_simd=no profile=adapter/configs/wechat_2d.py
-```
-
 当前主要裁切完整 3D 和 XR，保留 2D 物理、2D 导航、中文、音频、
 HTTP/WebSocket、TLS、常见图片格式和 JavaScriptBridge。
 
