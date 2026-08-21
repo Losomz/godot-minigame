@@ -19,16 +19,28 @@ Add only what the downstream project needs:
 --include-optional export-api
 --include-optional branding
 --include-optional dev-types
+--include-optional wechat-glx
 ```
 
-`export-api` is needed by the toolkit's scripted export flow. `branding` changes version metadata only. `dev-types` adds WeChat API declarations and does not affect the build.
+`export-api` is needed by the toolkit's scripted export flow. `branding` changes version metadata only. `dev-types` adds WeChat API declarations and does not affect the build. `wechat-glx` installs the official EmscriptenGLX static library and adds an opt-in Web build switch.
+
+Install the GLX-capable adapter with:
+
+```powershell
+python adapter\scripts\apply_godot_patchset.py --include-optional wechat-glx
+```
 
 ## Build
 
 The verified toolchain is Emscripten `4.0.10`:
 
 ```powershell
+# Standard Web/WeChat build without GLX.
 scons platform=web target=template_release threads=no wasm_simd=no
+
+# GLX build; requires --include-optional wechat-glx during patch installation.
+scons platform=web target=template_release threads=no wasm_simd=no wechat_glx=yes
+
 cmd /c compress_wasm.bat
 ```
 

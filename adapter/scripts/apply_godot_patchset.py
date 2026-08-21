@@ -93,6 +93,19 @@ def copy_optional_files(src_root: Path, dst_root: Path, rel_paths: list[str]) ->
         shutil.copy2(src, dst)
 
 
+def copy_adapter_paths(adapter_root: Path, dst_root: Path, entries: list[dict]) -> None:
+    for entry in entries:
+        src = adapter_root / entry["source"]
+        dst = dst_root / entry["destination"]
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        elif src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        else:
+            raise RuntimeError(f"Adapter copy source does not exist: {src}")
+
+
 def apply_patch(target_repo: Path, patch_path: Path) -> None:
     check = run_patch(["git", "apply", "--check", "-"], target_repo, patch_path)
     if check.returncode != 0:
@@ -188,6 +201,7 @@ def main() -> int:
     for feature in args.include_optional:
         feature_meta = manifest["optional_features"][feature]
         copy_optional_files(source_root, target_repo, feature_meta["copy"])
+        copy_adapter_paths(SKILL_ROOT, target_repo, feature_meta.get("adapter_copy", []))
         for rel_patch in feature_meta.get("patches", []):
             apply_patch(target_repo, patch_root / rel_patch)
 

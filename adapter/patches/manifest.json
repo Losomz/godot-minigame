@@ -32,6 +32,19 @@
         "optional/platform/web/js/libs/lib.wx.api.d.ts"
       ],
       "patches": []
+    },
+    "wechat-glx": {
+      "description": "Install and link the official WeChat EmscriptenGLX library.",
+      "copy": [],
+      "adapter_copy": [
+        {
+          "source": "thirdparty/wechat-glx",
+          "destination": "thirdparty/wechat-glx"
+        }
+      ],
+      "patches": [
+        "optional/003-wechat-glx.patch"
+      ]
     }
   },
   "next_steps": [
