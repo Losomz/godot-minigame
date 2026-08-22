@@ -1,4 +1,5 @@
 name: Build WeChat GLX 2D template
+run-name: WeChat GLX 2D | ${{ inputs.source_ref }} | r${{ inputs.revision }} | ${{ inputs.release_mode }}
 
 on:
   workflow_dispatch:
@@ -214,8 +215,9 @@ jobs:
 
           $actual = (Get-FileHash $tpz -Algorithm SHA256).Hash.ToUpperInvariant()
           $expected = $env:EXPECTED_TPZ_SHA256.Trim().ToUpperInvariant()
-          if ($expected -and $actual -ne $expected) {
-              throw "CI TPZ SHA-256 $actual does not match local candidate $expected"
+          $hashMatches = -not $expected -or $actual -eq $expected
+          if (-not $hashMatches) {
+              Write-Warning "CI TPZ SHA-256 $actual does not match local candidate $expected"
           }
 
           $slug = $env:SOURCE_REF.ToLowerInvariant()
@@ -241,6 +243,7 @@ jobs:
           "source_commit=$env:SOURCE_COMMIT" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "source_slug=$slug" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "tpz_sha256=$actual" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "hash_matches=$($hashMatches.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Source: $env:SOURCE_REF@$env:SOURCE_COMMIT"
           Write-Host "Release tag: $releaseTag"
           Write-Host "TPZ SHA-256: $actual"
@@ -257,6 +260,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+      - name: Enforce expected TPZ SHA-256
+        if: steps.identity.outputs.hash_matches != 'true'
+        env:
+          ACTUAL_TPZ_SHA256: ${{ steps.identity.outputs.tpz_sha256 }}
+          EXPECTED_TPZ_SHA256: ${{ inputs.expected_tpz_sha256 }}
+        shell: pwsh
+        run: |
+          throw "CI TPZ SHA-256 $env:ACTUAL_TPZ_SHA256 does not match expected $env:EXPECTED_TPZ_SHA256"
 
   release:
     name: Create prerelease ${{ needs.build.outputs.release_tag }}

@@ -47,7 +47,7 @@ gh workflow run build-wechat-glx.yml \
   -f expected_tpz_sha256=<optional-local-sha256>
 ```
 
-`expected_tpz_sha256` 可选。提供后，CI 产物必须与本地 clean build 完全一致；不提供时，Prerelease 使用并记录 CI 产物哈希。
+`expected_tpz_sha256` 可选。提供后，CI 产物必须与本地 clean build 完全一致；不匹配时保留诊断 Artifact、阻止 Release 并让运行失败。不提供时，Prerelease 使用并记录 CI 产物哈希。
 
 ## Release Tag
 
