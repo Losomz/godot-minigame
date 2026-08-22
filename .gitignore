@@ -25,6 +25,7 @@
 
 # Cache files
 .scons_cache/
+/.build-tools/
 __pycache__/
 *.pyc
 

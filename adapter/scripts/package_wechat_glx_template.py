@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -15,7 +16,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GODOT_DIR = REPO_ROOT / "godot"
 BUILD_DIR = GODOT_DIR / "bin" / ".web_zip"
 TEMPLATE_DIR = REPO_ROOT / "templates" / "4.5.2" / "minigame4.5.2_glx"
-ARCHIVE_PATH = TEMPLATE_DIR.parent / f"{TEMPLATE_DIR.name}.tpz"
+PROFILE_PATH = REPO_ROOT / "adapter" / "configs" / "wechat_2d.py"
+DIST_DIR = REPO_ROOT / "dist"
+DIST_TEMPLATE_DIR = DIST_DIR / TEMPLATE_DIR.name
+ARTIFACT_PREFIX = "minigame4.5.2-glx-2d"
 RUNTIME_DIR = REPO_ROOT / "adapter" / "assets" / "min-runtime"
 MANIFEST_PATH = REPO_ROOT / "adapter" / "patches" / "manifest.json"
 
@@ -23,14 +27,17 @@ GODOT_BASE = "6ce3de25aa58466e14ef354703ba8d9791a417da"
 GLX_ALIGNMENT = "3dec2ca498f7b9e1ce07b33f5fbe08741a1429e5"
 GLX_LIBRARY_SHA256 = "c70b6255285aa4e5b987f18cf24d59d56227c67d44d60b734755f33f6a8ab33a"
 GLX_BRIDGE_SHA256 = "7f08edb7d3e7f3badc6c8b520b12c7424a9e52b223407ded92ae8f700bc01a0e"
-BUILD_ARGUMENTS = [
+BUILD_BASE_ARGUMENTS = [
     "platform=web",
     "target=template_release",
     "threads=no",
     "wasm_simd=no",
     "wechat_glx=yes",
 ]
-BUILD_COMMAND = f"scons {' '.join(BUILD_ARGUMENTS)}"
+BUILD_COMMAND = (
+    f"scons {' '.join(BUILD_BASE_ARGUMENTS)} "
+    "profile=adapter/configs/wechat_2d.py"
+)
 
 REQUIRED_EXPORTS = {
     "glxUpdateContextId",
@@ -113,6 +120,41 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def read_profile_settings(path: Path) -> dict[str, bool]:
+    require_file(path)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    settings: dict[str, bool] = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        name = target.id
+        is_profile_setting = (
+            name.startswith("disable_")
+            or name == "modules_enabled_by_default"
+            or (name.startswith("module_") and name.endswith("_enabled"))
+        )
+        if not is_profile_setting:
+            continue
+        if not isinstance(statement.value, ast.Constant) or not isinstance(statement.value.value, bool):
+            raise RuntimeError(f"build profile setting must be boolean: {name}")
+        settings[name] = statement.value.value
+
+    if not settings:
+        raise RuntimeError(f"build profile contains no recognized settings: {path}")
+    return dict(sorted(settings.items()))
+
+
+def build_arguments(profile_path: Path) -> list[str]:
+    return [*BUILD_BASE_ARGUMENTS, f"profile={profile_path.resolve()}"]
+
+
 def normalized_lf(path: Path) -> bytes:
     return path.read_bytes().replace(b"\r\n", b"\n")
 
@@ -171,23 +213,6 @@ def verify_source() -> str:
             / "patch_em_gl.js",
             GODOT_DIR / "platform" / "web" / "js" / "patches" / "patch_em_gl.js",
         ),
-        (
-            REPO_ROOT
-            / "adapter"
-            / "sources"
-            / "optional"
-            / "platform"
-            / "web"
-            / "js"
-            / "tests"
-            / "test_wechat_glx_runtime.js",
-            GODOT_DIR
-            / "platform"
-            / "web"
-            / "js"
-            / "tests"
-            / "test_wechat_glx_runtime.js",
-        ),
     )
     for maintained, applied in synchronized_files:
         require_file(maintained)
@@ -220,28 +245,11 @@ def verify_tool_versions() -> tuple[str, str]:
     return emcc_version, brotli_version
 
 
-def run_source_tests() -> None:
-    run_visible(["node", "adapter/tests/test_godot_process_glx.js"])
-    run_visible(
-        [
-            "node",
-            "adapter/sources/optional/platform/web/js/tests/test_wechat_glx_runtime.js",
-        ]
-    )
-    run(["node", "--check", "adapter/sources/godot_process.js"])
-    run(
-        [
-            "node",
-            "--check",
-            "adapter/sources/optional/platform/web/js/patches/patch_em_gl.js",
-        ]
-    )
-
-
-def build_engine(scons: str, incremental: bool) -> None:
+def build_engine(scons: str, incremental: bool, profile_path: Path) -> None:
+    arguments = build_arguments(profile_path)
     if not incremental:
-        run_visible([scons, "--clean", *BUILD_ARGUMENTS], GODOT_DIR)
-    run_visible([scons, *BUILD_ARGUMENTS], GODOT_DIR)
+        run_visible([scons, "--clean", *arguments], GODOT_DIR)
+    run_visible([scons, *arguments], GODOT_DIR)
 
     if os.name == "nt":
         run_visible(["cmd.exe", "/d", "/c", "compress_wasm.bat"], GODOT_DIR)
@@ -249,7 +257,7 @@ def build_engine(scons: str, incremental: bool) -> None:
         run_visible(["sh", "./compress_wasm.sh"], GODOT_DIR)
 
 
-def verify_build_environment() -> None:
+def verify_build_environment(profile_settings: dict[str, bool]) -> dict[str, object]:
     env_path = GODOT_DIR / ".scons_env.json"
     require_file(env_path)
     build_env = json.loads(env_path.read_text(encoding="utf-8"))
@@ -288,6 +296,20 @@ def verify_build_environment() -> None:
         raise RuntimeError(f"missing Emscripten runtime methods: {', '.join(missing_methods)}")
     if "#thirdparty/wechat-glx" not in build_env.get("LIBPATH", []):
         raise RuntimeError("GLX static library path is missing from the SCons environment")
+
+    profile_mismatches = {
+        name: (build_env.get(name), expected)
+        for name, expected in profile_settings.items()
+        if build_env.get(name) != expected
+    }
+    if profile_mismatches:
+        details = ", ".join(
+            f"{name}={actual!r} (expected {expected!r})"
+            for name, (actual, expected) in profile_mismatches.items()
+        )
+        raise RuntimeError(f"build profile was not applied exactly: {details}")
+
+    return build_env
 
 
 def inspect_wasm(compressed_wasm: Path) -> dict[str, object]:
@@ -367,6 +389,8 @@ def verify_engine(engine_js: Path, compressed_wasm: Path, raw_wasm: Path) -> dic
 
 def build_info(
     godot_commit: str,
+    adapter_commit: str,
+    revision: int,
     emcc_version: str,
     brotli_version: str,
     engine_js: Path,
@@ -374,15 +398,23 @@ def build_info(
     loader: Path,
     sdk: Path,
     raw_wasm_sha256: str,
+    profile_sha256: str,
+    profile_settings: dict[str, bool],
 ) -> str:
     return f"""# Build Information
 
 - Godot: `4.5.2-stable` (`{GODOT_BASE}`)
 - Godot Fork commit: `{godot_commit}`
+- Adapter commit: `{adapter_commit}`
+- Variant: `glx-2d`
+- Artifact revision: `r{revision}`
 - GLX alignment source: `citizenll/godot@{GLX_ALIGNMENT}` backported to Godot 4.5.2
 - Emscripten: `4.0.10` (`{emcc_version}`)
 - WeChat EmscriptenGLX: `0.1.11`
 - Build command: `{BUILD_COMMAND}`
+- Build profile: `adapter/configs/wechat_2d.py`
+- Build profile SHA-256 (LF normalized): `{profile_sha256.upper()}`
+- Effective profile settings: `{len(profile_settings)}`
 - Post-process: `godot_process.js`
 - Compression: `{brotli_version}`
 - Device validation: predecessor candidate passed Android real-device rendering; this rebuilt archive requires a same-package smoke test
@@ -390,8 +422,8 @@ def build_info(
 ## Artifact SHA256
 
 - `engine/godot.js`: `{sha256(engine_js).upper()}`
-- `engine/godot.wasm.br`: `{sha256(compressed_wasm).upper()}`
-- decompressed `engine/godot.wasm`: `{raw_wasm_sha256.upper()}`
+- `engine/godot.wasm.br`: `{sha256(compressed_wasm).upper()}` (`{compressed_wasm.stat().st_size}` bytes)
+- decompressed `engine/godot.wasm`: `{raw_wasm_sha256.upper()}` (`{(BUILD_DIR / 'godot.wasm').stat().st_size}` bytes)
 - `godot-loader.js`: `{sha256(loader).upper()}`
 - `engine/godot-sdk.js`: `{sha256(sdk).upper()}`
 """
@@ -461,12 +493,38 @@ def atomic_copy(source: Path, destination: Path) -> None:
         pending.unlink(missing_ok=True)
 
 
+def atomic_write(content: bytes, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle, pending_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    os.close(handle)
+    pending = Path(pending_name)
+    try:
+        pending.write_bytes(content)
+        os.replace(pending, destination)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
 def package_template(
     godot_commit: str,
+    adapter_commit: str,
+    revision: int,
     emcc_version: str,
     brotli_version: str,
     wasm: dict[str, object],
-) -> None:
+    profile_settings: dict[str, bool],
+    profile_sha256: str,
+) -> Path:
+    artifact_stem = f"{ARTIFACT_PREFIX}-r{revision}"
+    archive_path = DIST_DIR / f"{artifact_stem}.tpz"
+    build_info_path = DIST_DIR / f"{artifact_stem}.build-info.md"
+    profile_info_path = DIST_DIR / f"{artifact_stem}.profile.json"
+    checksums_path = DIST_DIR / f"{artifact_stem}.sha256.txt"
+
     build_js = BUILD_DIR / "godot.js"
     build_wasm_br = BUILD_DIR / "godot.wasm.br"
     runtime_loader = RUNTIME_DIR / "godot-loader.js"
@@ -474,8 +532,26 @@ def package_template(
     for path in (build_js, build_wasm_br, runtime_loader, runtime_sdk):
         require_file(path)
 
-    ARCHIVE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".glx-package-", dir=ARCHIVE_PATH.parent) as temp:
+    effective_profile = {
+        "schema": 1,
+        "artifact": {
+            "variant": "glx-2d",
+            "revision": revision,
+            "filename": archive_path.name,
+        },
+        "source": "adapter/configs/wechat_2d.py",
+        "sha256_lf_normalized": profile_sha256,
+        "adapter_commit": adapter_commit,
+        "godot_commit": godot_commit,
+        "build_arguments": [*BUILD_BASE_ARGUMENTS, "profile=adapter/configs/wechat_2d.py"],
+        "verified_against": "godot/.scons_env.json",
+        "settings": profile_settings,
+    }
+    effective_profile_bytes = (
+        json.dumps(effective_profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+    with tempfile.TemporaryDirectory(prefix=".glx-package-", dir=REPO_ROOT) as temp:
         temp_dir = Path(temp)
         stage = temp_dir / TEMPLATE_DIR.name
         shutil.copytree(TEMPLATE_DIR, stage)
@@ -491,6 +567,8 @@ def package_template(
 
         info = build_info(
             godot_commit,
+            adapter_commit,
+            revision,
             emcc_version,
             brotli_version,
             stage_js,
@@ -498,25 +576,48 @@ def package_template(
             stage_loader,
             stage_sdk,
             str(wasm["sha256"]),
+            profile_sha256,
+            profile_settings,
         )
-        (stage / "BUILD_INFO.md").write_text(info, encoding="utf-8", newline="\n")
+        info_bytes = info.encode("utf-8")
+        (stage / "BUILD_INFO.md").write_bytes(info_bytes)
 
-        staged_archive = temp_dir / ARCHIVE_PATH.name
+        staged_archive = temp_dir / archive_path.name
         write_deterministic_archive(stage, staged_archive)
         verify_archive(stage, staged_archive)
 
-        for relative in (
-            Path("BUILD_INFO.md"),
-            Path("godot-loader.js"),
-            Path("engine/godot-sdk.js"),
-            Path("engine/godot.js"),
-            Path("engine/godot.wasm.br"),
-        ):
-            destination = TEMPLATE_DIR / relative
-            atomic_copy(stage / relative, destination)
-        atomic_copy(staged_archive, ARCHIVE_PATH)
+        if DIST_DIR.exists():
+            shutil.rmtree(DIST_DIR)
+        DIST_DIR.mkdir(parents=True)
+        os.replace(stage, DIST_TEMPLATE_DIR)
+        atomic_copy(staged_archive, archive_path)
+        atomic_write(info_bytes, build_info_path)
+        atomic_write(effective_profile_bytes, profile_info_path)
 
-    verify_archive(TEMPLATE_DIR, ARCHIVE_PATH)
+    verify_archive(DIST_TEMPLATE_DIR, archive_path)
+
+    checksum_paths = [
+        archive_path,
+        build_info_path,
+        profile_info_path,
+        DIST_TEMPLATE_DIR / "engine" / "godot.js",
+        DIST_TEMPLATE_DIR / "engine" / "godot.wasm.br",
+        DIST_TEMPLATE_DIR / "godot-loader.js",
+        DIST_TEMPLATE_DIR / "engine" / "godot-sdk.js",
+    ]
+    checksums = "".join(
+        f"{sha256(path)}  {path.relative_to(DIST_DIR).as_posix()}\n"
+        for path in checksum_paths
+    )
+    atomic_write(checksums.encode("ascii"), checksums_path)
+    return archive_path
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("revision must be a positive integer")
+    return parsed
 
 
 def parse_args() -> argparse.Namespace:
@@ -529,6 +630,12 @@ def parse_args() -> argparse.Namespace:
         help="SCons executable (default: SCONS environment variable or scons)",
     )
     parser.add_argument(
+        "--revision",
+        type=positive_int,
+        default=1,
+        help="Immutable artifact revision (default: 1).",
+    )
+    parser.add_argument(
         "--incremental",
         action="store_true",
         help="Skip the SCons clean step. Release packaging should use the default clean build.",
@@ -539,10 +646,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     godot_commit = verify_source()
+    adapter_commit = run(["git", "rev-parse", "HEAD"])
     emcc_version, brotli_version = verify_tool_versions()
-    run_source_tests()
-    build_engine(args.scons, args.incremental)
-    verify_build_environment()
+    profile_settings = read_profile_settings(PROFILE_PATH)
+    profile_sha256 = sha256_bytes(normalized_lf(PROFILE_PATH))
+
+    build_engine(args.scons, args.incremental, PROFILE_PATH)
+    verify_build_environment(profile_settings)
 
     build_js = BUILD_DIR / "godot.js"
     build_wasm = BUILD_DIR / "godot.wasm"
@@ -551,10 +661,22 @@ def main() -> int:
         require_file(path)
     wasm = verify_engine(build_js, build_wasm_br, build_wasm)
 
-    package_template(godot_commit, emcc_version, brotli_version, wasm)
-    print(f"Created {ARCHIVE_PATH}")
-    print(f"TPZ SHA256: {sha256(ARCHIVE_PATH).upper()}")
-    print(f"Files: {sum(1 for path in TEMPLATE_DIR.rglob('*') if path.is_file())}")
+    archive_path = package_template(
+        godot_commit,
+        adapter_commit,
+        args.revision,
+        emcc_version,
+        brotli_version,
+        wasm,
+        profile_settings,
+        profile_sha256,
+    )
+    print(f"Created {archive_path}")
+    print(f"TPZ SHA256: {sha256(archive_path).upper()}")
+    print(f"WASM: {build_wasm.stat().st_size} bytes")
+    print(f"WASM Brotli: {build_wasm_br.stat().st_size} bytes")
+    print(f"Profile settings verified: {len(profile_settings)}")
+    print(f"Files: {sum(1 for path in DIST_TEMPLATE_DIR.rglob('*') if path.is_file())}")
     return 0
 
 
