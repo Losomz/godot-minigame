@@ -30,7 +30,7 @@
         "disableSWC": false
     },
     "compileType": "game",
-    "libVersion": "latest",
+    "libVersion": "3.15.2",
     "condition": {},
     "editorSetting": {
         "tabIndent": "insertSpaces",
@@ -40,7 +40,7 @@
         "ignore": [],
         "include": []
     },
-    "appid": "wxf40904ea6120ad08",
+    "appid": "wx2171674c7deaf714",
     "simulatorPluginLibVersion": {},
     "isGameTourist": false
 }
