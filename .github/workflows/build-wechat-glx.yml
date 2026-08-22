@@ -60,6 +60,9 @@ jobs:
           EXPECTED_TPZ_SHA256: ${{ inputs.expected_tpz_sha256 }}
         shell: pwsh
         run: |
+          # Patch files must retain their Git-blob LF endings for git apply checks.
+          git config --global core.autocrlf false
+
           $sourceRef = $env:SOURCE_REF.Trim()
           if (-not $sourceRef -or $sourceRef -ne $env:SOURCE_REF) {
               throw "source_ref must be a non-empty branch name without surrounding whitespace"
