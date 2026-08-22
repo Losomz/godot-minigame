@@ -3,6 +3,7 @@
   "base_ref": "6ce3de25aa58466e14ef354703ba8d9791a417da",
   "base_label": "official 4.5.2-stable (2026-03-18)",
   "adapter_ref": "e95971c17e4890b24d52824eb1d045f7730f8771",
+  "wechat_glx_ref": "97fc04e67a6b583491230f2a24003415cedad078",
   "package_adjustments": [
     "Build helper scripts are fail-fast and report missing required generated-JS anchors.",
     "Two whitespace-only defects in library_godot_fetch.js are normalized.",
@@ -35,7 +36,10 @@
     },
     "wechat-glx": {
       "description": "Install and link the official WeChat EmscriptenGLX library.",
-      "copy": [],
+      "copy": [
+        "optional/platform/web/js/patches/patch_em_gl.js",
+        "optional/platform/web/js/tests/test_wechat_glx_runtime.js"
+      ],
       "adapter_copy": [
         {
           "source": "thirdparty/wechat-glx",
@@ -48,7 +52,8 @@
     }
   },
   "next_steps": [
-    "Build with: scons platform=web target=template_release threads=no wasm_simd=no",
+    "Regular build: scons platform=web target=template_release threads=no wasm_simd=no",
+    "GLX build: scons platform=web target=template_release threads=no wasm_simd=no wechat_glx=yes",
     "Install Brotli CLI, then run: cmd /c compress_wasm.bat",
     "Load godot-sdk.js and godot-loader.js before the generated godot.js in the Mini Game host."
   ],

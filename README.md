@@ -4,7 +4,7 @@
 
 插件本体更新不通过模板分发流程管理。模板通过 Release 资产分发，插件本身建议通过 Godot Asset Library 或仓库源码安装更新。
 
-如果要用 AI 协助做适配移植，请使用 `.agent/skills/godot-wechat-minigame-adapter/`。
+如果要用 AI 协助做适配移植，请使用 `.agent/skills/godot-wechat-minigame-adapter/`。Godot 4.5.2 GLX 的原理、源码改动和产物流程见 [`adapter/WECHAT_GLX.md`](adapter/WECHAT_GLX.md)。
 
 ## 功能
 

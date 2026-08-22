@@ -36,6 +36,14 @@ node platform/web/js/tests/test_wechat_audio_context_single_release.js
 
 `compress_wasm.bat` 同时生成 `bin/.web_zip/godot.wasm.br` 并修补 `godot.js`，不能省略。
 
+GLX 模板需要应用 `wechat-glx` optional feature；详细的开发构建参数见 [`WECHAT_GLX.md`](WECHAT_GLX.md)。仓库维护者从 manifest 锁定且已提交的 Godot 子模块生成正式模板时运行：
+
+```powershell
+python adapter\scripts\package_wechat_glx_template.py
+```
+
+该命令默认执行干净 SCons 构建、Brotli/JS 后处理、ABI 验证和 `.tpz` 回读校验。
+
 Windows 下应将 Godot 源码放在短路径（例如 `C:\g`），避免最终 Emscripten 链接命令超过 `cmd.exe` 长度限制。
 
 保留 2D、中文、音频、网络和常见资源格式的通用小游戏裁切构建：
