@@ -65,6 +65,10 @@ godot4:
 - 找不到则选择同大版本下不高于目标版本的最新模板
 - 还找不到则回退到该大版本桶里的最后一个条目
 
+## 分支与发布
+
+源头镜像、产品主线、版本构建分支、功能分支以及 branch-aware Actions 的约定见 [`docs/branching-and-releases.md`](docs/branching-and-releases.md)。
+
 ## 目录
 
 - `src/`：源码
