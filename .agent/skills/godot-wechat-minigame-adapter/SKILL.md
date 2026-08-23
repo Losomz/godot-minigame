@@ -37,4 +37,4 @@ python adapter/scripts/apply_godot_patchset.py --include-optional export-api
 
 Read `adapter/references/runtime-shell.md` for the host contract and `adapter/references/validation-checklist.md` before declaring a general adapter change complete.
 
-For `wechat_glx`, `EmscriptenGLX`, `wxwebgl`, Renderer startup, GLX WASM ABI, or `minigame4.5.2_glx.tpz` work, read `references/wechat-glx.md` completely before changing code or artifacts.
+For `wechat_glx`, `EmscriptenGLX`, `wxwebgl`, Renderer startup, GLX WASM ABI, or `minigame4.5.2_glx.tpz` work, read `adapter/WECHAT_GLX.md` (the canonical GLX maintenance reference) completely before changing code or artifacts.

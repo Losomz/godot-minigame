@@ -68,20 +68,25 @@ godot4:
 
 ## 微信广告
 
-独立的微信小游戏广告组件位于 [`templates/wechat_ad/`](templates/wechat_ad/README.md)，支持激励视频、插屏广告和原生模板广告。组件不包含项目广告位、AppID 或奖励发放逻辑。
+独立的微信小游戏广告组件位于 [`adapter/wechat_ad/`](adapter/wechat_ad/README.md)，支持激励视频、插屏广告和原生模板广告。组件不包含项目广告位、AppID 或奖励发放逻辑。打包时通过 `ci/package.py --ad` 将广告桥融合进模板（产物名带 `-ad`）。
 
 ## 目录
 
 - `src/`：源码
 - `include/`：头文件
-- `resources/`：嵌入资源
-- `templates/`：完整模板快照与可选模板组件
-- `adapter/`：Godot 4.5 微信适配代码、运行壳、工具和测试
-- `.agent/skills/`：Agent Skills 说明目录
-- `demo/`：示例项目
+- `resources/`：嵌入资源与发布索引（`versions.yaml`）
+- `templates/`：打包基底库（模板格式文件 + 裁切模板 `configs/` + 登记表 `manifest.json`）
+- `adapter/`：Godot 4.5 微信适配层（引擎补丁、运行壳、模板模具、裁切配置、微信广告组件、打包构建器）
+- `dist/`：打包产物出口（gitignored，完整模板即插即用；正式分发走 GitHub Release）
+- `skills/`：Godot 4.6.2 自包含适配技能包（独立分发单元，与 `adapter/` 版本对应）
+- `.agent/skills/`：本仓库 Agent 技能入口，只引用 `adapter/` 与 `skills/`，不复制内容
+- `demo/`：插件示例项目
+- `ci/`：统一打包入口（`package.py`）与构建引导（SCons 环境、依赖清单）
 - `tools/`：构建辅助脚本
 - `godot-cpp/`：submodule
 - `godot/`：可选的官方 Godot 4.5 submodule，由 gitlink 锁定精确基线
+
+打包入口见 [`templates/README.md`](templates/README.md) 与 `python ci/package.py --list`；产物选择见 `dist/README.md`。
 
 维护引擎适配时再初始化官方 Godot 源码；普通克隆不会下载该子模块：
 

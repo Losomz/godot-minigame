@@ -49,11 +49,31 @@ Windows 下应将 Godot 源码放在短路径（例如 `C:\g`），避免最终 
 保留 2D、中文、音频、网络和常见资源格式的通用小游戏裁切构建：
 
 ```powershell
-scons platform=web target=template_release threads=no wasm_simd=no profile=adapter/configs/wechat_2d.py
+scons platform=web target=template_release threads=no wasm_simd=no profile=templates/configs/wechat_2d.py
 ```
 
-`adapter/configs/wechat_2d.py` 按当前约 4.9 MB 产物记录每个关键模块的实际
+`templates/configs/wechat_2d.py` 按实测产物记录每个关键模块的实际
 开关状态和中文说明，可直接修改后构建新的裁切变体。
+
+### GLX 体积与 C++ 异常（2026-08 实测）
+
+同一 `templates/configs/wechat_2d.py` 裁切配置下：非 GLX ≈ 4.85 MiB；
+GLX + 异常开启 ≈ 6.05 MiB（默认产物）；GLX + 异常关闭 ≈ 4.91 MiB。GLX
+静态库本身仅约 +67 KB，约 1.14 MiB 的差异几乎全部来自 C++ 异常支持。
+GLX 构建默认开启异常（`wechat_glx_exceptions=yes`，微信
+`libemscriptenglx.a` 内部会 `throw`）；测试用 `enabled`，游戏完成发布可
+`disabled` 省约 1.14 MiB，代价是 GLX 库抛异常时直接 abort。
+
+统一入口（模板基底 + 裁切模板 + 变体组合）：
+
+```powershell
+python ci\package.py --list
+python ci\package.py --template 4.5.2 --variant glx --profile 2d --exceptions disabled --revision 2
+```
+
+裁切清单 = `templates/configs/*.py`（每个文件一个变体，`--profile` 简名
+选择，也接受任意路径）。完整数据与说明见
+[`WECHAT_GLX.md`](WECHAT_GLX.md)「包体与 C++ 异常」章节。
 
 ## 小游戏运行壳
 

@@ -1,5 +1,9 @@
 # Validation Checklist
 
+> 版本对应：本文件是 `adapter/`（Godot 4.5 适配包）的验证清单，与
+> `skills/references/validation-checklist.md`（Godot 4.6.2 技能包）内容
+> 基本一致，差异仅为各自锁定基线。修改通用条目时请同步两份。
+
 Run these checks from the target Godot repo root after applying the public bundle.
 
 ## 0. Base Verification
@@ -12,7 +16,8 @@ git rev-parse HEAD
 
 Expected exact base for the default path:
 
-- `a16e481cf424f8e39dc2cdea1a6bdc1e309acdc1`
+- `a16e481cf424f8e39dc2cdea1a6bdc1e309acdc1`（`skills/` 4.6.2 基线）
+- `6ce3de25aa58466e14ef354703ba8d9791a417da`（`adapter/` 4.5 GLX 基线，见 `adapter/patches/manifest.json`）
 
 If it differs, say so explicitly in the final report.
 
@@ -70,6 +75,17 @@ Test-Path .\bin\.web_zip\godot.js
 Test-Path .\bin\.web_zip\godot.wasm
 Test-Path .\bin\.web_zip\godot.wasm.br
 ```
+
+### 4a. Size Baseline（2026-08 实测，`wechat_2d.py` 裁切配置）
+
+Brotli `godot.wasm.br` 参考体积：
+
+- 非 GLX：≈ 4.85 MiB
+- GLX + C++ 异常开启：≈ 6.05 MiB（当前正式产物）
+- GLX + C++ 异常关闭：≈ 4.91 MiB
+
+偏差超过 ±0.15 MiB 时应复查构建参数（尤其是 `disable_exceptions` 与
+`wechat_glx` 是否被意外改变）。详见 `adapter/WECHAT_GLX.md`。
 
 Before uploading a `.tpz`, extract it and reject stale loader output:
 

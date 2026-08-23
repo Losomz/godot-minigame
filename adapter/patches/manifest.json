@@ -3,7 +3,11 @@
   "base_ref": "6ce3de25aa58466e14ef354703ba8d9791a417da",
   "base_label": "official 4.5.2-stable (2026-03-18)",
   "adapter_ref": "e95971c17e4890b24d52824eb1d045f7730f8771",
-  "wechat_glx_ref": "97fc04e67a6b583491230f2a24003415cedad078",
+  "wechat_glx_ref": "08024e25622283bb678f6da80ff7102b3040771f",
+  "toolchain": {
+    "emscripten": "4.0.10",
+    "brotli": "1.2.0"
+  },
   "package_adjustments": [
     "Build helper scripts are fail-fast and report missing required generated-JS anchors.",
     "Two whitespace-only defects in library_godot_fetch.js are normalized.",

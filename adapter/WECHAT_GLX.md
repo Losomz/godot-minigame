@@ -40,6 +40,26 @@
 
 Loader 先决定普通 WebGL 或 GLX 模式，并写入 `GameGlobal.__godotMinigameWXGLXEnabled`。引擎必须遵守该固定选择；已选择 GLX 时创建失败会直接报错，不能在同一 canvas 上静默回退到普通 WebGL。
 
+## 包体与 C++ 异常（2026-08 实测）
+
+同一份 `templates/configs/wechat_2d.py` 裁切配置下，Brotli `godot.wasm.br` 的实测体积：
+
+| 构建 | wasm.br | 函数数 | 说明 |
+| --- | --- | --- | --- |
+| 非 GLX | ≈ 4.85 MiB | — | 异常默认关闭（Godot `disable_exceptions=yes` 默认） |
+| GLX + 异常开启 | ≈ 6.05 MiB | 75,064 | 默认产物 |
+| GLX + 异常关闭 | ≈ 4.91 MiB | 60,141 | 仓库早期 demo 4.6.1_glx 同状态 |
+
+结论：
+
+- **GLX 静态库本身只增加约 67 KB**；6.05 MiB 与 4.85 MiB 之间约 1.14 MiB 的差异几乎全部来自 C++ 异常支持（`-fexceptions` + Emscripten 异常胶水）。
+- **为什么 GLX 需要异常**：`libemscriptenglx.a` 内部代码会 `throw`（`__cxa_throw`/`__cxa_allocate_exception` 符号已用 `llvm-nm` 验证）。异常关闭时若 GLX 库走到 throw 路径会直接 abort；正常渲染路径不抛异常时可运行。
+- **开关已实现**：`platform/web/detect.py` 提供 `wechat_glx_exceptions=yes|no`（默认 `yes`，子模块 `08024e25`）。`no` 时保持 `disable_exceptions=yes` 并跳过 `-fexceptions`。
+  - 统一入口：`python ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled|disabled`
+  - CI：`build-wechat-glx.yml` 的 `profile`（裁切清单，`templates/configs/*.py`）与 `exceptions` 输入
+  - 选择建议：**测试阶段用 `enabled`**（GLX 库抛异常有兜底）；**游戏完成发布时可用 `disabled`** 省约 1.14 MiB，前提是接受 GLX 库异常路径直接 abort 的风险。
+- 上游 godothub 的 4.6.2 GLX 模板（含 3D）为 7.52 MiB，与本仓库 4.5.2 裁切版 6.05 MiB 同属"异常开启"产物族；正式发布物不存在 5.8 MiB 级别的 4.6 GLX 模板。
+
 ## 源码与产物边界
 
 长期维护源位于：
@@ -50,7 +70,7 @@ Loader 先决定普通 WebGL 或 GLX 模式，并写入 `GameGlobal.__godotMinig
 - `adapter/thirdparty/wechat-glx/`
 - `adapter/assets/min-runtime/`
 
-`godot/` 是应用后并用于编译的子仓库。`templates/4.5.2/minigame4.5.2_glx/engine/godot.js` 和 `godot.wasm.br` 是生成产物，不能作为源码修复入口。
+`godot/` 是应用后并用于编译的子仓库。`dist/` 中的 `engine/godot.js` 和 `godot.wasm.br` 是生成产物，不能作为源码修复入口。
 
 ## 应用与构建
 
@@ -77,7 +97,10 @@ Linux/macOS 使用 `./compress_wasm.sh`。压缩脚本生成 `bin/.web_zip/godot
 Godot 源码必须先提交并保持干净，随后在仓库根目录执行：
 
 ```powershell
-python adapter\scripts\package_wechat_glx_template.py
+统一入口（推荐）：
+
+```powershell
+python ci\package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled --revision 1
 ```
 
 打包器默认先执行一次干净 SCons 构建和 Brotli/JS 后处理，然后执行以下检查和操作：
@@ -87,7 +110,7 @@ python adapter\scripts\package_wechat_glx_template.py
 3. 解压 Brotli WASM，校验 9 个 GLX exports、batch callbacks，并拒绝 Query/commit-frame imports。
 4. 从维护源同步 Loader/SDK，从本次构建目录同步 `godot.js` 和 `godot.wasm.br`。
 5. 更新 `BUILD_INFO.md`。
-6. 全新创建确定性的 `minigame4.5.2_glx.tpz`，不增量更新旧 ZIP。
+6. 全新创建确定性的 `.tpz`，不增量更新旧 ZIP。
 7. 回读归档，确认无重复条目、无多余顶级目录，并与解包模板逐文件一致。
 
 产物链固定为：
@@ -97,8 +120,9 @@ Godot source
   -> SCons
   -> godot.js + godot.wasm
   -> godot_process.js + Brotli
-  -> templates/4.5.2/minigame4.5.2_glx/
-  -> templates/4.5.2/minigame4.5.2_glx.tpz
+  -> templates/4.5.2/（打包基底，格式文件）
+  -> dist/minigame4.5.2-glx-2d-r{N}/（完整模板）
+  -> dist/minigame4.5.2-glx-2d-r{N}.tpz（分发包）
 ```
 
 模板只分发后处理后的 `engine/godot.js` 和 `engine/godot.wasm.br`，不分发 `godot.raw.js` 或未压缩 WASM。

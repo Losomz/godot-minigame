@@ -15,29 +15,94 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GODOT_DIR = REPO_ROOT / "godot"
 BUILD_DIR = GODOT_DIR / "bin" / ".web_zip"
-TEMPLATE_DIR = REPO_ROOT / "templates" / "4.5.2" / "minigame4.5.2_glx"
-PROFILE_PATH = REPO_ROOT / "adapter" / "configs" / "wechat_2d.py"
+DEFAULT_TEMPLATE = "4.5.2"
+TEMPLATES_MANIFEST_PATH = REPO_ROOT / "templates" / "manifest.json"
+TEMPLATES_MANIFEST = json.loads(TEMPLATES_MANIFEST_PATH.read_text(encoding="utf-8"))
+DEFAULT_PROFILE_PATH = REPO_ROOT / "templates" / "configs" / "wechat_2d.py"
 DIST_DIR = REPO_ROOT / "dist"
-DIST_TEMPLATE_DIR = DIST_DIR / TEMPLATE_DIR.name
-ARTIFACT_PREFIX = "minigame4.5.2-glx-2d"
 RUNTIME_DIR = REPO_ROOT / "adapter" / "assets" / "min-runtime"
+AD_DIR = REPO_ROOT / "adapter" / "wechat_ad"
 MANIFEST_PATH = REPO_ROOT / "adapter" / "patches" / "manifest.json"
 
-GODOT_BASE = "6ce3de25aa58466e14ef354703ba8d9791a417da"
+# Version pins come from the adapter manifest (single source of truth).
+MANIFEST = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+GODOT_BASE = MANIFEST["base_ref"]
+TOOLCHAIN = MANIFEST.get("toolchain", {})
+EMSCRIPTEN_VERSION = TOOLCHAIN.get("emscripten", "4.0.10")
+BROTLI_VERSION = TOOLCHAIN.get("brotli", "1.2.0")
 GLX_ALIGNMENT = "3dec2ca498f7b9e1ce07b33f5fbe08741a1429e5"
 GLX_LIBRARY_SHA256 = "c70b6255285aa4e5b987f18cf24d59d56227c67d44d60b734755f33f6a8ab33a"
 GLX_BRIDGE_SHA256 = "7f08edb7d3e7f3badc6c8b520b12c7424a9e52b223407ded92ae8f700bc01a0e"
-BUILD_BASE_ARGUMENTS = [
-    "platform=web",
-    "target=template_release",
-    "threads=no",
-    "wasm_simd=no",
-    "wechat_glx=yes",
-]
-BUILD_COMMAND = (
-    f"scons {' '.join(BUILD_BASE_ARGUMENTS)} "
-    "profile=adapter/configs/wechat_2d.py"
-)
+EXCEPTIONS_ENABLED = "enabled"
+EXCEPTIONS_DISABLED = "disabled"
+VARIANT_GLX = "glx"
+VARIANT_WEBGL = "webgl"
+VARIANT_DEFAULT = VARIANT_GLX
+
+
+def resolve_template_dir(template: str) -> Path:
+    """Resolve a template id to its base directory via templates/manifest.json."""
+    entry = TEMPLATES_MANIFEST.get(template)
+    if not entry:
+        raise RuntimeError(
+            f"unknown template {template!r}; available: {', '.join(sorted(TEMPLATES_MANIFEST))}"
+        )
+    return REPO_ROOT / entry["dir"]
+
+
+def base_arguments(variant: str) -> list[str]:
+    """SCons base arguments for the requested engine variant."""
+    if variant == VARIANT_GLX:
+        return [
+            "platform=web",
+            "target=template_release",
+            "threads=no",
+            "wasm_simd=no",
+            "wechat_glx=yes",
+        ]
+    if variant == VARIANT_WEBGL:
+        return [
+            "platform=web",
+            "target=template_release",
+            "threads=no",
+            "wasm_simd=no",
+        ]
+    raise ValueError(f"unknown variant: {variant!r}")
+
+
+def profile_variant(profile_path: Path) -> str:
+    """Derive the artifact variant tag from a profile file name.
+
+    templates/configs/wechat_2d.py -> 2d
+    """
+    return profile_path.stem.removeprefix("wechat_").replace("_", "-")
+
+
+def artifact_prefix(profile_path: Path, exceptions: str, variant: str, ad: bool) -> str:
+    """Artifact stem prefix for the given engine variant, trim profile,
+    exception mode and ad flag."""
+    prefix = f"minigame4.5.2-{variant}-{profile_variant(profile_path)}"
+    if ad:
+        prefix += "-ad"
+    if exceptions == EXCEPTIONS_DISABLED:
+        prefix += "-noexc"
+    return prefix
+
+
+def glx_exceptions_arguments(exceptions: str) -> list[str]:
+    """SCons arguments for the requested GLX exception mode."""
+    if exceptions == EXCEPTIONS_DISABLED:
+        return ["wechat_glx_exceptions=no"]
+    if exceptions == EXCEPTIONS_ENABLED:
+        return ["wechat_glx_exceptions=yes"]
+    raise ValueError(f"unknown exceptions mode: {exceptions!r}")
+
+
+def build_command(profile_path: Path, exceptions: str, variant: str) -> str:
+    return (
+        f"scons {' '.join([*base_arguments(variant), *glx_exceptions_arguments(exceptions)])} "
+        f"profile={profile_path.relative_to(REPO_ROOT).as_posix()}"
+    )
 
 REQUIRED_EXPORTS = {
     "glxUpdateContextId",
@@ -151,8 +216,12 @@ def read_profile_settings(path: Path) -> dict[str, bool]:
     return dict(sorted(settings.items()))
 
 
-def build_arguments(profile_path: Path) -> list[str]:
-    return [*BUILD_BASE_ARGUMENTS, f"profile={profile_path.resolve()}"]
+def build_arguments(profile_path: Path, exceptions: str, variant: str) -> list[str]:
+    return [
+        *base_arguments(variant),
+        *glx_exceptions_arguments(exceptions),
+        f"profile={profile_path.resolve()}",
+    ]
 
 
 def normalized_lf(path: Path) -> bytes:
@@ -165,8 +234,7 @@ def require_file(path: Path) -> None:
 
 
 def verify_source() -> str:
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    expected_ref = manifest.get("wechat_glx_ref")
+    expected_ref = MANIFEST.get("wechat_glx_ref")
     if not expected_ref:
         raise RuntimeError("manifest.json does not define wechat_glx_ref")
 
@@ -249,19 +317,19 @@ def verify_source() -> str:
 def verify_tool_versions() -> tuple[str, str]:
     emcc = "emcc.bat" if os.name == "nt" else "emcc"
     emcc_version = run([emcc, "--version"]).splitlines()[0]
-    if "4.0.10" not in emcc_version:
-        raise RuntimeError(f"Emscripten 4.0.10 is required, got: {emcc_version}")
+    if EMSCRIPTEN_VERSION not in emcc_version:
+        raise RuntimeError(f"Emscripten {EMSCRIPTEN_VERSION} is required, got: {emcc_version}")
 
     brotli_version = run(["brotli", "--version"]).splitlines()[0]
-    if "1.2.0" not in brotli_version:
-        raise RuntimeError(f"Brotli 1.2.0 is required, got: {brotli_version}")
+    if BROTLI_VERSION not in brotli_version:
+        raise RuntimeError(f"Brotli {BROTLI_VERSION} is required, got: {brotli_version}")
 
     run(["node", "--version"])
     return emcc_version, brotli_version
 
 
-def build_engine(scons: str, incremental: bool, profile_path: Path) -> None:
-    arguments = build_arguments(profile_path)
+def build_engine(scons: str, incremental: bool, profile_path: Path, exceptions: str, variant: str) -> None:
+    arguments = build_arguments(profile_path, exceptions, variant)
     if not incremental:
         run_visible([scons, "--clean", *arguments], GODOT_DIR)
     run_visible([scons, *arguments], GODOT_DIR)
@@ -272,7 +340,7 @@ def build_engine(scons: str, incremental: bool, profile_path: Path) -> None:
         run_visible(["sh", "./compress_wasm.sh"], GODOT_DIR)
 
 
-def verify_build_environment(profile_settings: dict[str, bool]) -> dict[str, object]:
+def verify_build_environment(profile_settings: dict[str, bool], exceptions: str, variant: str) -> dict[str, object]:
     env_path = GODOT_DIR / ".scons_env.json"
     require_file(env_path)
     build_env = json.loads(env_path.read_text(encoding="utf-8"))
@@ -281,8 +349,8 @@ def verify_build_environment(profile_settings: dict[str, bool]) -> dict[str, obj
         "target": "template_release",
         "threads": False,
         "wasm_simd": False,
-        "wechat_glx": True,
-        "disable_exceptions": False,
+        "wechat_glx": variant == VARIANT_GLX,
+        "disable_exceptions": exceptions != EXCEPTIONS_ENABLED,
         "arch": "wasm32",
     }
     mismatches = {
@@ -294,22 +362,30 @@ def verify_build_environment(profile_settings: dict[str, bool]) -> dict[str, obj
         raise RuntimeError(f"unexpected SCons environment: {mismatches}")
 
     flags = {str(flag) for flag in build_env.get("LINKFLAGS", [])}
-    required_flags = {
-        "-sCHECK_NULL_WRITES=0",
-        "-sERROR_ON_UNDEFINED_SYMBOLS=0",
-        "-sSUPPORT_LONGJMP='emscripten'",
-    }
-    missing_flags = sorted(required_flags - flags)
-    if missing_flags:
-        raise RuntimeError(f"missing GLX link flags: {', '.join(missing_flags)}")
-    if "-fexceptions" not in build_env.get("CXXFLAGS", []):
-        raise RuntimeError("GLX build is missing -fexceptions")
+    if variant == VARIANT_GLX:
+        required_flags = {
+            "-sCHECK_NULL_WRITES=0",
+            "-sERROR_ON_UNDEFINED_SYMBOLS=0",
+            "-sSUPPORT_LONGJMP='emscripten'",
+        }
+        missing_flags = sorted(required_flags - flags)
+        if missing_flags:
+            raise RuntimeError(f"missing GLX link flags: {', '.join(missing_flags)}")
+
+    cxxflags = build_env.get("CXXFLAGS", [])
+    if variant == VARIANT_GLX:
+        if exceptions == EXCEPTIONS_ENABLED:
+            if "-fexceptions" not in cxxflags:
+                raise RuntimeError("GLX build with exceptions enabled is missing -fexceptions")
+        else:
+            if "-fexceptions" in cxxflags:
+                raise RuntimeError("GLX build with exceptions disabled still has -fexceptions")
 
     methods = set(build_env.get("EXPORTED_RUNTIME_METHODS", []))
     missing_methods = sorted(REQUIRED_RUNTIME_METHODS - methods)
     if missing_methods:
         raise RuntimeError(f"missing Emscripten runtime methods: {', '.join(missing_methods)}")
-    if "#thirdparty/wechat-glx" not in build_env.get("LIBPATH", []):
+    if variant == VARIANT_GLX and "#thirdparty/wechat-glx" not in build_env.get("LIBPATH", []):
         raise RuntimeError("GLX static library path is missing from the SCons environment")
 
     profile_mismatches = {
@@ -415,19 +491,31 @@ def build_info(
     raw_wasm_sha256: str,
     profile_sha256: str,
     profile_settings: dict[str, bool],
+    profile_path: Path,
+    exceptions: str,
+    variant: str,
+    ad: bool,
 ) -> str:
+    command = build_command(profile_path, exceptions, variant)
+    artifact_variant = f"{variant}-{profile_variant(profile_path)}"
+    if ad:
+        artifact_variant += "-ad"
+    if exceptions == EXCEPTIONS_DISABLED:
+        artifact_variant += "-noexc"
     return f"""# Build Information
 
 - Godot: `4.5.2-stable` (`{GODOT_BASE}`)
 - Godot Fork commit: `{godot_commit}`
 - Adapter commit: `{adapter_commit}`
-- Variant: `glx-2d`
+- Variant: `{artifact_variant}`
+- GLX exceptions: `{exceptions}`
+- Ad merged: `{str(ad).lower()}`
 - Artifact revision: `r{revision}`
 - GLX alignment source: `citizenll/godot@{GLX_ALIGNMENT}` backported to Godot 4.5.2
 - Emscripten: `4.0.10` (`{emcc_version}`)
 - WeChat EmscriptenGLX: `0.1.11`
-- Build command: `{BUILD_COMMAND}`
-- Build profile: `adapter/configs/wechat_2d.py`
+- Build command: `{command}`
+- Build profile: `{profile_path.relative_to(REPO_ROOT).as_posix()}`
 - Build profile SHA-256 (LF normalized): `{profile_sha256.upper()}`
 - Effective profile settings: `{len(profile_settings)}`
 - Post-process: `godot_process.js`
@@ -479,7 +567,7 @@ def verify_archive(source_dir: Path, archive_path: Path) -> None:
             missing = sorted(set(expected) - set(names))
             extra = sorted(set(names) - set(expected))
             raise RuntimeError(f"TPZ layout mismatch; missing={missing}, extra={extra}")
-        if any(name.startswith(f"{TEMPLATE_DIR.name}/") for name in names):
+        if any(name.startswith(f"{source_dir.name}/") for name in names):
             raise RuntimeError("TPZ must contain template contents, not a top-level template directory")
         for name in names:
             path = Path(name)
@@ -533,12 +621,20 @@ def package_template(
     wasm: dict[str, object],
     profile_settings: dict[str, bool],
     profile_sha256: str,
+    profile_path: Path,
+    exceptions: str,
+    variant: str,
+    ad: bool,
+    template_dir: Path,
+    out_dir: Path,
 ) -> Path:
-    artifact_stem = f"{ARTIFACT_PREFIX}-r{revision}"
-    archive_path = DIST_DIR / f"{artifact_stem}.tpz"
-    build_info_path = DIST_DIR / f"{artifact_stem}.build-info.md"
-    profile_info_path = DIST_DIR / f"{artifact_stem}.profile.json"
-    checksums_path = DIST_DIR / f"{artifact_stem}.sha256.txt"
+    prefix = artifact_prefix(profile_path, exceptions, variant, ad)
+    artifact_stem = f"{prefix}-r{revision}"
+    archive_path = out_dir / f"{artifact_stem}.tpz"
+    build_info_path = out_dir / f"{artifact_stem}.build-info.md"
+    profile_info_path = out_dir / f"{artifact_stem}.profile.json"
+    checksums_path = out_dir / f"{artifact_stem}.sha256.txt"
+    dist_template_dir = out_dir / artifact_stem
 
     build_js = BUILD_DIR / "godot.js"
     build_wasm_br = BUILD_DIR / "godot.wasm.br"
@@ -547,18 +643,29 @@ def package_template(
     for path in (build_js, build_wasm_br, runtime_loader, runtime_sdk):
         require_file(path)
 
+    artifact_variant = f"{variant}-{profile_variant(profile_path)}"
+    if ad:
+        artifact_variant += "-ad"
+    if exceptions == EXCEPTIONS_DISABLED:
+        artifact_variant += "-noexc"
     effective_profile = {
         "schema": 1,
         "artifact": {
-            "variant": "glx-2d",
+            "variant": artifact_variant,
             "revision": revision,
             "filename": archive_path.name,
         },
-        "source": "adapter/configs/wechat_2d.py",
+        "source": profile_path.relative_to(REPO_ROOT).as_posix(),
+        "glx_exceptions": exceptions,
+        "ad_merged": ad,
         "sha256_lf_normalized": profile_sha256,
         "adapter_commit": adapter_commit,
         "godot_commit": godot_commit,
-        "build_arguments": [*BUILD_BASE_ARGUMENTS, "profile=adapter/configs/wechat_2d.py"],
+        "build_arguments": [
+            *base_arguments(variant),
+            *glx_exceptions_arguments(exceptions),
+            f"profile={profile_path.relative_to(REPO_ROOT).as_posix()}",
+        ],
         "verified_against": "godot/.scons_env.json",
         "settings": profile_settings,
     }
@@ -568,8 +675,8 @@ def package_template(
 
     with tempfile.TemporaryDirectory(prefix=".glx-package-", dir=REPO_ROOT) as temp:
         temp_dir = Path(temp)
-        stage = temp_dir / TEMPLATE_DIR.name
-        shutil.copytree(TEMPLATE_DIR, stage)
+        stage = temp_dir / template_dir.name
+        shutil.copytree(template_dir, stage)
 
         stage_js = stage / "engine" / "godot.js"
         stage_wasm_br = stage / "engine" / "godot.wasm.br"
@@ -579,6 +686,16 @@ def package_template(
         shutil.copyfile(build_wasm_br, stage_wasm_br)
         stage_loader.write_bytes(normalized_lf(runtime_loader))
         stage_sdk.write_bytes(normalized_lf(runtime_sdk))
+
+        if ad:
+            # Merge the WeChat ad component: ad entry replaces engine/game.js,
+            # the ad bridge is added next to it.
+            ad_entry = AD_DIR / "engine" / "game.js"
+            ad_bridge = AD_DIR / "engine" / "wx-ad-bridge.js"
+            require_file(ad_entry)
+            require_file(ad_bridge)
+            shutil.copyfile(ad_entry, stage / "engine" / "game.js")
+            shutil.copyfile(ad_bridge, stage / "engine" / "wx-ad-bridge.js")
 
         info = build_info(
             godot_commit,
@@ -593,6 +710,10 @@ def package_template(
             str(wasm["sha256"]),
             profile_sha256,
             profile_settings,
+            profile_path,
+            exceptions,
+            variant,
+            ad,
         )
         info_bytes = info.encode("utf-8")
         (stage / "BUILD_INFO.md").write_bytes(info_bytes)
@@ -601,27 +722,27 @@ def package_template(
         write_deterministic_archive(stage, staged_archive)
         verify_archive(stage, staged_archive)
 
-        if DIST_DIR.exists():
-            shutil.rmtree(DIST_DIR)
-        DIST_DIR.mkdir(parents=True)
-        os.replace(stage, DIST_TEMPLATE_DIR)
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True)
+        os.replace(stage, dist_template_dir)
         atomic_copy(staged_archive, archive_path)
         atomic_write(info_bytes, build_info_path)
         atomic_write(effective_profile_bytes, profile_info_path)
 
-    verify_archive(DIST_TEMPLATE_DIR, archive_path)
+    verify_archive(dist_template_dir, archive_path)
 
     checksum_paths = [
         archive_path,
         build_info_path,
         profile_info_path,
-        DIST_TEMPLATE_DIR / "engine" / "godot.js",
-        DIST_TEMPLATE_DIR / "engine" / "godot.wasm.br",
-        DIST_TEMPLATE_DIR / "godot-loader.js",
-        DIST_TEMPLATE_DIR / "engine" / "godot-sdk.js",
+        dist_template_dir / "engine" / "godot.js",
+        dist_template_dir / "engine" / "godot.wasm.br",
+        dist_template_dir / "godot-loader.js",
+        dist_template_dir / "engine" / "godot-sdk.js",
     ]
     checksums = "".join(
-        f"{sha256(path)}  {path.relative_to(DIST_DIR).as_posix()}\n"
+        f"{sha256(path)}  {path.relative_to(out_dir).as_posix()}\n"
         for path in checksum_paths
     )
     atomic_write(checksums.encode("ascii"), checksums_path)
@@ -651,6 +772,53 @@ def parse_args() -> argparse.Namespace:
         help="Immutable artifact revision (default: 1).",
     )
     parser.add_argument(
+        "--template",
+        default=DEFAULT_TEMPLATE,
+        help=(
+            "Template base id from templates/manifest.json (default: 4.5.2). "
+            "The base directory provides the template format files."
+        ),
+    )
+    parser.add_argument(
+        "--variant",
+        choices=[VARIANT_GLX, VARIANT_WEBGL],
+        default=VARIANT_DEFAULT,
+        help=(
+            "Engine variant: glx (WeChat EmscriptenGLX, default) or webgl "
+            "(standard WebGL; loader for webgl is not provided yet)."
+        ),
+    )
+    parser.add_argument(
+        "--ad",
+        action="store_true",
+        help="Merge the WeChat ad component (adapter/wechat_ad) into the template.",
+    )
+    parser.add_argument(
+        "--profile",
+        default=str(DEFAULT_PROFILE_PATH),
+        help=(
+            "Trim profile (cut list) to build with. Short names resolve to "
+            "templates/configs/<name>.py (e.g. '2d' -> templates/configs/"
+            "wechat_2d.py); absolute or relative paths are accepted as-is "
+            "(default: templates/configs/wechat_2d.py)."
+        ),
+    )
+    parser.add_argument(
+        "--exceptions",
+        choices=[EXCEPTIONS_ENABLED, EXCEPTIONS_DISABLED],
+        default=EXCEPTIONS_ENABLED,
+        help=(
+            "GLX C++ exception support. enabled keeps the vendor-safe default "
+            "(~6.05 MiB); disabled saves ~1.14 MiB (~4.91 MiB) but aborts if "
+            "libemscriptenglx.a throws. See adapter/WECHAT_GLX.md."
+        ),
+    )
+    parser.add_argument(
+        "--out",
+        default=str(DIST_DIR),
+        help="Output directory for artifacts (default: dist/).",
+    )
+    parser.add_argument(
         "--incremental",
         action="store_true",
         help="Skip the SCons clean step. Release packaging should use the default clean build.",
@@ -658,16 +826,45 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_profile(profile: str) -> Path:
+    """Resolve --profile: short name -> templates/configs/<name>.py, else path."""
+    candidate = Path(profile)
+    if not candidate.exists() and "/" not in profile and "\\" not in profile and "." not in profile:
+        resolved = REPO_ROOT / "templates" / "configs" / f"wechat_{profile}.py"
+        if resolved.is_file():
+            return resolved
+        resolved = REPO_ROOT / "templates" / "configs" / f"{profile}.py"
+        if resolved.is_file():
+            return resolved
+        raise RuntimeError(
+            f"unknown profile short name {profile!r}; use '2d' or a path to a .py trim file"
+        )
+    return candidate.resolve()
+
+
 def main() -> int:
     args = parse_args()
+    profile_path = resolve_profile(args.profile)
+    require_file(profile_path)
+    if args.exceptions not in (EXCEPTIONS_ENABLED, EXCEPTIONS_DISABLED):
+        raise RuntimeError(f"unknown exceptions mode: {args.exceptions!r}")
+    template_dir = resolve_template_dir(args.template)
+    if not template_dir.is_dir():
+        raise RuntimeError(f"template base directory is missing: {template_dir}")
+    out_dir = Path(args.out).resolve()
+    if args.variant == VARIANT_WEBGL:
+        raise RuntimeError(
+            "webgl variant is not supported yet: the non-GLX runtime loader is not provided"
+        )
+
     godot_commit = verify_source()
     adapter_commit = run(["git", "rev-parse", "HEAD"])
     emcc_version, brotli_version = verify_tool_versions()
-    profile_settings = read_profile_settings(PROFILE_PATH)
-    profile_sha256 = sha256_bytes(normalized_lf(PROFILE_PATH))
+    profile_settings = read_profile_settings(profile_path)
+    profile_sha256 = sha256_bytes(normalized_lf(profile_path))
 
-    build_engine(args.scons, args.incremental, PROFILE_PATH)
-    verify_build_environment(profile_settings)
+    build_engine(args.scons, args.incremental, profile_path, args.exceptions, args.variant)
+    verify_build_environment(profile_settings, args.exceptions, args.variant)
 
     build_js = BUILD_DIR / "godot.js"
     build_wasm = BUILD_DIR / "godot.wasm"
@@ -685,13 +882,21 @@ def main() -> int:
         wasm,
         profile_settings,
         profile_sha256,
+        profile_path,
+        args.exceptions,
+        args.variant,
+        args.ad,
+        template_dir,
+        out_dir,
     )
     print(f"Created {archive_path}")
     print(f"TPZ SHA256: {sha256(archive_path).upper()}")
     print(f"WASM: {build_wasm.stat().st_size} bytes")
     print(f"WASM Brotli: {build_wasm_br.stat().st_size} bytes")
     print(f"Profile settings verified: {len(profile_settings)}")
-    print(f"Files: {sum(1 for path in DIST_TEMPLATE_DIR.rglob('*') if path.is_file())}")
+    print(f"GLX exceptions: {args.exceptions}")
+    stem = f"{artifact_prefix(profile_path, args.exceptions, args.variant, args.ad)}-r{args.revision}"
+    print(f"Files: {sum(1 for path in (out_dir / stem).rglob('*') if path.is_file())}")
     return 0
 
 
