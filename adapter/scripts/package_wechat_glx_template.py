@@ -183,7 +183,22 @@ def verify_source() -> str:
 
     glx_patch = REPO_ROOT / "adapter" / "patches" / "optional" / "003-wechat-glx.patch"
     require_file(glx_patch)
-    run(["git", "apply", "--reverse", "--check", str(glx_patch)], GODOT_DIR)
+    # The committed patch uses CRLF line endings; feed it LF-normalized as raw
+    # bytes through stdin (mirroring apply_godot_patchset.py::run_patch). Text
+    # mode must not be used here: on Windows it re-translates '\n' to '\r\n'.
+    patch_lf = glx_patch.read_bytes().replace(b"\r\n", b"\n")
+    result = subprocess.run(
+        ["git", "apply", "--reverse", "--check", "-"],
+        cwd=GODOT_DIR,
+        input=patch_lf,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (
+            result.stderr.decode("utf-8", errors="replace").strip()
+            or result.stdout.decode("utf-8", errors="replace").strip()
+        )
+        raise RuntimeError(f"GLX patch is not applied in godot/ (reverse check):\n{detail}")
 
     synchronized_files = (
         (
