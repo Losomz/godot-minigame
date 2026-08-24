@@ -569,6 +569,33 @@ PackedStringArray WeChatExportPlatform::_get_preset_features(const Ref<EditorExp
 TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     TypedArray<Dictionary> options;
 
+    String template_versions = String::utf8("自动");
+    templates::TemplateManager *tm = templates::TemplateManager::get_singleton();
+    if (tm) {
+        Array available_versions = tm->get_available_versions();
+        for (int i = 0; i < available_versions.size(); i++) {
+            Dictionary version_info = available_versions[i];
+            String version = String(version_info.get("version", "")).strip_edges();
+            if (!version.is_empty() && template_versions.find("," + version) == -1) {
+                template_versions += "," + version;
+            }
+        }
+    }
+
+    Dictionary template_version;
+    template_version["name"] = String::utf8("模板/模板版本");
+    template_version["type"] = Variant::STRING;
+    template_version["hint"] = PROPERTY_HINT_ENUM_SUGGESTION;
+    template_version["hint_string"] = template_versions;
+    template_version["default_value"] = String::utf8("自动");
+    options.append(template_version);
+
+    Dictionary custom_template_url;
+    custom_template_url["name"] = String::utf8("模板/自定义模板链接");
+    custom_template_url["type"] = Variant::STRING;
+    custom_template_url["default_value"] = "";
+    options.append(custom_template_url);
+
     // 微信小游戏基本信息
     Dictionary appid;
     appid["name"] = String::utf8("微信小游戏/游戏_AppID");
@@ -760,7 +787,9 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
         }
 
         templates::TemplateManager* tm = templates::TemplateManager::get_singleton();
-        _product_log("Template source: " + _format_release_source(tm) + ", editor " + tm->get_current_godot_version());
+        String selected_version = String(p_preset->get(String::utf8("模板/模板版本"))).strip_edges();
+        String custom_template_url = String(p_preset->get(String::utf8("模板/自定义模板链接"))).strip_edges();
+        _product_log("Template source: " + (custom_template_url.is_empty() ? _format_release_source(tm) : custom_template_url) + ", editor " + tm->get_current_godot_version());
         Error init_err = tm->initialize_template_system();
         if (init_err != OK) {
             String msg = "Template system init failed: " + _describe_export_error(init_err) + " (" + String::num_int64(init_err) + ")";
@@ -769,19 +798,52 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
             return init_err;
         }
 
-        Error remote_versions_err = tm->load_versions_from_remote_sync();
-        if (remote_versions_err != OK) {
-            _product_log("Template index refresh failed, using cached data. error=" + _describe_export_error(remote_versions_err));
-            TOOLKIT_LOG("WeChatExportPlatform: remote versions refresh failed, falling back to cached versions. error=", remote_versions_err);
+        String best_template_ref;
+        if (!custom_template_url.is_empty()) {
+            if ((!custom_template_url.begins_with("https://") && !custom_template_url.begins_with("http://")) ||
+                    !custom_template_url.get_slice("?", 0).to_lower().ends_with(".tpz")) {
+                UtilityFunctions::push_warning("Custom template URL must be an HTTP(S) link to a .tpz file.");
+                return ERR_INVALID_PARAMETER;
+            }
+
+            String filename = custom_template_url.get_slice("?", 0).get_file();
+            String cache_path = "user://toolkit/templates/custom/" + custom_template_url.md5_text() + "-" + filename;
+            _product_log("Selected custom template: " + filename);
+            active_download_filename = filename;
+            _set_export_progress(16.0, String::utf8("准备下载自定义模板..."));
+            Error download_err = tm->download_template_from_url_sync(filename, custom_template_url, cache_path);
+            active_download_filename = "__export__";
+            if (download_err != OK) {
+                String msg = "Custom template download failed: " + _describe_export_error(download_err) + " (" + String::num_int64(download_err) + ")";
+                UtilityFunctions::push_warning(msg);
+                return download_err;
+            }
+            best_template_ref = cache_path;
         } else {
-            _product_log("Template index loaded: " + String::num_int64(tm->get_available_versions().size()) + " version(s)");
+            Error remote_versions_err = tm->load_versions_from_remote_sync();
+            if (remote_versions_err != OK) {
+                _product_log("Template index refresh failed, using cached data. error=" + _describe_export_error(remote_versions_err));
+                TOOLKIT_LOG("WeChatExportPlatform: remote versions refresh failed, falling back to cached versions. error=", remote_versions_err);
+            } else {
+                _product_log("Template index loaded: " + String::num_int64(tm->get_available_versions().size()) + " version(s)");
+            }
+
+            if (selected_version.is_empty() || selected_version == String::utf8("自动")) {
+                best_template_ref = tm->get_best_available_template_for_editor();
+            } else {
+                PackedStringArray version_parts = selected_version.split(".");
+                String major_version = version_parts.is_empty() ? tm->get_godot_major_version() : "godot" + String(version_parts[0]);
+                String filename = tm->get_template_filename(major_version, selected_version);
+                if (!filename.is_empty()) {
+                    best_template_ref = tm->get_template_path(filename);
+                }
+            }
         }
 
-        String best_template_ref = tm->get_best_available_template_for_editor();
-
         if (best_template_ref.is_empty()) {
-            String detailed_warning = String("No compatible template for editor ")
-                    + tm->get_current_godot_version()
+            String requested_version = (selected_version.is_empty() || selected_version == String::utf8("自动")) ? tm->get_current_godot_version() : selected_version;
+            String detailed_warning = String("No compatible template for version ")
+                    + requested_version
                     + " from " + _format_release_source(tm)
                     + ".";
             UtilityFunctions::push_warning(detailed_warning);
@@ -923,6 +985,14 @@ bool WeChatExportPlatform::_has_valid_project_configuration(const Ref<EditorExpo
 }
 
 String WeChatExportPlatform::_get_export_option_warning(const Ref<EditorExportPreset> &p_preset, const StringName &p_name) const {
+    if (p_name == StringName(String::utf8("模板/自定义模板链接"))) {
+        String custom_template_url = String(p_preset->get(p_name)).strip_edges();
+        if (!custom_template_url.is_empty() &&
+                ((!custom_template_url.begins_with("https://") && !custom_template_url.begins_with("http://")) ||
+                        !custom_template_url.get_slice("?", 0).to_lower().ends_with(".tpz"))) {
+            return String::utf8("请输入直接指向 .tpz 文件的 HTTP(S) 链接");
+        }
+    }
     return "";
 }
 

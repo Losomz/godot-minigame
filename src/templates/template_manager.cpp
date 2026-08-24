@@ -280,6 +280,7 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_nearest_compatible_version", "target_version", "major_version"), &TemplateManager::get_nearest_compatible_version);
     ClassDB::bind_method(D_METHOD("get_download_cache_path", "filename"), &TemplateManager::get_download_cache_path);
     ClassDB::bind_method(D_METHOD("download_template_sync", "filename", "target_path"), &TemplateManager::download_template_sync, DEFVAL(""));
+    ClassDB::bind_method(D_METHOD("download_template_from_url_sync", "filename", "download_url", "target_path"), &TemplateManager::download_template_from_url_sync);
     ClassDB::bind_method(D_METHOD("clear_cache"), &TemplateManager::clear_cache);
     ClassDB::bind_method(D_METHOD("purge_distribution_cache"), &TemplateManager::purge_distribution_cache);
     ClassDB::bind_method(D_METHOD("update_polling"), &TemplateManager::update_polling);
@@ -1094,6 +1095,19 @@ Error TemplateManager::download_template_sync(const String& filename, const Stri
         return ERR_INVALID_PARAMETER;
     }
     String output_path = target_path.is_empty() ? get_download_cache_path(filename) : target_path;
+    return download_template_url_sync(filename, download_url, output_path);
+}
+
+Error TemplateManager::download_template_from_url_sync(const String& filename, const String& download_url, const String& target_path) {
+    String normalized_url = download_url.strip_edges();
+    if (normalized_url.is_empty() || target_path.strip_edges().is_empty()) {
+        UtilityFunctions::push_warning("Custom template URL and output path cannot be empty.");
+        return ERR_INVALID_PARAMETER;
+    }
+    return download_template_url_sync(filename, normalized_url, target_path);
+}
+
+Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path) {
     if (output_path.is_empty()) {
         UtilityFunctions::push_warning("Template output path is empty.");
         update_download_state(filename, "failed", 0.0f);
