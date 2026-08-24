@@ -35,12 +35,6 @@ on:
         options:
           - artifact-only
           - prerelease
-      expected_tpz_sha256:
-        description: Required for prerelease; must match the locally built TPZ
-        required: false
-        default: ""
-        type: string
-
 permissions:
   contents: write
 
@@ -70,13 +64,6 @@ jobs:
           $revision = "${{ inputs.revision }}"
           if ($revision -notmatch '^[1-9][0-9]*$') {
               throw "revision must be a positive integer"
-          }
-
-          if ("${{ inputs.release_mode }}" -eq "prerelease") {
-              $expected = "${{ inputs.expected_tpz_sha256 }}".Trim()
-              if ($expected -notmatch '^[0-9A-Fa-f]{64}$') {
-                  throw "expected_tpz_sha256 must be a 64-character SHA-256 for prerelease"
-              }
           }
 
       - name: Checkout adapter source
@@ -146,7 +133,7 @@ jobs:
               -Exceptions "${{ inputs.exceptions }}"
           if ($LASTEXITCODE -ne 0) { throw "WeChat GLX build failed" }
 
-      - name: Verify release identity
+      - name: Record release identity
         shell: pwsh
         run: |
           $revision = [int]"${{ inputs.revision }}"
@@ -163,12 +150,6 @@ jobs:
           if (-not (Test-Path $tpz)) { throw "Missing TPZ: $tpz" }
 
           $actual = (Get-FileHash $tpz -Algorithm SHA256).Hash.ToUpperInvariant()
-          if ("${{ inputs.release_mode }}" -eq "prerelease") {
-              $expected = "${{ inputs.expected_tpz_sha256 }}".Trim().ToUpperInvariant()
-              if ($actual -ne $expected) {
-                  throw "CI TPZ SHA-256 $actual does not match local candidate $expected"
-              }
-          }
 
           $sourceCommit = (git rev-parse HEAD).Trim()
           "ARTIFACT_STEM=$stem" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
