@@ -44,7 +44,6 @@ concurrency:
 
 env:
   SOURCE_BRANCH: "4.5"
-  RELEASE_TAG: "4.5.2"
   # EMSDK_COMMIT pins the emsdk manager checkout used to install the toolchain.
   # Engine/toolchain version pins (GODOT_COMMIT/GODOT_BASE/EMSCRIPTEN_VERSION)
   # come from adapter/patches/manifest.json (single source of truth); see the
@@ -152,7 +151,11 @@ jobs:
           $actual = (Get-FileHash $tpz -Algorithm SHA256).Hash.ToUpperInvariant()
 
           $sourceCommit = (git rev-parse HEAD).Trim()
+          $releaseTag = $stem -replace '^minigame', ''
+          $artifactVariant = ($releaseTag -replace '^4\.5\.2-', '') -replace '-r[0-9]+$', ''
           "ARTIFACT_STEM=$stem" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ARTIFACT_VARIANT=$artifactVariant" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SOURCE_COMMIT=$sourceCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "TPZ_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "TPZ SHA-256: $actual"
@@ -182,12 +185,12 @@ jobs:
           }
 
           $notes = @"
-          First reproducible Godot 4.5.2 WeChat GLX 2D template candidate.
+          Godot 4.5.2 WeChat $env:ARTIFACT_VARIANT template candidate.
 
-          - Variant: glx-2d
+          - Variant: $env:ARTIFACT_VARIANT
           - Revision: r${{ inputs.revision }}
           - TPZ SHA-256: $env:TPZ_SHA256
-          - Profile: adapter/configs/wechat_2d.py
+          - Profile: ${{ inputs.profile }}
           - Validation: build/profile/WASM ABI/Brotli/TPZ gates passed
           - Device status: same-package real-device smoke test pending
 
@@ -203,7 +206,7 @@ jobs:
           & gh release create $env:RELEASE_TAG @assets `
               --repo $env:GITHUB_REPOSITORY `
               --target $env:SOURCE_COMMIT `
-              --title "Godot 4.5.2 WeChat GLX 2D templates" `
+              --title "Godot 4.5.2 WeChat $env:ARTIFACT_VARIANT template" `
               --prerelease `
               --notes $notes
           if ($LASTEXITCODE -ne 0) { throw "Prerelease creation failed" }
