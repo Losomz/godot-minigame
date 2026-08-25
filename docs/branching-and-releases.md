@@ -1,57 +1,100 @@
-# 分支与模板发布
+# 分支与发布
 
 ## 分支职责
 
-- `main`：Losomz 仓库的默认主分支，只保存产品主线、中央 Actions workflow 和发布规则。
-- `vendor/godothub-main`：`godothub/godot-minigame:main` 的只读镜像，不从该分支发布模板。
-- `4.5`：Godot 4.5.2 微信 GLX 正式构建分支。
-- `feature/4.5-*`：从 `4.5` 派生的裁切或功能候选分支。
+- `upstream-sync`：`citizenll/godot-minigame:main` 的只读镜像，只允许 fast-forward。
+- `main`：产品主线，保存插件、公共胶水、Catalog、中央 workflow 和发布规则。
+- `develop`：日常产品开发线，插件和控制面功能先在这里验证。
+- `4.5`：Godot 4.5.2 适配生产线。
+- `4.6` 等后续版本分支：对应 Godot 版本的模板适配生产线。
 
-不要直接将 `godothub:main` 合并到产品 `main`。先更新 `vendor/godothub-main`，再通过独立 PR 审核并挑选需要进入 `main` 的改动。
+上游变更先进入 `upstream-sync`，再经过独立 PR 选择性移植。不要直接 merge `upstream-sync` 到 `main` 或 `develop`。
 
-## 构建契约
+插件、Catalog 和公共 workflow 的临时分支直接从 `develop` 创建并合回 `develop`；验证完成后再由 `develop` 进入 `main`。`feature/*`、`fix/*` 和 `refactor/*` 都是一次性工作分支，不构成第五层分支。
 
-中央 workflow 固定从 `main` 运行，`source_ref` 指定实际构建的远端分支。可构建的 4.5 分支必须包含：
+仓库只发布两种产品：
 
-- `adapter/ci/requirements-build.txt`
-- `adapter/configs/wechat_2d.py`
+- 插件：从产品主线发布 `plugin-v*` Release。
+- 模板：从版本适配分支生产 `template-*` Release，再通过 Promote PR 登记到 `main`。
+
+## 控制面与生产线
+
+`main` 是产品控制面，版本适配分支是模板生产线。适配源码和完整模板不会通过 merge 回归主线：
+
+```text
+adapter branch commit
+  -> central build workflow
+  -> immutable template-* Release
+  -> device verification
+  -> promote-template workflow
+  -> Catalog-only PR to main
+```
+
+Promote PR 只允许修改：
+
+- `catalog/templates.json`
+- `resources/versions.yaml`
+
+## 模板来源契约
+
+`product/adapters.json` 只是模板来源登记表，不是第三种产品。每条模板生产线登记其 Godot 版本、适配分支、构建 workflow 和必需路径。当前 `4.5` 必须提供：
+
+- `.gitmodules`
+- `godot` gitlink
 - `adapter/patches/manifest.json`
-- `adapter/scripts/build_wechat_glx.ps1`
 - `adapter/scripts/package_wechat_glx_template.py`
-- 与 manifest 中 `wechat_glx_ref` 一致的 `godot` gitlink
+- `ci/build_wechat_glx.ps1`
+- `ci/requirements-build.txt`
+- `templates/configs/wechat_2d.py`
 
-Godot base commit 和 GLX commit 从所选分支的 manifest 读取。打包流程不运行 `adapter/tests/`、Godot runtime test 或任何 `test_*.js`。
+Manifest 必须锁定官方 Godot base commit、适配 commit 和工具链版本。中央 workflow 使用远端分支的精确 commit 构建并记录 SHA-256。临时适配分支只用于 Artifact 验证；正式 `template-4.5.2-r*` Release 只从登记的 `4.5` 分支创建。
 
-## 手动构建
+## 插件发布
 
-仅生成有 14 天保留期的 Actions Artifact：
+插件版本唯一来源是 `product/plugin.json`，根 `plugin.cfg` 和 addon `plugin.cfg` 必须一致。
+
+```text
+plugin-v<semver>
+```
+
+`release-plugin.yml` 验证 tag、产品契约和 `main` 祖先关系，构建 Windows/Linux/macOS 原生库，组装全平台 addon ZIP，并生成 SHA-256 和 `plugin-update.json`。
+
+Release 验证完成后，将 `plugin-update.json` 内容晋升到 `catalog/plugin-stable.json`。插件只读取该固定 Catalog，不使用仓库全局 latest。
+
+## 模板发布
+
+中央 `build-wechat-glx.yml` 从指定适配分支构建：
 
 ```bash
 gh workflow run build-wechat-glx.yml \
   --repo Losomz/godot-minigame \
   --ref main \
   -f source_ref=4.5 \
-  -f revision=1 \
-  -f release_mode=artifact-only
+  -f revision=2 \
+  -f release_mode=prerelease
 ```
 
-生成 Prerelease：
+正式命名：
 
-```bash
-gh workflow run build-wechat-glx.yml \
-  --repo Losomz/godot-minigame \
-  --ref main \
-  -f source_ref=4.5 \
-  -f revision=1 \
-  -f release_mode=prerelease \
-  -f expected_tpz_sha256=<optional-local-sha256>
+```text
+template-4.5.2-r2
 ```
 
-`expected_tpz_sha256` 可选。提供后，CI 产物必须与本地 clean build 完全一致；不匹配时保留诊断 Artifact、阻止 Release 并让运行失败。不提供时，Prerelease 使用并记录 CI 产物哈希。
+临时适配分支只生成 Actions Artifact，不创建正式模板 Release，也不进入 Catalog。
 
-## Release Tag
+## 晋升模板
 
-- 正式 `4.5` 分支：`4.5.2`
-- 其他 4.5 分支：`4.5.2-branch-<branch-slug>-r<revision>-<commit-sha7>`
+1. 对 Release 中的同一 `.tpz` 完成真机验证。
+2. 将 GitHub Prerelease 原地提升为稳定 Release，不重新构建或替换资产。
+3. 从 `main` 运行 `promote-template.yml`，输入 Release tag、适配分支和完整 source commit。
+4. Workflow 验证 Release 状态、tag target、来源提交属于登记的适配分支历史、资产数量和 SHA-256。
+5. Workflow 创建 `promote/<tag>` PR。
+6. `contracts.yml` 再次验证 Catalog 和生成索引后合入 `main`。
 
-Release 和 Tag 均不可覆盖。功能分支每个 commit 使用独立 Tag。Stable 只能由已经完成同包真机验证的 Prerelease 原地提升，不能重新构建或替换 TPZ。
+## 不可变规则
+
+- 禁止覆盖或删除已发布的 `plugin-v*` 和 `template-*` tag。
+- 禁止替换 Release 资产。
+- 正式产物必须绑定精确 source commit 和 SHA-256。
+- `resources/versions.yaml` 禁止手工修改。
+- 一个模板 revision 只能递增，不能回退或复用。

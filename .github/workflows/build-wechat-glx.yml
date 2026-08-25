@@ -15,7 +15,7 @@ on:
         default: "1"
         type: string
       release_mode:
-        description: Build only, or create a branch-specific prerelease
+        description: Build any 4.5-family branch, or release the registered 4.5 production branch
         required: true
         default: artifact-only
         type: choice
@@ -81,6 +81,11 @@ jobs:
               throw "revision must be a positive integer"
           }
 
+          $releaseMode = "${{ inputs.release_mode }}"
+          if ($releaseMode -eq "prerelease" -and $sourceRef -ne "4.5") {
+              throw "prerelease is only allowed from the registered 4.5 template production branch"
+          }
+
           $expected = $env:EXPECTED_TPZ_SHA256.Trim()
           if ($expected -and $expected -notmatch '^[0-9A-Fa-f]{64}$') {
               throw "expected_tpz_sha256 must be empty or a 64-character SHA-256"
@@ -102,11 +107,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $required = @(
               ".gitmodules",
-              "adapter/ci/requirements-build.txt",
-              "adapter/configs/wechat_2d.py",
               "adapter/patches/manifest.json",
-              "adapter/scripts/build_wechat_glx.ps1",
-              "adapter/scripts/package_wechat_glx_template.py"
+              "adapter/scripts/package_wechat_glx_template.py",
+              "ci/build_wechat_glx.ps1",
+              "ci/requirements-build.txt",
+              "templates/configs/wechat_2d.py"
           )
           foreach ($path in $required) {
               if (-not (Test-Path $path -PathType Leaf)) {
@@ -196,7 +201,7 @@ jobs:
           python "$emsdk\emsdk.py" activate $env:EMSCRIPTEN_VERSION
           if ($LASTEXITCODE -ne 0) { throw "emsdk activate failed" }
 
-          & "$env:GITHUB_WORKSPACE\adapter\scripts\build_wechat_glx.ps1" `
+          & "$env:GITHUB_WORKSPACE\ci\build_wechat_glx.ps1" `
               -EmsdkPath $emsdk `
               -Revision ([int]"${{ inputs.revision }}")
           if ($LASTEXITCODE -ne 0) { throw "WeChat GLX build failed" }
@@ -227,13 +232,8 @@ jobs:
           if ($slug.Length -gt 48) { $slug = $slug.Substring(0, 48).TrimEnd('-') }
 
           $shortCommit = $env:SOURCE_COMMIT.Substring(0, 7)
-          if ($env:SOURCE_REF -eq "4.5") {
-              $releaseTag = "4.5.2"
-              $releaseTitle = "Godot 4.5.2 WeChat GLX 2D templates"
-          } else {
-              $releaseTag = "4.5.2-branch-$slug-r$revision-$shortCommit"
-              $releaseTitle = "Godot 4.5.2 WeChat GLX 2D candidate ($env:SOURCE_REF)"
-          }
+          $releaseTag = "template-4.5.2-r$revision"
+          $releaseTitle = "Godot 4.5.2 WeChat GLX 2D template r$revision"
           $artifactName = "$stem-$slug-$shortCommit"
 
           "artifact_name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -302,7 +302,7 @@ jobs:
             test -f "release-assets/${ARTIFACT_STEM}.${suffix}"
           done
 
-      - name: Create immutable branch prerelease
+      - name: Create immutable template prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_STEM: ${{ needs.build.outputs.artifact_stem }}
@@ -331,7 +331,7 @@ jobs:
             "- Variant: glx-2d" \
             "- Revision: r${{ inputs.revision }}" \
             "- TPZ SHA-256: ${TPZ_SHA256}" \
-            '- Profile: adapter/configs/wechat_2d.py' \
+            '- Profile: templates/configs/wechat_2d.py' \
             '- Validation: build/profile/WASM ABI/Brotli/TPZ gates passed' \
             '- Device status: same-package real-device smoke test pending' \
             '' \
@@ -346,4 +346,5 @@ jobs:
             --target "$SOURCE_COMMIT" \
             --title "$RELEASE_TITLE" \
             --prerelease \
+            --latest=false \
             --notes "$notes"

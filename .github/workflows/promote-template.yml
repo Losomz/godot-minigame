@@ -1,0 +1,154 @@
+name: Promote verified template
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact template-* Release tag to promote
+        required: true
+        type: string
+      godot_major:
+        description: Catalog bucket, for example godot4
+        required: true
+        default: godot4
+        type: string
+      godot_version:
+        description: Exact Godot version, for example 4.5.2
+        required: true
+        type: string
+      source_branch:
+        description: Adapter production branch
+        required: true
+        type: string
+      source_commit:
+        description: Full adapter source commit used by the Release
+        required: true
+        type: string
+      minimum_plugin:
+        description: Minimum compatible plugin version
+        required: true
+        default: 1.0.4
+        type: string
+      status:
+        description: Catalog state
+        required: true
+        default: prerelease
+        type: choice
+        options:
+          - prerelease
+          - stable
+
+permissions: {}
+
+concurrency:
+  group: promote-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    environment: product-promotion
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13.3"
+      - name: Verify immutable Release and source identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          STATUS: ${{ inputs.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^template-${GODOT_VERSION}-r[1-9][0-9]*$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          python - "$SOURCE_BRANCH" "$GODOT_VERSION" <<'PY'
+          import json
+          import sys
+
+          source_branch, godot_version = sys.argv[1:]
+          with open("product/adapters.json", encoding="utf-8") as handle:
+              adapters = json.load(handle)["adapters"]
+          if not any(
+              entry.get("branch") == source_branch and entry.get("godot_version") == godot_version
+              for entry in adapters
+          ):
+              raise SystemExit(
+                  f"{source_branch} is not the registered template source for Godot {godot_version}"
+              )
+          PY
+
+          draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          prerelease="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          target="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+          test "$draft" = "false"
+          test "$target" = "$SOURCE_COMMIT"
+          if [[ "$STATUS" = stable ]]; then
+            test "$prerelease" = "false"
+          fi
+
+          remote_commit="$(git ls-remote --heads origin "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          test -n "$remote_commit"
+          git fetch --no-tags origin "refs/heads/$SOURCE_BRANCH:refs/remotes/origin/template-source"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" refs/remotes/origin/template-source
+
+          mkdir -p release-assets
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tpz' --dir release-assets
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -name '*.tpz' -printf '%f\n')
+          test "${#assets[@]}" -eq 1
+          asset="${assets[0]}"
+          digest="$(sha256sum "release-assets/$asset" | awk '{print $1}')"
+          printf 'TEMPLATE_ASSET=%s\nTEMPLATE_SHA256=%s\n' "$asset" "$digest" >> "$GITHUB_ENV"
+      - name: Update canonical catalog and generated fallback
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GODOT_MAJOR: ${{ inputs.godot_major }}
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          MINIMUM_PLUGIN: ${{ inputs.minimum_plugin }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          python tools/product/product.py promote-template \
+            --godot-major "$GODOT_MAJOR" \
+            --godot-version "$GODOT_VERSION" \
+            --tag "$RELEASE_TAG" \
+            --file "$TEMPLATE_ASSET" \
+            --sha256 "$TEMPLATE_SHA256" \
+            --minimum-plugin "$MINIMUM_PLUGIN" \
+            --source-branch "$SOURCE_BRANCH" \
+            --source-commit "$SOURCE_COMMIT" \
+            --status "$STATUS"
+          python tools/product/product.py validate
+      - name: Open product promotion pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="promote/$RELEASE_TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add catalog/templates.json resources/versions.yaml
+          git commit -m "promote: $RELEASE_TAG"
+          git push origin "$branch"
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$branch" \
+            --title "promote: $RELEASE_TAG" \
+            --body "Promotes verified Release \`$RELEASE_TAG\` from adapter commit \`$SOURCE_COMMIT\`. The PR changes only the canonical template catalog and generated plugin fallback index."

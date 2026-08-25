@@ -16,10 +16,9 @@ arch = ARGUMENTS.get("arch", "x86_64")
 localEnv["platform"] = platform
 localEnv["arch"] = arch
 
-# 如果要用 osxcross 交叉编译 macOS
-if platform == "macos":
-    # 建议在外部 shell 中已 export OSXCROSS_ROOT 和 PATH
-    osxcross_root = os.environ.get("OSXCROSS_ROOT", "/opt/osxcross")  # 按需修改
+# Use osxcross only when an explicit cross-compilation toolchain is configured.
+if platform == "macos" and os.environ.get("OSXCROSS_ROOT"):
+    osxcross_root = os.environ["OSXCROSS_ROOT"]
     
     # 这里的 triplet 要和你 build osxcross 时生成的一致，可以在 $OSXCROSS_ROOT/target/bin 里 ls 看看
     triplet = "x86_64-apple-darwin25.1"  # 示例：macOS 14 SDK，对 x86_64

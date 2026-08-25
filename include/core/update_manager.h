@@ -34,6 +34,7 @@ private:
 	godot::Array active_http_nodes;
 	godot::String download_url;
 	godot::String download_file_path;
+	godot::String expected_download_sha256;
 	int64_t download_total_bytes;
 	int64_t download_received_bytes;
 	bool is_downloading_with_progress;
@@ -49,7 +50,8 @@ private:
 	// HTTP nodes lifecycle management
 	void track_http_node(godot::Node* node);
 	void cleanup_http_nodes();
-	godot::String resolve_distribution_asset_url(const godot::String &asset_name) const;
+	godot::String resolve_update_manifest_url() const;
+	godot::String resolve_update_asset_url(const godot::Dictionary &platform_data) const;
 	godot::String resolve_platform_asset_name(const godot::Dictionary &platform_data) const;
 
 	// HTTPClient-based download methods are no longer needed

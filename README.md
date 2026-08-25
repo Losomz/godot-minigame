@@ -1,89 +1,97 @@
 # Godot Minigame
 
-面向 Godot 4.4+ 的 C++ 编辑器插件，提供小游戏模板适配、下载、缓存、解压和导出能力。
+面向 Godot 4.4+ 的微信小游戏产品线。仓库只发布两种产品：Godot 编辑器插件和经过验证的小游戏模板。
 
-插件本体更新不通过模板分发流程管理。模板通过 Release 资产分发，插件本身建议通过 Godot Asset Library 或仓库源码安装更新。
+插件与模板是独立发布物：插件使用 `plugin-v*` Release，模板使用 `template-<godot>-r*` Release。插件更新不依赖仓库全局 `latest`，模板也不会触发插件升级。
 
-如果要用 AI 协助做适配移植，请直接使用仓库里的 `skills/` 目录。
+## 分支结构
+
+- `upstream-sync`：`citizenll/godot-minigame:main` 的只读同步线。
+- `main`：稳定产品主线，保存插件、模板 Catalog、中央 workflow 和发布规则。
+- `develop`：日常产品开发分支；临时功能和修复分支直接从这里创建并合回这里。
+- `4.5`、`4.6` 等版本分支：模板适配生产线，不直接合入 `main` 或 `develop`。
+
+`refactor/*`、`feature/*` 和 `fix/*` 都是一次性工作分支，不构成额外层级。适配分支完成构建后将不可变模板上传到 Release；Promote workflow 验证来源 commit 和 SHA-256，然后只向 `main` 提交模板 Catalog 与生成索引。
+
+详细规则见 [`docs/branching-and-releases.md`](docs/branching-and-releases.md)。
 
 ## 功能
 
-- 按当前 Godot 版本自动匹配模板
-- 支持 GitHub / Gitee Release 作为模板分发源
-- 首次下载模板，后续走本地缓存
-- 导出时自动解压模板并生成小游戏目录
-- 支持将资源嵌入扩展产物
-- 提供可选的微信小游戏广告接入组件
-- 提供 `skills/` 作为 AI 适配移植技能目录
+- 按当前 Godot 版本匹配已晋升模板
+- 支持 GitHub、Gitee 和 AtomGit Release 模板源
+- 模板下载、缓存、解压和导出
+- 插件与模板独立版本和更新通道
+- 可选微信小游戏广告组件
+- 可复现的 Godot 微信适配补丁与验证技能
 
-## 构建
+## 构建插件
 
 ```bash
-git clone <repo-url>
 git submodule update --init --recursive
-./build_osx.sh
+scons platform=windows arch=x86_64 target=template_release embed_resources=yes
 ```
 
-也可以按平台选择：
+也可以使用：
 
 - `build_win.bat`
 - `./build_linux.sh`
 - `./build_osx.sh`
 
-这些脚本默认都会以 `embed_resources=yes` 构建 release 产物。
+原生库安装到 `demo/addons/godot-minigame/bin/<platform>/`。
 
-构建产物默认会安装到：
+验证产品契约并组装可安装插件：
 
-`demo/addons/godot-minigame/bin/<platform>/`
+```bash
+python tools/product/product.py validate
+python -m unittest discover -s tests/product -v
+python tools/product/product.py package-plugin
+```
+
+插件包生成在 `dist/plugin/`，ZIP 内部固定为 `addons/godot-minigame/`。
 
 ## 使用
 
-1. 将 `demo/addons/godot-minigame/` 放到你的 Godot 项目 `res://addons/godot-minigame/`
-2. 在编辑器里启用插件
-3. 在设置面板配置模板分发源：
-   `Source / Owner / Repo / Tag`
-4. 在导出预设的“模板”分组中保留“自动”，或选择指定模板版本
-5. 如需临时覆盖分发源，可填写直接指向 `.tpz` 文件的 HTTP(S) 链接
-6. 导出时插件会完成模板下载、缓存和解压
+1. 将 Release 插件包中的 `addons/godot-minigame/` 放入 Godot 项目的 `addons/`。
+2. 在编辑器中启用 Godot Minigame。
+3. 配置模板分发源，或保留默认配置。
+4. 在微信小游戏导出预设中选择自动匹配或指定模板版本。
+5. 导出时插件下载并校验模板，然后生成小游戏工程。
 
-自定义模板链接仅覆盖当前导出预设的模板下载地址；留空时仍使用设置面板中的分发源和 `versions.yaml`。
+## Catalog
 
-## 模板分发约定
+两种产品的规范事实源：
 
-Release 需要提供：
+- `product/plugin.json`：插件唯一版本和打包入口
+- `catalog/plugin-stable.json`：已晋升插件 Release
+- `catalog/templates.json`：已晋升模板及来源
 
-- 索引 Release：全量 `versions.yaml`
-- 模板 Release：对应版本的 `*.tpz`
+`product/adapters.json` 只登记模板的适配来源和构建契约，不代表第三种产品。
 
-示例：
+`resources/versions.yaml` 是由 `catalog/templates.json` 生成的旧插件兼容投影，禁止手工双写：
 
-```yaml
-godot4:
-  4.5.1:
-    tag: 4.5.1
-    file: minigame4.5.1.tpz
+```bash
+python tools/product/product.py render-versions
+python tools/product/product.py render-versions --check
 ```
 
-当前匹配规则：
+## Release 命名
 
-- 先找当前引擎版本的精确匹配
-- 找不到则选择同大版本下不高于目标版本的最新模板
-- 还找不到则回退到该大版本桶里的最后一个条目
+- 插件：`plugin-v1.0.4`
+- 模板：`template-4.5.2-r1`
 
-## 微信广告
-
-独立的微信小游戏广告组件位于 [`templates/wechat_ad/`](templates/wechat_ad/README.md)，支持激励视频、插屏广告和原生模板广告。组件不包含项目广告位、AppID 或奖励发放逻辑。
+一个仓库只有一个 Release 列表和一个全局 latest，因此所有产品线都使用命名空间 tag 和独立 Catalog。
 
 ## 目录
 
-- `src/`：源码
-- `include/`：头文件
-- `resources/`：嵌入资源
-- `templates/`：完整模板快照与可选模板组件
-- `skills/`：AI 适配移植技能目录
-- `demo/`：示例项目
-- `tools/`：构建辅助脚本
-- `godot-cpp/`：submodule
+- `src/`、`include/`：C++ 编辑器插件源码
+- `demo/addons/godot-minigame/`：可安装 addon 骨架和构建落点
+- `product/`：产品定义与适配生产线注册
+- `catalog/`：已验证发布物目录
+- `resources/`：插件嵌入资源和兼容模板索引
+- `templates/`：历史模板快照与可选模板组件
+- `skills/`：Godot 微信适配移植技能
+- `tools/product/`：验证、Promote 和插件打包工具
+- `.github/workflows/`：产品、插件和适配自动化
 
 ## License
 

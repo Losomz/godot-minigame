@@ -1,61 +1,75 @@
 # 贡献指南
 
-感谢你愿意为 Godot Minigame 做贡献。
+## 分支选择
 
-## 提交 Issue
+- 插件、Catalog、公共胶水和产品流程的临时分支直接从 `develop` 创建，PR 回 `develop`。
+- Godot 版本适配从对应版本分支开功能分支，例如 `feature/4.5-*`，不要合并到产品 `main`。
+- `upstream-sync` 只允许 fast-forward 同步上游，禁止加入自有提交。
+- `main` 只接收验证后的产品变更和 Promote PR。
 
-- 一个问题一个 Issue（不要把多个不相关问题堆在同一个 Issue 里）
-- 请附带：
-  - Godot 版本（例如 4.4.0 / 4.5.1）
-  - 操作系统与架构（Windows/macOS/Linux，x86_64/arm64）
-  - 复现步骤、日志、截图（如果是下载/Release 相关问题，请附上 `owner/repo/tag` 与 `versions.yaml`）
+`feature/*`、`fix/*` 和 `refactor/*` 都是一次性工作分支，不是 `develop` 与其他开发分支之间的长期中间层。
+
+## Issue 信息
+
+请提供：
+
+- Godot 版本
+- 插件版本
+- 模板 Release tag
+- 操作系统与架构
+- 复现步骤、日志和必要截图
+
+下载或 Release 问题还应提供分发源、资产文件名和 SHA-256。
 
 ## 开发环境
 
 - Godot 4.4+
-- Python 3 + SCons
-- 支持 C++17 的编译器
-- `godot-cpp` 子模块需要初始化：
+- Python 3.11+
+- SCons
+- C++17 编译器
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## 构建
-
-推荐使用脚本：
+## 插件构建
 
 ```bash
-./build_win.sh
-./build_linux.sh
-./build_osx.sh
-```
-
-或直接使用 SCons（示例）：
-
-```bash
-scons platform=windows arch=x86_64 target=template_release
-scons platform=linux arch=x86_64 target=template_release
+scons platform=windows arch=x86_64 target=template_release embed_resources=yes
+scons platform=linux arch=x86_64 target=template_release embed_resources=yes
 scons platform=macos arch=universal target=template_release embed_resources=yes
 ```
 
-构建产物会安装到：
+构建产物安装到 `demo/addons/godot-minigame/bin/<platform>/`。
 
-- `demo/addons/godot-minigame/bin/<platform>/`
+## 必须验证
 
-## 模板分发与测试
+涉及插件或模板的产品定义、版本、Catalog、模板索引或打包逻辑时运行：
 
-模板通过 Release 分发，详见：
+```bash
+python tools/product/product.py validate
+python tools/product/product.py render-versions --check
+python -m unittest discover -s tests/product -v
+```
 
-- `docs/release_distribution.md`
-- `docs/release_testing.md`
+涉及 C++ 时至少构建一个目标平台。涉及适配时还必须执行对应分支声明的构建和真机验证流程。
 
-## 提交 PR
+## Release 与 Promote
 
-- 尽量小步提交：一个 PR 做一件事
-- 不要提交构建产物、Release 产物、以及个人发布脚本（`release/staging/` 与 `.private_release/` 已被忽略）
-- PR 描述中请说明：
-  - 修改动机
-  - 行为变化
-  - 如何验证（构建命令/截图/日志）
+- 插件只能通过 `plugin-v*` tag 从产品主线发布。
+- 插件和模板 Release 不得覆盖已有 tag 或资产。
+- `resources/versions.yaml` 由 `catalog/templates.json` 生成，不能直接编辑。
+- 适配分支不能直接合入 `main`；使用 `promote-template.yml` 创建只修改 Catalog 和生成索引的 PR。
+- 不提交 `.tpz`、WASM、插件二进制或其他 Release 产物。
 
+完整流程见 `docs/branching-and-releases.md`。
+
+## PR 要求
+
+PR 描述必须说明：
+
+- 修改动机
+- 行为与兼容性变化
+- 影响的产品：plugin 或 template
+- 执行过的验证命令
+- 涉及 Release 时的来源 commit、tag 和 SHA-256
