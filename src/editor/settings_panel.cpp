@@ -33,6 +33,7 @@ void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_error", "message"), &SettingsPanel::_on_plugin_update_error);
 	ClassDB::bind_method(D_METHOD("_on_distribution_provider_selected", "index"), &SettingsPanel::_on_distribution_provider_selected);
 	ClassDB::bind_method(D_METHOD("_on_save_distribution_config_pressed"), &SettingsPanel::_on_save_distribution_config_pressed);
+	ClassDB::bind_method(D_METHOD("_on_reset_config_pressed"), &SettingsPanel::_on_reset_config_pressed);
 	ClassDB::bind_method(D_METHOD("_on_refresh_versions_pressed"), &SettingsPanel::_on_refresh_versions_pressed);
 	ClassDB::bind_method(D_METHOD("_on_versions_loaded"), &SettingsPanel::_on_versions_loaded);
 }
@@ -114,6 +115,11 @@ void SettingsPanel::create_interface() {
 	save_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_save_distribution_config_pressed));
 	distribution_provider_row->add_child(save_config_button);
 
+	reset_config_button = memnew(Button);
+	reset_config_button->set_text(String::utf8("恢复默认配置"));
+	reset_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_reset_config_pressed));
+	distribution_provider_row->add_child(reset_config_button);
+
 	refresh_versions_button = memnew(Button);
 	refresh_versions_button->set_text(String::utf8("刷新远端索引"));
 	refresh_versions_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_refresh_versions_pressed));
@@ -136,7 +142,7 @@ void SettingsPanel::create_interface() {
 	owner_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	owner_input->set_custom_minimum_size(Vector2(120, 0));
 	owner_input->set_stretch_ratio(1.2f);
-	owner_input->set_placeholder("citizenll");
+	owner_input->set_placeholder("Losomz");
 	release_config_row->add_child(owner_input);
 
 	repo_label = memnew(Label);
@@ -319,6 +325,20 @@ void SettingsPanel::_on_save_distribution_config_pressed() {
 
 	if (action_status_label) {
 		action_status_label->set_text(String::utf8("配置已保存，正在刷新索引..."));
+	}
+	refresh_distribution_info();
+}
+
+void SettingsPanel::_on_reset_config_pressed() {
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		if (template_manager && template_manager->has_method("reset_distribution_preferences")) {
+			template_manager->call("reset_distribution_preferences");
+		}
+	}
+
+	if (action_status_label) {
+		action_status_label->set_text(String::utf8("已恢复默认配置"));
 	}
 	refresh_distribution_info();
 }

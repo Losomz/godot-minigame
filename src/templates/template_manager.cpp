@@ -289,6 +289,7 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("update_polling"), &TemplateManager::update_polling);
     ClassDB::bind_method(D_METHOD("set_distribution_provider", "provider"), &TemplateManager::set_distribution_provider);
     ClassDB::bind_method(D_METHOD("get_distribution_provider"), &TemplateManager::get_distribution_provider);
+    ClassDB::bind_method(D_METHOD("reset_distribution_preferences"), &TemplateManager::reset_distribution_preferences);
     ClassDB::bind_method(
             D_METHOD("set_current_release_config", "owner", "repo", "release_tag"),
             &TemplateManager::set_current_release_config,
@@ -2477,6 +2478,52 @@ void TemplateManager::persist_distribution_preferences() const {
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
             atomgit_release_tag);
+}
+
+void TemplateManager::reset_distribution_preferences() {
+    distribution_provider = DistributionProvider::GITHUB_RELEASE;
+    github_repo_owner = "Losomz";
+    github_repo_name = "godot-minigame";
+    github_release_tag = "latest";
+    gitee_repo_owner = "Losomz";
+    gitee_repo_name = "godot-minigame";
+    gitee_release_tag = "latest";
+    atomgit_repo_owner = "Losomz";
+    atomgit_repo_name = "godot-minigame";
+    atomgit_release_tag = "latest";
+
+    if (Engine::get_singleton()->is_editor_hint()) {
+        EditorInterface *editor_interface = EditorInterface::get_singleton();
+        if (editor_interface) {
+            Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
+            if (editor_settings.is_valid()) {
+                static const char *metadata_keys[] = {
+                    TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
+                    TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
+                    TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
+                    TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
+                    TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
+                    TOOLKIT_EDITOR_METADATA_GITEE_REPO,
+                    TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
+                    TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER,
+                    TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO,
+                    TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
+                    nullptr,
+                };
+                // The legacy section is cleared too so pre-fork installs stop
+                // resurrecting the upstream mirror configuration.
+                for (int s = 0; s < 2; s++) {
+                    const char *section = (s == 0) ? TOOLKIT_EDITOR_METADATA_SECTION : TOOLKIT_EDITOR_METADATA_SECTION_LEGACY;
+                    for (int k = 0; metadata_keys[k] != nullptr; k++) {
+                        editor_settings->set_project_metadata(section, metadata_keys[k], Variant());
+                    }
+                }
+            }
+        }
+    }
+
+    reload_active_distribution_cache(false);
+    TOOLKIT_LOG("TemplateManager: Distribution preferences reset to defaults");
 }
 
 void TemplateManager::reload_active_distribution_cache(bool load_remote_versions) {

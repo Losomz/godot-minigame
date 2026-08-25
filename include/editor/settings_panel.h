@@ -34,6 +34,7 @@ private:
 	godot::Label *tag_label = nullptr;
 	godot::LineEdit *tag_input = nullptr;
 	godot::Button *save_config_button = nullptr;
+	godot::Button *reset_config_button = nullptr;
 	godot::Button *refresh_versions_button = nullptr;
 	godot::Label *action_status_label = nullptr;
 
@@ -46,6 +47,7 @@ private:
 	void _on_plugin_update_error(const godot::String &message);
 	void _on_distribution_provider_selected(int index);
 	void _on_save_distribution_config_pressed();
+	void _on_reset_config_pressed();
 	void _on_refresh_versions_pressed();
 	void _on_versions_loaded();
 

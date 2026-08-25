@@ -41,10 +41,10 @@ private:
     String github_repo_owner = "Losomz";
     String github_repo_name = "godot-minigame";
     String github_release_tag = "latest";
-    String gitee_repo_owner = "godothub";
+    String gitee_repo_owner = "Losomz";
     String gitee_repo_name = "godot-minigame";
     String gitee_release_tag = "latest";
-    String atomgit_repo_owner = "godothub";
+    String atomgit_repo_owner = "Losomz";
     String atomgit_repo_name = "godot-minigame";
     String atomgit_release_tag = "latest";
 
@@ -164,6 +164,7 @@ private:
     bool apply_distribution_provider(const String& provider, bool persist_selection, bool refresh_version_cache);
     void load_distribution_preferences();
     void persist_distribution_preferences() const;
+    void reset_distribution_preferences();
     void reload_active_distribution_cache(bool load_remote_versions);
 
     void update_download_state(const String& filename, const String& state, float progress = 0.0f);
