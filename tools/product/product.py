@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-TEMPLATE_TAG_RE = re.compile(r"^template-([0-9]+\.[0-9]+\.[0-9]+)-r([1-9][0-9]*)$")
+TEMPLATE_TAG_RE = re.compile(
+    r"^([0-9]+\.[0-9]+\.[0-9]+)-([a-z0-9]+(?:-[a-z0-9]+)*?)-r([1-9][0-9]*)$"
+)
 
 
 class ProductError(RuntimeError):
@@ -244,7 +246,7 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
             errors.append(f"Template {major}/{version} must identify its source_branch")
         tag = entry.get("tag")
         if status != "legacy" and not TEMPLATE_TAG_RE.fullmatch(str(tag or "")):
-            errors.append(f"Promoted template {major}/{version} must use a namespaced template tag")
+            errors.append(f"Promoted template {major}/{version} must use a <version>-<variant>-rN tag")
         sha256 = entry.get("sha256")
         if status != "legacy" and not SHA256_RE.fullmatch(str(sha256 or "")):
             errors.append(f"Promoted template {major}/{version} must include SHA-256")
@@ -301,16 +303,18 @@ def command_render_versions(args: argparse.Namespace) -> None:
 
 def next_template_revision(tag: str) -> int:
     match = TEMPLATE_TAG_RE.fullmatch(tag)
-    return int(match.group(2)) if match else 0
+    return int(match.group(3)) if match else 0
 
 
 def command_promote_template(args: argparse.Namespace) -> None:
     parse_semver(args.godot_version, "Godot version")
     parse_semver(args.minimum_plugin, "Minimum plugin version")
-    expected_tag = re.compile(rf"^template-{re.escape(args.godot_version)}-r([1-9][0-9]*)$")
+    expected_tag = re.compile(
+        rf"^{re.escape(args.godot_version)}-([a-z0-9]+(?:-[a-z0-9]+)*?)-r([1-9][0-9]*)$"
+    )
     match = expected_tag.fullmatch(args.tag)
     if not match:
-        raise ProductError(f"Tag must match template-{args.godot_version}-rN")
+        raise ProductError(f"Tag must match {args.godot_version}-<variant>-rN")
     if not SHA256_RE.fullmatch(args.sha256):
         raise ProductError("Template promotion requires a 64-character SHA-256")
     if not COMMIT_RE.fullmatch(args.source_commit):
@@ -323,7 +327,7 @@ def command_promote_template(args: argparse.Namespace) -> None:
     if not isinstance(entries, list):
         raise ProductError("Template catalog has no templates array")
 
-    incoming_revision = int(match.group(1))
+    incoming_revision = int(match.group(2))
     replacement = {
         "godot_major": args.godot_major,
         "godot_version": args.godot_version,

@@ -2,7 +2,7 @@
 
 面向 Godot 4.4+ 的微信小游戏产品线。仓库只发布两种产品：Godot 编辑器插件和经过验证的小游戏模板。
 
-插件与模板是独立发布物：插件使用 `plugin-v*` Release，模板使用 `template-<godot>-r*` Release。插件更新不依赖仓库全局 `latest`，模板也不会触发插件升级。
+插件与模板是独立发布物：插件使用 `plugin-v*` Release，模板使用 `<godot>-<variant>-r*` Release（如 `4.5.2-glx-2d-r1`）。插件更新不依赖仓库全局 `latest`，模板也不会触发插件升级。
 
 ## 分支结构
 
@@ -76,7 +76,7 @@ TPZ 在插件 ZIP 中只保存一份。导出预设的“模板/模板来源”�
 
 `product/adapters.json` 只登记模板的适配来源和构建契约，不代表第三种产品。
 
-插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板选择只读取模板索引并下载 `template-*` TPZ。下载后的插件 ZIP 需要关闭 Godot 后安装，不会在编辑器运行时覆盖原生库。
+插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板选择只读取模板索引并下载 `<version>-<variant>-rN` TPZ。下载后的插件 ZIP 需要关闭 Godot 后安装，不会在编辑器运行时覆盖原生库。
 
 `resources/versions.yaml` 是由 `catalog/templates.json` 生成的旧插件兼容投影，禁止手工双写：
 
@@ -88,7 +88,7 @@ python tools/product/product.py render-versions --check
 ## Release 命名
 
 - 插件：`plugin-v1.0.4`
-- 模板：`template-4.5.2-r1`
+- 模板：`4.5.2-glx-2d-r1`（版本-变体-修订号，与产物文件名一致）
 
 一个仓库只有一个 Release 列表和一个全局 latest，因此所有产品线都使用命名空间 tag 和独立 Catalog。
 

@@ -8,7 +8,7 @@
       "status": "stable",
       "workflow": "wechat-template.yml",
       "adapter_tag_prefix": "adapter-4.5.2-r",
-      "template_tag_prefix": "template-4.5.2-r",
+      "template_tag_prefix": "4.5.2-glx-2d-r",
       "required_paths": [
         ".gitmodules",
         "adapter/patches/manifest.json",

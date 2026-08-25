@@ -53,17 +53,6 @@
       "minimum_plugin": "1.0.4",
       "source_branch": "upstream-sync",
       "status": "legacy"
-    },
-    {
-      "godot_major": "godot4",
-      "godot_version": "4.5.2",
-      "tag": "template-4.5.2-r1",
-      "file": "minigame4.5.2-glx-2d-noexc-r1.tpz",
-      "sha256": "b1ec3244469a74a0d881a3b6b8b0929129213fbb96666a4c2379d242fff18782",
-      "minimum_plugin": "1.0.4",
-      "source_branch": "4.5",
-      "source_commit": "20d2731f3efc0b9afd7d3df32dc477997fd1a3e2",
-      "status": "prerelease"
     }
   ]
 }

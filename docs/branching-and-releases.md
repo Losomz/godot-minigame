@@ -15,7 +15,7 @@
 仓库只发布两种产品：
 
 - 插件：从产品主线发布 `plugin-v*` Release。
-- 模板：从版本适配分支生产 `template-*` Release，再通过 Promote PR 登记到 `main`。
+- 模板：从版本适配分支生产 `<godot>-<variant>-rN` Release（如 `4.5.2-glx-2d-r1`），再通过 Promote 登记到 `main`。
 
 ## 控制面与生产线
 
@@ -24,10 +24,10 @@
 ```text
 adapter branch commit
   -> central build workflow
-  -> immutable template-* Release
+  -> immutable <godot>-<variant>-rN Release
   -> device verification
-  -> promote-template workflow
-  -> Catalog-only PR to main
+  -> promote step in wechat-template.yml
+  -> catalog commit to main
 ```
 
 Promote PR 只允许修改：
@@ -47,7 +47,7 @@ Promote PR 只允许修改：
 - `ci/requirements-build.txt`
 - `templates/configs/wechat_2d.py`
 
-Manifest 必须锁定官方 Godot base commit、适配 commit 和工具链版本。中央 workflow 使用远端分支的精确 commit 构建并记录 SHA-256。临时适配分支只用于 Artifact 验证；正式 `template-4.5.2-r*` Release 只从登记的 `4.5` 分支创建。
+Manifest 必须锁定官方 Godot base commit、适配 commit 和工具链版本。中央 workflow 使用远端分支的精确 commit 构建并记录 SHA-256。临时适配分支只用于 Artifact 验证；正式 `4.5.2-glx-2d-r*` Release 只从登记的 `4.5` 分支创建。
 
 ## 插件发布
 
@@ -57,27 +57,28 @@ Manifest 必须锁定官方 Godot base commit、适配 commit 和工具链版本
 plugin-v<semver>
 ```
 
-`release-plugin.yml` 验证 tag、产品契约和 `main` 祖先关系，构建 Windows/Linux/macOS 原生库，组装全平台 addon ZIP，并生成 SHA-256 和 `plugin-update.json`。
+`release-plugin.yml` 在 Actions 页面手动触发（只允许 `main`），版本号唯一来源是 `product/plugin.json`；workflow 校验 `plugin-v<version>` Release/tag 尚不存在，构建 Windows/Linux/macOS 原生库，组装全平台 addon ZIP，生成 SHA-256 和 `plugin-update.json`，自动创建 tag 与 Release。
 
 Release 验证完成后，将 `plugin-update.json` 内容晋升到 `catalog/plugin-stable.json`。插件只读取该固定 Catalog，不使用仓库全局 latest。
 
 ## 模板发布
 
-中央 `build-wechat-glx.yml` 从指定适配分支构建：
+中央 `wechat-template.yml` 从指定适配分支构建：
 
 ```bash
-gh workflow run build-wechat-glx.yml \
+gh workflow run wechat-template.yml \
   --repo Losomz/godot-minigame \
   --ref main \
+  -f mode=build \
   -f source_ref=4.5 \
   -f revision=2 \
   -f release_mode=prerelease
 ```
 
-正式命名：
+正式命名（版本-变体-修订号，由产物文件名 `minigame<...>.tpz` 去掉 `minigame` 前缀得到）：
 
 ```text
-template-4.5.2-r2
+4.5.2-glx-2d-r2
 ```
 
 临时适配分支只生成 Actions Artifact，不创建正式模板 Release，也不进入 Catalog。
@@ -86,14 +87,13 @@ template-4.5.2-r2
 
 1. 对 Release 中的同一 `.tpz` 完成真机验证。
 2. 将 GitHub Prerelease 原地提升为稳定 Release，不重新构建或替换资产。
-3. 从 `main` 运行 `promote-template.yml`，输入 Release tag、适配分支和完整 source commit。
+3. 从 `main` 运行 `wechat-template.yml` 的 promote 模式，输入 Release tag、适配分支和完整 source commit。
 4. Workflow 验证 Release 状态、tag target、来源提交属于登记的适配分支历史、资产数量和 SHA-256。
-5. Workflow 创建 `promote/<tag>` PR。
-6. `contracts.yml` 再次验证 Catalog 和生成索引后合入 `main`。
+5. Workflow 运行 `product.py promote-template` 并把 `catalog/templates.json` 与 `resources/versions.yaml` 直接提交到 `main`。
 
 ## 不可变规则
 
-- 禁止覆盖或删除已发布的 `plugin-v*` 和 `template-*` tag。
+- 禁止覆盖或删除已发布的 `plugin-v*` 和模板 `*-rN` tag。
 - 禁止替换 Release 资产。
 - 正式产物必须绑定精确 source commit 和 SHA-256。
 - `resources/versions.yaml` 禁止手工修改。
