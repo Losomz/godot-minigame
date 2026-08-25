@@ -1,5 +1,7 @@
 #include "editor/settings_panel.h"
+#include "core/update_manager.h"
 
+#include <godot_cpp/classes/config_file.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/v_box_container.hpp>
 
@@ -23,6 +25,12 @@ SettingsPanel::~SettingsPanel() {
 
 void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("refresh_distribution_info"), &SettingsPanel::refresh_distribution_info);
+	ClassDB::bind_method(D_METHOD("_on_check_plugin_update_pressed"), &SettingsPanel::_on_check_plugin_update_pressed);
+	ClassDB::bind_method(D_METHOD("_on_download_plugin_update_pressed"), &SettingsPanel::_on_download_plugin_update_pressed);
+	ClassDB::bind_method(D_METHOD("_on_plugin_update_state_changed", "state"), &SettingsPanel::_on_plugin_update_state_changed);
+	ClassDB::bind_method(D_METHOD("_on_plugin_update_available", "version_info"), &SettingsPanel::_on_plugin_update_available);
+	ClassDB::bind_method(D_METHOD("_on_plugin_update_download_finished", "success"), &SettingsPanel::_on_plugin_update_download_finished);
+	ClassDB::bind_method(D_METHOD("_on_plugin_update_error", "message"), &SettingsPanel::_on_plugin_update_error);
 	ClassDB::bind_method(D_METHOD("_on_distribution_provider_selected", "index"), &SettingsPanel::_on_distribution_provider_selected);
 	ClassDB::bind_method(D_METHOD("_on_save_distribution_config_pressed"), &SettingsPanel::_on_save_distribution_config_pressed);
 	ClassDB::bind_method(D_METHOD("_on_refresh_versions_pressed"), &SettingsPanel::_on_refresh_versions_pressed);
@@ -38,6 +46,14 @@ void SettingsPanel::_ready() {
 			template_manager->connect("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded));
 		}
 	}
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (update_manager) {
+		update_manager->initialize();
+		update_manager->connect("update_state_changed", callable_mp(this, &SettingsPanel::_on_plugin_update_state_changed));
+		update_manager->connect("update_available", callable_mp(this, &SettingsPanel::_on_plugin_update_available));
+		update_manager->connect("download_finished", callable_mp(this, &SettingsPanel::_on_plugin_update_download_finished));
+		update_manager->connect("error", callable_mp(this, &SettingsPanel::_on_plugin_update_error));
+	}
 
 	call_deferred("refresh_distribution_info");
 }
@@ -52,10 +68,25 @@ void SettingsPanel::create_interface() {
 	main_vbox->set_v_size_flags(Control::SIZE_EXPAND_FILL);
 	content_control->add_child(main_vbox);
 
+	plugin_update_row = memnew(HBoxContainer);
+	main_vbox->add_child(plugin_update_row);
+
 	plugin_update_label = memnew(Label);
-	plugin_update_label->set_text(String::utf8("插件更新方式：请通过 Godot Asset Library 管理"));
+	plugin_update_label->set_text(String::utf8("插件更新：尚未检查"));
 	plugin_update_label->set_custom_minimum_size(Vector2(0, 30));
-	main_vbox->add_child(plugin_update_label);
+	plugin_update_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	plugin_update_row->add_child(plugin_update_label);
+
+	check_plugin_update_button = memnew(Button);
+	check_plugin_update_button->set_text(String::utf8("检查插件更新"));
+	check_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_check_plugin_update_pressed));
+	plugin_update_row->add_child(check_plugin_update_button);
+
+	download_plugin_update_button = memnew(Button);
+	download_plugin_update_button->set_text(String::utf8("下载插件更新"));
+	download_plugin_update_button->set_disabled(true);
+	download_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_download_plugin_update_pressed));
+	plugin_update_row->add_child(download_plugin_update_button);
 
 	distribution_provider_row = memnew(HBoxContainer);
 	distribution_provider_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
@@ -142,8 +173,67 @@ void SettingsPanel::create_interface() {
 	main_vbox->add_child(spacer);
 }
 
+void SettingsPanel::_on_check_plugin_update_pressed() {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (!update_manager) {
+		_on_plugin_update_error("Plugin update manager is unavailable.");
+		return;
+	}
+	Ref<ConfigFile> config;
+	config.instantiate();
+	String version = "0.0.0";
+	if (config->load("res://addons/godot-minigame/plugin.cfg") == OK) {
+		version = String(config->get_value("plugin", "version", version)).strip_edges();
+	}
+	plugin_update_label->set_text(String::utf8("插件更新：正在检查，当前版本 ") + version);
+	check_plugin_update_button->set_disabled(true);
+	download_plugin_update_button->set_disabled(true);
+	update_manager->check_for_updates(version);
+}
+
+void SettingsPanel::_on_download_plugin_update_pressed() {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (update_manager) {
+		download_plugin_update_button->set_disabled(true);
+		update_manager->download_update();
+	}
+}
+
+void SettingsPanel::_on_plugin_update_state_changed(int state) {
+	if (check_plugin_update_button) {
+		check_plugin_update_button->set_disabled(state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING);
+	}
+	if (state == UpdateManager::STATE_UP_TO_DATE && plugin_update_label) {
+		plugin_update_label->set_text(String::utf8("插件更新：当前已是最新版本"));
+	}
+}
+
+void SettingsPanel::_on_plugin_update_available(const Dictionary &version_info) {
+	String version = String(version_info.get("version", ""));
+	plugin_update_label->set_text(String::utf8("插件更新：发现新版本 ") + version);
+	download_plugin_update_button->set_disabled(false);
+}
+
+void SettingsPanel::_on_plugin_update_download_finished(bool success) {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (success && update_manager) {
+		plugin_update_label->set_text(String::utf8("插件更新已下载，请关闭 Godot 后安装：") + update_manager->get_download_file_path());
+	} else {
+		plugin_update_label->set_text(String::utf8("插件更新下载失败"));
+	}
+}
+
+void SettingsPanel::_on_plugin_update_error(const String &message) {
+	if (plugin_update_label) {
+		plugin_update_label->set_text(String::utf8("插件更新失败：") + message);
+	}
+	if (check_plugin_update_button) {
+		check_plugin_update_button->set_disabled(false);
+	}
+}
+
 void SettingsPanel::refresh_distribution_info() {
-	String provider = "atomgit";
+	String provider = "github";
 	Dictionary config;
 
 	if (Engine::get_singleton()->has_singleton("TemplateManager")) {

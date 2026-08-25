@@ -49,6 +49,15 @@ python tools/product/product.py package-plugin
 
 插件包生成在 `dist/plugin/`，ZIP 内部固定为 `addons/godot-minigame/`。
 
+如需生成离线插件包，可选择把已登记在模板 Catalog 中的本地 TPZ 一起打包：
+
+```bash
+python tools/product/product.py package-plugin \
+  --bundle-template /path/to/minigame4.5.1.2.tpz
+```
+
+TPZ 在插件 ZIP 中只保存一份。导出预设的“模板/模板来源”可选择“自动”或“仅插件内模板”；自动模式优先使用兼容的插件内模板，否则使用本地缓存或模板 Release。
+
 ## 使用
 
 1. 将 Release 插件包中的 `addons/godot-minigame/` 放入 Godot 项目的 `addons/`。
@@ -66,6 +75,8 @@ python tools/product/product.py package-plugin
 - `catalog/templates.json`：已晋升模板及来源
 
 `product/adapters.json` 只登记模板的适配来源和构建契约，不代表第三种产品。
+
+插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板选择只读取模板索引并下载 `template-*` TPZ。下载后的插件 ZIP 需要关闭 Godot 后安装，不会在编辑器运行时覆盖原生库。
 
 `resources/versions.yaml` 是由 `catalog/templates.json` 生成的旧插件兼容投影，禁止手工双写：
 

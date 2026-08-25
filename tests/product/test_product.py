@@ -81,7 +81,7 @@ class ProductToolTests(unittest.TestCase):
     def test_plugin_zip_has_installable_addon_prefix(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
-            args = argparse.Namespace(root=ROOT, output_dir=output, require_binaries=False)
+            args = argparse.Namespace(root=ROOT, output_dir=output, require_binaries=False, bundle_template=[])
             product.command_package_plugin(args)
             archive = output / "godot-minigame-plugin-1.0.4.zip"
             self.assertTrue(archive.is_file())
@@ -89,6 +89,26 @@ class ProductToolTests(unittest.TestCase):
                 names = package.namelist()
             self.assertIn("addons/godot-minigame/plugin.cfg", names)
             self.assertTrue(all(name.startswith("addons/godot-minigame/") for name in names))
+
+    def test_plugin_zip_can_bundle_template_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            template = temporary_path / "minigame4.5.1.2.tpz"
+            template.write_bytes(b"template")
+            output = temporary_path / "output"
+            args = argparse.Namespace(
+                root=ROOT,
+                output_dir=output,
+                require_binaries=False,
+                bundle_template=[template],
+            )
+            product.command_package_plugin(args)
+            archive = output / "godot-minigame-plugin-1.0.4.zip"
+            with zipfile.ZipFile(archive) as package:
+                names = package.namelist()
+                bundled = "addons/godot-minigame/resources/templates/minigame4.5.1.2.tpz"
+                self.assertEqual(names.count(bundled), 1)
+                self.assertEqual(package.read(bundled), b"template")
 
 
 if __name__ == "__main__":

@@ -270,8 +270,11 @@ void TemplateManager::_bind_methods() {
 
     // Individual template status
     ClassDB::bind_method(D_METHOD("is_template_embedded", "filename"), &TemplateManager::is_template_embedded);
+    ClassDB::bind_method(D_METHOD("is_template_bundled", "filename"), &TemplateManager::is_template_bundled);
     ClassDB::bind_method(D_METHOD("is_template_downloaded", "filename"), &TemplateManager::is_template_downloaded);
     ClassDB::bind_method(D_METHOD("get_template_path", "filename"), &TemplateManager::get_template_path);
+    ClassDB::bind_method(D_METHOD("get_bundled_template_path", "filename"), &TemplateManager::get_bundled_template_path);
+    ClassDB::bind_method(D_METHOD("get_best_bundled_template_for_editor"), &TemplateManager::get_best_bundled_template_for_editor);
     ClassDB::bind_method(D_METHOD("get_best_available_template_for_editor"), &TemplateManager::get_best_available_template_for_editor);
     ClassDB::bind_method(
             D_METHOD("get_best_available_template_for_version", "target_version", "major_version"),
@@ -1002,15 +1005,84 @@ bool TemplateManager::is_template_embedded(const String& filename) const {
     return false;
 }
 
+String TemplateManager::get_bundled_template_path(const String& filename) const {
+    if (filename.get_file() != filename || filename.contains("..")) {
+        return "";
+    }
+    String path = "res://addons/godot-minigame/resources/templates/" + filename;
+    return FileAccess::file_exists(path) ? path : "";
+}
+
+bool TemplateManager::is_template_bundled(const String& filename) const {
+    return !get_bundled_template_path(filename).is_empty();
+}
+
+String TemplateManager::get_best_bundled_template_for_editor() const {
+    String current_version = get_current_godot_version();
+    String major_version = get_godot_major_version();
+    if (has_version(major_version, current_version)) {
+        String filename = get_template_filename(major_version, current_version);
+        if (is_template_bundled(filename)) {
+            return get_bundled_template_path(filename);
+        }
+    }
+
+    PackedStringArray current_parts = current_version.split(".");
+    String current_minor = current_parts.size() >= 2 ? String(current_parts[0]) + "." + String(current_parts[1]) + "." : "";
+    String same_minor_version;
+    String nearest_version;
+    String latest_version;
+    String same_minor_filename;
+    String nearest_filename;
+    String latest_filename;
+    Array versions = get_available_versions();
+    for (int i = 0; i < versions.size(); i++) {
+        Dictionary entry = versions[i];
+        if (String(entry.get("godot_major", "")) != major_version) {
+            continue;
+        }
+        String version = String(entry.get("version", ""));
+        String filename = String(entry.get("filename", ""));
+        if (!is_template_bundled(filename)) {
+            continue;
+        }
+        if (!current_minor.is_empty() && version.begins_with(current_minor) &&
+                (same_minor_version.is_empty() || compare_version_numbers(version, same_minor_version) > 0)) {
+            same_minor_version = version;
+            same_minor_filename = filename;
+        }
+        if (compare_version_numbers(version, current_version) <= 0 &&
+                (nearest_version.is_empty() || compare_version_numbers(version, nearest_version) > 0)) {
+            nearest_version = version;
+            nearest_filename = filename;
+        }
+        if (latest_version.is_empty() || compare_version_numbers(version, latest_version) > 0) {
+            latest_version = version;
+            latest_filename = filename;
+        }
+    }
+
+    String selected = !same_minor_filename.is_empty() ? same_minor_filename :
+            (!nearest_filename.is_empty() ? nearest_filename : latest_filename);
+    if (!selected.is_empty()) {
+        return get_bundled_template_path(selected);
+    }
+    return "";
+}
+
 bool TemplateManager::is_template_downloaded(const String& filename) const {
     String cache_path = get_download_cache_path(filename);
     return FileAccess::file_exists(cache_path);
 }
 
 String TemplateManager::get_template_path(const String& filename) const {
-    // Priority: embedded -> cached -> remote
+    // Priority: packaged file -> embedded resource -> cached -> remote.
 
-    // Check embedded first
+    String bundled_path = get_bundled_template_path(filename);
+    if (!bundled_path.is_empty()) {
+        return bundled_path;
+    }
+
     if (is_template_embedded(filename)) {
         return "embedded://" + filename;
     }
@@ -1767,7 +1839,8 @@ bool TemplateManager::is_template_available_remotely(const String& filename) con
 }
 
 bool TemplateManager::is_template_available_anywhere(const String& filename) const {
-    return is_template_embedded(filename) ||
+    return is_template_bundled(filename) ||
+           is_template_embedded(filename) ||
            is_template_downloaded(filename) ||
            is_template_available_remotely(filename);
 }

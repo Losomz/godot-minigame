@@ -37,8 +37,8 @@ private:
 
     static TemplateManager* singleton;
 
-    DistributionProvider distribution_provider = DistributionProvider::ATOMGIT_RELEASE;
-    String github_repo_owner = "godothub";
+    DistributionProvider distribution_provider = DistributionProvider::GITHUB_RELEASE;
+    String github_repo_owner = "Losomz";
     String github_repo_name = "godot-minigame";
     String github_release_tag = "latest";
     String gitee_repo_owner = "godothub";
@@ -81,9 +81,12 @@ public:
 
     // Template availability (priority: embedded -> cached -> remote)
     bool is_template_embedded(const String& filename) const;
+    bool is_template_bundled(const String& filename) const;
     bool is_template_downloaded(const String& filename) const;
     bool is_template_available_remotely(const String& filename) const;
     String get_template_path(const String& filename) const;
+    String get_bundled_template_path(const String& filename) const;
+    String get_best_bundled_template_for_editor() const;
     String get_best_available_template_for_editor() const;
     String get_best_available_template_for_version(const String& target_version, const String& major_version = "") const;
 

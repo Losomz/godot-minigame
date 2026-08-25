@@ -72,11 +72,10 @@ void UpdateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("check_for_updates", "local_version"), &UpdateManager::check_for_updates);
     ClassDB::bind_method(D_METHOD("download_update"), &UpdateManager::download_update);
     ClassDB::bind_method(D_METHOD("cancel_download"), &UpdateManager::cancel_download);
-    ClassDB::bind_method(D_METHOD("perform_update"), &UpdateManager::perform_update);
-    ClassDB::bind_method(D_METHOD("restart_editor_for_update"), &UpdateManager::restart_editor_for_update);
     ClassDB::bind_method(D_METHOD("get_local_version"), &UpdateManager::get_local_version);
     ClassDB::bind_method(D_METHOD("get_remote_version_info"), &UpdateManager::get_remote_version_info);
     ClassDB::bind_method(D_METHOD("get_current_state"), &UpdateManager::get_current_state);
+    ClassDB::bind_method(D_METHOD("get_download_file_path"), &UpdateManager::get_download_file_path);
    
     ClassDB::bind_method(D_METHOD("_on_version_check_completed"), &UpdateManager::_on_version_check_completed);
     ClassDB::bind_method(D_METHOD("_on_download_completed"), &UpdateManager::_on_download_completed);
@@ -93,6 +92,7 @@ void UpdateManager::_bind_methods() {
     BIND_ENUM_CONSTANT(STATE_UPDATE_AVAILABLE);
     BIND_ENUM_CONSTANT(STATE_DOWNLOADING);
     BIND_ENUM_CONSTANT(STATE_DOWNLOADED);
+    BIND_ENUM_CONSTANT(STATE_UP_TO_DATE);
     BIND_ENUM_CONSTANT(STATE_ERROR);
    }
 
@@ -351,7 +351,9 @@ void UpdateManager::download_update() {
         emit_signal("error", "Update asset is missing a valid SHA-256 digest.");
         return;
     }
-    String download_path = "user://toolkit_update.zip";
+    String download_path = "user://godot-minigame/updates/" + asset_name;
+    DirAccess::make_dir_recursive_absolute(ProjectSettings::get_singleton()->globalize_path(download_path.get_base_dir()));
+    download_file_path = download_path;
 
     TOOLKIT_LOG("UpdateManager: Starting download from: ", full_url);
     TOOLKIT_LOG("UpdateManager: Download destination: ", download_path);
@@ -381,7 +383,7 @@ void UpdateManager::_on_download_completed(int p_result, int p_response_code, co
     TOOLKIT_LOG("UpdateManager: Download completed. Result: ", p_result, ", Response code: ", p_response_code);
 
     if (p_result == HTTPRequest::RESULT_SUCCESS && p_response_code == 200) {
-    	String download_path = "user://toolkit_update.zip";
+		String download_path = download_file_path;
     	if (FileAccess::file_exists(download_path)) {
             String actual_sha256 = FileAccess::get_sha256(download_path).to_lower();
             if (actual_sha256 != expected_download_sha256) {
@@ -420,6 +422,10 @@ void UpdateManager::_on_download_completed(int p_result, int p_response_code, co
 
 bool UpdateManager::is_properly_configured() const {
     return !resolve_update_manifest_url().is_empty();
+}
+
+String UpdateManager::get_download_file_path() const {
+    return download_file_path;
 }
 
 String UpdateManager::resolve_update_manifest_url() const {
@@ -483,7 +489,11 @@ void toolkit::UpdateManager::cancel_download() {
 bool toolkit::UpdateManager::perform_update() {
 	using namespace godot;
 
-	const String TEMP_DOWNLOAD_FILE = "user://toolkit_update.zip";
+	const String TEMP_DOWNLOAD_FILE = download_file_path;
+	if (TEMP_DOWNLOAD_FILE.is_empty()) {
+		UtilityFunctions::push_warning("No downloaded plugin update is available.");
+		return false;
+	}
 	if (!FileAccess::file_exists(TEMP_DOWNLOAD_FILE)) {
 		UtilityFunctions::push_warning("Update file not found. Nothing to do.");
 		return false;

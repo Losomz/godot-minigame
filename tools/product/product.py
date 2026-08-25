@@ -382,10 +382,39 @@ def command_package_plugin(args: argparse.Namespace) -> None:
     if args.require_binaries and not any(path.suffix.lower() in {".dll", ".so", ".dylib"} for path, _ in files):
         raise ProductError("Plugin package requires native binaries, but none were found")
 
+    bundled_templates: list[tuple[Path, Path]] = []
+    seen_template_names: set[str] = set()
+    addon_archive_paths = {relative.as_posix() for _, relative in files}
+    template_catalog = load_json(args.root / "catalog/templates.json")
+    catalog_template_names = {
+        str(entry.get("file", ""))
+        for entry in template_catalog.get("templates", [])
+        if isinstance(entry, dict)
+    }
+    for template in args.bundle_template:
+        template_path = template.resolve()
+        if not template_path.is_file() or template_path.suffix.lower() != ".tpz":
+            raise ProductError(f"Bundled template must be an existing .tpz file: {template}")
+        if template_path.name not in catalog_template_names:
+            raise ProductError(f"Bundled template is not registered in catalog/templates.json: {template_path.name}")
+        if template_path.name in seen_template_names:
+            raise ProductError(f"Bundled template filename is duplicated: {template_path.name}")
+        bundled_relative = Path("resources/templates") / template_path.name
+        if bundled_relative.as_posix() in addon_archive_paths:
+            raise ProductError(f"Bundled template already exists in the addon: {template_path.name}")
+        seen_template_names.add(template_path.name)
+        bundled_templates.append((template_path, bundled_relative))
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     archive = args.output_dir / f"godot-minigame-plugin-{version}.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as output:
         for source, relative in files:
+            archive_name = Path("addons/godot-minigame") / relative
+            info = zipfile.ZipInfo(archive_name.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            output.writestr(info, source.read_bytes())
+        for source, relative in bundled_templates:
             archive_name = Path("addons/godot-minigame") / relative
             info = zipfile.ZipInfo(archive_name.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -430,6 +459,13 @@ def build_parser() -> argparse.ArgumentParser:
     package = subparsers.add_parser("package-plugin", help="create a deterministic installable plugin zip")
     package.add_argument("--output-dir", type=Path, default=ROOT / "dist/plugin")
     package.add_argument("--require-binaries", action="store_true")
+    package.add_argument(
+        "--bundle-template",
+        action="append",
+        type=Path,
+        default=[],
+        help="include a catalog-registered local .tpz under addons/godot-minigame/resources/templates/",
+    )
     package.set_defaults(func=command_package_plugin)
     return parser
 

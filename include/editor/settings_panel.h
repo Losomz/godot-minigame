@@ -20,6 +20,9 @@ private:
 	godot::Control *content_control = nullptr;
 	godot::VBoxContainer *main_vbox = nullptr;
 	godot::Label *plugin_update_label = nullptr;
+	godot::HBoxContainer *plugin_update_row = nullptr;
+	godot::Button *check_plugin_update_button = nullptr;
+	godot::Button *download_plugin_update_button = nullptr;
 	godot::HBoxContainer *distribution_provider_row = nullptr;
 	godot::Label *distribution_provider_title_label = nullptr;
 	godot::OptionButton *distribution_provider_selector = nullptr;
@@ -35,6 +38,12 @@ private:
 	godot::Label *action_status_label = nullptr;
 
 	void refresh_distribution_info();
+	void _on_check_plugin_update_pressed();
+	void _on_download_plugin_update_pressed();
+	void _on_plugin_update_state_changed(int state);
+	void _on_plugin_update_available(const godot::Dictionary &version_info);
+	void _on_plugin_update_download_finished(bool success);
+	void _on_plugin_update_error(const godot::String &message);
 	void _on_distribution_provider_selected(int index);
 	void _on_save_distribution_config_pressed();
 	void _on_refresh_versions_pressed();
