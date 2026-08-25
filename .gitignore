@@ -61,3 +61,4 @@ demo/w2/
 GITHUB_SECRETS.md
 latest.json
 /tools/obfuscation/node_modules/
+.zcode/
