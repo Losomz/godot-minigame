@@ -12,8 +12,12 @@
 **/*.os
 
 # Build directories
+/dist/
 /bin/
 /demo/bin/
+/demo/addons/godot-minigame/bin/
+/release-assets/
+/.ci-emsdk/
 /.sconsign.dblite
 /godot-cpp/bin/
 /godot-cpp/gen/
@@ -48,11 +52,12 @@ Thumbs.db
 
 .private_release/
 
-demo/.godot
+demo/.godot/
 demo/**/*.tpz
 resources/**/*.tpz
-demo/minigame
+demo/minigame/
+demo/test_remote_minigame/
+demo/w2/
 GITHUB_SECRETS.md
-dist
 latest.json
 /tools/obfuscation/node_modules/

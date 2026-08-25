@@ -103,12 +103,12 @@ jobs:
           git fetch --no-tags origin "refs/heads/$SOURCE_BRANCH:refs/remotes/origin/template-source"
           git merge-base --is-ancestor "$SOURCE_COMMIT" refs/remotes/origin/template-source
 
-          mkdir -p release-assets
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tpz' --dir release-assets
-          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -name '*.tpz' -printf '%f\n')
+          mkdir -p dist/template/release-assets
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tpz' --dir dist/template/release-assets
+          mapfile -t assets < <(find dist/template/release-assets -maxdepth 1 -type f -name '*.tpz' -printf '%f\n')
           test "${#assets[@]}" -eq 1
           asset="${assets[0]}"
-          digest="$(sha256sum "release-assets/$asset" | awk '{print $1}')"
+          digest="$(sha256sum "dist/template/release-assets/$asset" | awk '{print $1}')"
           printf 'TEMPLATE_ASSET=%s\nTEMPLATE_SHA256=%s\n' "$asset" "$digest" >> "$GITHUB_ENV"
       - name: Update canonical catalog and generated fallback
         env:

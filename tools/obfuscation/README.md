@@ -22,7 +22,7 @@ npm install --prefix tools/obfuscation
 ```powershell
 node tools/obfuscation/obfuscate_template.js `
   templates/4.5.1_2d/minigame4.5.1_2d `
-  dist/4.5.1_2d_obfuscated `
+  dist/template/4.5.1_2d_obfuscated `
   --seed 451201
 ```
 

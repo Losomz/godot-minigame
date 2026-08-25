@@ -69,7 +69,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: plugin-bin-${{ matrix.platform }}
-          path: demo/addons/godot-minigame/bin/${{ matrix.platform }}/
+          path: dist/plugin/native/${{ matrix.platform }}/
           if-no-files-found: error
           retention-days: 7
 
@@ -90,15 +90,15 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: plugin-bin-windows
-          path: demo/addons/godot-minigame/bin/windows
+          path: dist/plugin/native/windows
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: plugin-bin-linux
-          path: demo/addons/godot-minigame/bin/linux
+          path: dist/plugin/native/linux
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: plugin-bin-macos
-          path: demo/addons/godot-minigame/bin/macos
+          path: dist/plugin/native/macos
       - name: Package installable addon
         run: python tools/product/product.py package-plugin --require-binaries
       - name: Build release update manifest

@@ -215,7 +215,15 @@ jobs:
         run: |
           $revision = [int]"${{ inputs.revision }}"
           $stem = "minigame4.5.2-glx-2d-r$revision"
-          $tpz = Join-Path $env:GITHUB_WORKSPACE "dist\$stem.tpz"
+          $legacyDist = Join-Path $env:GITHUB_WORKSPACE "dist"
+          $templateDist = Join-Path $legacyDist "template"
+          New-Item -ItemType Directory -Path $templateDist -Force | Out-Null
+          foreach ($suffix in @("tpz", "build-info.md", "profile.json", "sha256.txt")) {
+              $source = Join-Path $legacyDist "$stem.$suffix"
+              if (-not (Test-Path $source -PathType Leaf)) { throw "Missing template output: $source" }
+              Move-Item -LiteralPath $source -Destination $templateDist -Force
+          }
+          $tpz = Join-Path $templateDist "$stem.tpz"
           if (-not (Test-Path $tpz -PathType Leaf)) { throw "Missing TPZ: $tpz" }
 
           $actual = (Get-FileHash $tpz -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -253,10 +261,10 @@ jobs:
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
           path: |
-            dist/${{ steps.identity.outputs.artifact_stem }}.tpz
-            dist/${{ steps.identity.outputs.artifact_stem }}.build-info.md
-            dist/${{ steps.identity.outputs.artifact_stem }}.profile.json
-            dist/${{ steps.identity.outputs.artifact_stem }}.sha256.txt
+            dist/template/${{ steps.identity.outputs.artifact_stem }}.tpz
+            dist/template/${{ steps.identity.outputs.artifact_stem }}.build-info.md
+            dist/template/${{ steps.identity.outputs.artifact_stem }}.profile.json
+            dist/template/${{ steps.identity.outputs.artifact_stem }}.sha256.txt
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -284,7 +292,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.build.outputs.artifact_name }}
-          path: release-assets
+          path: dist/template/release-assets
 
       - name: Verify downloaded TPZ
         env:
@@ -293,13 +301,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tpz="release-assets/${ARTIFACT_STEM}.tpz"
+          tpz="dist/template/release-assets/${ARTIFACT_STEM}.tpz"
           test -f "$tpz"
           actual="$(sha256sum "$tpz" | awk '{print toupper($1)}')"
           test "$actual" = "$TPZ_SHA256"
 
           for suffix in build-info.md profile.json sha256.txt; do
-            test -f "release-assets/${ARTIFACT_STEM}.${suffix}"
+            test -f "dist/template/release-assets/${ARTIFACT_STEM}.${suffix}"
           done
 
       - name: Create immutable template prerelease
@@ -338,10 +346,10 @@ jobs:
             'This release remains a prerelease until the exact TPZ asset passes the device smoke test.')"
 
           gh release create "$RELEASE_TAG" \
-            "release-assets/${ARTIFACT_STEM}.tpz" \
-            "release-assets/${ARTIFACT_STEM}.build-info.md" \
-            "release-assets/${ARTIFACT_STEM}.profile.json" \
-            "release-assets/${ARTIFACT_STEM}.sha256.txt" \
+            "dist/template/release-assets/${ARTIFACT_STEM}.tpz" \
+            "dist/template/release-assets/${ARTIFACT_STEM}.build-info.md" \
+            "dist/template/release-assets/${ARTIFACT_STEM}.profile.json" \
+            "dist/template/release-assets/${ARTIFACT_STEM}.sha256.txt" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_COMMIT" \
             --title "$RELEASE_TITLE" \

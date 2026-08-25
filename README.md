@@ -37,7 +37,7 @@ scons platform=windows arch=x86_64 target=template_release embed_resources=yes
 - `./build_linux.sh`
 - `./build_osx.sh`
 
-原生库安装到 `demo/addons/godot-minigame/bin/<platform>/`。
+原生库统一生成到 `dist/plugin/native/<platform>/`。
 
 验证产品契约并组装可安装插件：
 
@@ -47,7 +47,7 @@ python -m unittest discover -s tests/product -v
 python tools/product/product.py package-plugin
 ```
 
-插件包生成在 `dist/plugin/`，ZIP 内部固定为 `addons/godot-minigame/`。
+插件包生成在 `dist/plugin/`，组装目录为 `dist/plugin/staging/`，ZIP 内部固定为 `addons/godot-minigame/`。`dist/` 是统一临时出口，整体不进入 Git，删除后可由构建和打包命令重新生成。
 
 如需生成离线插件包，可选择把已登记在模板 Catalog 中的本地 TPZ 一起打包：
 
@@ -95,7 +95,8 @@ python tools/product/product.py render-versions --check
 ## 目录
 
 - `src/`、`include/`：C++ 编辑器插件源码
-- `demo/addons/godot-minigame/`：可安装 addon 骨架和构建落点
+- `addons/godot-minigame/`：可安装 addon 源码骨架
+- `demo/`：示例项目，不作为插件源码或构建产物出口
 - `product/`：产品定义与适配生产线注册
 - `catalog/`：已验证发布物目录
 - `resources/`：插件嵌入资源和兼容模板索引
@@ -103,6 +104,7 @@ python tools/product/product.py render-versions --check
 - `skills/`：Godot 微信适配移植技能
 - `tools/product/`：验证、Promote 和插件打包工具
 - `.github/workflows/`：产品、插件和适配自动化
+- `dist/plugin/`、`dist/template/`：未跟踪的插件和模板临时产物出口
 
 ## License
 

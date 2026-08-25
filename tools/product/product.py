@@ -376,15 +376,22 @@ def command_package_plugin(args: argparse.Namespace) -> None:
     validate_repository(args.root)
     version = plugin["version"]
     addon_path = args.root / plugin["addon_path"]
-    files = list(iter_addon_files(addon_path))
-    if not files:
+    source_files = list(iter_addon_files(addon_path))
+    if not source_files:
         raise ProductError(f"No plugin files found under {addon_path}")
-    if args.require_binaries and not any(path.suffix.lower() in {".dll", ".so", ".dylib"} for path, _ in files):
-        raise ProductError("Plugin package requires native binaries, but none were found")
+
+    native_path = args.native_dir.resolve()
+    native_files = [
+        (path, relative)
+        for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
+        if path.suffix.lower() in {".dll", ".so", ".dylib"}
+    ]
+    if args.require_binaries and not native_files:
+        raise ProductError(f"Plugin package requires native binaries under {native_path}")
 
     bundled_templates: list[tuple[Path, Path]] = []
     seen_template_names: set[str] = set()
-    addon_archive_paths = {relative.as_posix() for _, relative in files}
+    addon_archive_paths = {relative.as_posix() for _, relative in source_files}
     template_catalog = load_json(args.root / "catalog/templates.json")
     catalog_template_names = {
         str(entry.get("file", ""))
@@ -406,15 +413,27 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         bundled_templates.append((template_path, bundled_relative))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    staging_addon = args.staging_dir.resolve() / "addons/godot-minigame"
+    if staging_addon.parent.exists():
+        shutil.rmtree(staging_addon.parent)
+    staging_addon.mkdir(parents=True)
+    for source, relative in source_files:
+        target = staging_addon / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for source, relative in native_files:
+        target = staging_addon / "bin" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for source, relative in bundled_templates:
+        target = staging_addon / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+    files = list(iter_addon_files(staging_addon))
     archive = args.output_dir / f"godot-minigame-plugin-{version}.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as output:
         for source, relative in files:
-            archive_name = Path("addons/godot-minigame") / relative
-            info = zipfile.ZipInfo(archive_name.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
-            output.writestr(info, source.read_bytes())
-        for source, relative in bundled_templates:
             archive_name = Path("addons/godot-minigame") / relative
             info = zipfile.ZipInfo(archive_name.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -458,6 +477,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     package = subparsers.add_parser("package-plugin", help="create a deterministic installable plugin zip")
     package.add_argument("--output-dir", type=Path, default=ROOT / "dist/plugin")
+    package.add_argument("--native-dir", type=Path, default=ROOT / "dist/plugin/native")
+    package.add_argument("--staging-dir", type=Path, default=ROOT / "dist/plugin/staging")
     package.add_argument("--require-binaries", action="store_true")
     package.add_argument(
         "--bundle-template",
