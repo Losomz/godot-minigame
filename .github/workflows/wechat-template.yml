@@ -1,37 +1,78 @@
-name: Build WeChat GLX 2D template
-run-name: WeChat GLX 2D | ${{ inputs.source_ref }} | r${{ inputs.revision }} | ${{ inputs.release_mode }}
+name: 微信模板 CI
 
 on:
   workflow_dispatch:
     inputs:
-      source_ref:
-        description: Remote 4.5-family source branch to build
+      mode:
+        description: build template, or promote a released template into the catalog
         required: true
+        default: build
+        type: choice
+        options:
+          - build
+          - promote
+      source_ref:
+        description: "构建: remote 4.5-family source branch to build"
+        required: false
         default: "4.5"
         type: string
       revision:
-        description: Immutable artifact revision
-        required: true
+        description: "构建: immutable artifact revision"
+        required: false
         default: "1"
         type: string
       release_mode:
-        description: Build any 4.5-family branch, or release the registered 4.5 production branch
-        required: true
+        description: "构建: artifact-only, or prerelease the registered 4.5 production branch"
+        required: false
         default: artifact-only
         type: choice
         options:
           - artifact-only
           - prerelease
       expected_tpz_sha256:
-        description: Optional local TPZ SHA-256 reproducibility gate
+        description: "构建: optional local TPZ SHA-256 reproducibility gate"
         required: false
         default: ""
         type: string
+      release_tag:
+        description: "提升: exact template-* Release tag to promote"
+        required: false
+        type: string
+      godot_major:
+        description: "提升: catalog bucket, for example godot4"
+        required: false
+        default: godot4
+        type: string
+      godot_version:
+        description: "提升: exact Godot version, for example 4.5.2"
+        required: false
+        type: string
+      source_branch:
+        description: "提升: adapter production branch"
+        required: false
+        type: string
+      source_commit:
+        description: "提升: full adapter source commit used by the Release"
+        required: false
+        type: string
+      minimum_plugin:
+        description: "提升: minimum compatible plugin version"
+        required: false
+        default: "1.0.4"
+        type: string
+      status:
+        description: "提升: catalog state"
+        required: false
+        default: prerelease
+        type: choice
+        options:
+          - prerelease
+          - stable
 
 permissions: {}
 
 concurrency:
-  group: wechat-glx-4.5.2-${{ inputs.source_ref }}-r${{ inputs.revision }}
+  group: wechat-template-${{ inputs.mode }}-${{ inputs.release_tag || inputs.source_ref }}
   cancel-in-progress: false
 
 env:
@@ -41,6 +82,7 @@ env:
 jobs:
   build:
     name: Build and package ${{ inputs.source_ref }}
+    if: inputs.mode == 'build'
     runs-on: windows-2022
     timeout-minutes: 90
     permissions:
@@ -280,7 +322,7 @@ jobs:
 
   release:
     name: Create prerelease ${{ needs.build.outputs.release_tag }}
-    if: inputs.release_mode == 'prerelease'
+    if: inputs.mode == 'build' && inputs.release_mode == 'prerelease'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -307,7 +349,7 @@ jobs:
           test "$actual" = "$TPZ_SHA256"
 
           for suffix in build-info.md profile.json sha256.txt; do
-            test -f "dist/template/release-assets/${ARTIFACT_STEM}.${suffix}"
+              test -f "dist/template/release-assets/${ARTIFACT_STEM}.${suffix}"
           done
 
       - name: Create immutable template prerelease
@@ -323,12 +365,12 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists; immutable release creation refused"
-            exit 1
+              echo "Release $RELEASE_TAG already exists; immutable release creation refused"
+              exit 1
           fi
           if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "Tag $RELEASE_TAG already exists; immutable release creation refused"
-            exit 1
+              echo "Tag $RELEASE_TAG already exists; immutable release creation refused"
+              exit 1
           fi
 
           notes="$(printf '%s\n' \
@@ -356,3 +398,102 @@ jobs:
             --prerelease \
             --latest=false \
             --notes "$notes"
+
+  promote:
+    name: Promote ${{ inputs.release_tag }}
+    if: inputs.mode == 'promote'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13.3"
+      - name: Verify immutable Release and source identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          STATUS: ${{ inputs.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^template-${GODOT_VERSION}-r[1-9][0-9]*$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          python - "$SOURCE_BRANCH" "$GODOT_VERSION" <<'PY'
+          import json
+          import sys
+
+          source_branch, godot_version = sys.argv[1:]
+          with open("product/adapters.json", encoding="utf-8") as handle:
+              adapters = json.load(handle)["adapters"]
+          if not any(
+              entry.get("branch") == source_branch and entry.get("godot_version") == godot_version
+              for entry in adapters
+          ):
+              raise SystemExit(
+                  f"{source_branch} is not the registered template source for Godot {godot_version}"
+              )
+          PY
+
+          draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          prerelease="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          target="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+          test "$draft" = "false"
+          test "$target" = "$SOURCE_COMMIT"
+          if [[ "$STATUS" = stable ]]; then
+              test "$prerelease" = "false"
+          fi
+
+          remote_commit="$(git ls-remote --heads origin "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          test -n "$remote_commit"
+          git fetch --no-tags origin "refs/heads/$SOURCE_BRANCH:refs/remotes/origin/template-source"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" refs/remotes/origin/template-source
+
+          mkdir -p dist/template/release-assets
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tpz' --dir dist/template/release-assets
+          mapfile -t assets < <(find dist/template/release-assets -maxdepth 1 -type f -name '*.tpz' -printf '%f\n')
+          test "${#assets[@]}" -eq 1
+          asset="${assets[0]}"
+          digest="$(sha256sum "dist/template/release-assets/$asset" | awk '{print $1}')"
+          printf 'TEMPLATE_ASSET=%s\nTEMPLATE_SHA256=%s\n' "$asset" "$digest" >> "$GITHUB_ENV"
+      - name: Update canonical catalog and generated fallback
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GODOT_MAJOR: ${{ inputs.godot_major }}
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          MINIMUM_PLUGIN: ${{ inputs.minimum_plugin }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          python tools/product/product.py promote-template \
+            --godot-major "$GODOT_MAJOR" \
+            --godot-version "$GODOT_VERSION" \
+            --tag "$RELEASE_TAG" \
+            --file "$TEMPLATE_ASSET" \
+            --sha256 "$TEMPLATE_SHA256" \
+            --minimum-plugin "$MINIMUM_PLUGIN" \
+            --source-branch "$SOURCE_BRANCH" \
+            --source-commit "$SOURCE_COMMIT" \
+            --status "$STATUS"
+          python tools/product/product.py validate
+      - name: Commit catalog to main
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add catalog/templates.json resources/versions.yaml
+          git commit -m "提升: $RELEASE_TAG"
+          git push origin main
