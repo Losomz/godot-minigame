@@ -71,6 +71,15 @@ Test-Path .\bin\.web_zip\godot.wasm
 Test-Path .\bin\.web_zip\godot.wasm.br
 ```
 
+Before uploading a `.tpz`, extract it and reject stale loader output:
+
+```powershell
+rg -n "getWindowInfo|__godotMinigamePixelRatio|normalizeProgress|gl\.commit" .\godot-loader.js
+rg -n "__GODOT_DISABLE_WXGLX|__godotMinigameWXGLXEnabled" .\godot-loader.js # Godot 4.6+
+```
+
+The package must not contain `this.dpr=window.devicePixelRatio||1`.
+
 ## 5. Generated JS Sanity
 
 ```powershell

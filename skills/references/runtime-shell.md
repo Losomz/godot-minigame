@@ -66,6 +66,10 @@ The minimal runtime intentionally preserves:
 - Draws the loading background with cover behavior instead of stretching it
 - Normalizes subpackage progress whether WeChat reports `0..100` or `0..1`
 - Flushes and commits the WebGL loading frame when the runtime exposes explicit swap control
+- Pins one graphics context mode for both the loading screen and generated Godot runtime: `wxwebgl2` when GLX is supported, otherwise `webgl2`
+- Reads `GameGlobal.__GODOT_DISABLE_WXGLX === true` before creating a context. Set it in a module imported before `godot-loader.js` to force standard `webgl2`; it is a startup-only switch.
+
+The loader does not make an engine GLX-capable. Before allowing it to request `wxwebgl2`, complete the engine-side integration in `wxglx-adaptation.md`; otherwise force standard WebGL.
 
 ## What Was Deliberately Removed
 

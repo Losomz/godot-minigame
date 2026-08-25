@@ -1,0 +1,349 @@
+name: Build WeChat GLX 2D template
+run-name: WeChat GLX 2D | ${{ inputs.source_ref }} | r${{ inputs.revision }} | ${{ inputs.release_mode }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Remote 4.5-family source branch to build
+        required: true
+        default: "4.5"
+        type: string
+      revision:
+        description: Immutable artifact revision
+        required: true
+        default: "1"
+        type: string
+      release_mode:
+        description: Build only, or create a branch-specific prerelease
+        required: true
+        default: artifact-only
+        type: choice
+        options:
+          - artifact-only
+          - prerelease
+      expected_tpz_sha256:
+        description: Optional local TPZ SHA-256 reproducibility gate
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: wechat-glx-4.5.2-${{ inputs.source_ref }}-r${{ inputs.revision }}
+  cancel-in-progress: false
+
+env:
+  EMSCRIPTEN_VERSION: "4.0.10"
+  EMSDK_COMMIT: "62a853cd3b3134398ce85cde8bb5cbb2ef0194cb"
+
+jobs:
+  build:
+    name: Build and package ${{ inputs.source_ref }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      artifact_stem: ${{ steps.identity.outputs.artifact_stem }}
+      release_tag: ${{ steps.identity.outputs.release_tag }}
+      release_title: ${{ steps.identity.outputs.release_title }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+      source_slug: ${{ steps.identity.outputs.source_slug }}
+      tpz_sha256: ${{ steps.identity.outputs.tpz_sha256 }}
+
+    steps:
+      - name: Validate inputs
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          EXPECTED_TPZ_SHA256: ${{ inputs.expected_tpz_sha256 }}
+        shell: pwsh
+        run: |
+          # Patch files must retain their Git-blob LF endings for git apply checks.
+          git config --global core.autocrlf false
+
+          $sourceRef = $env:SOURCE_REF.Trim()
+          if (-not $sourceRef -or $sourceRef -ne $env:SOURCE_REF) {
+              throw "source_ref must be a non-empty branch name without surrounding whitespace"
+          }
+          if ($sourceRef.Contains("@{")) {
+              throw "source_ref contains a forbidden ref expression"
+          }
+          git check-ref-format --branch $sourceRef *> $null
+          if ($LASTEXITCODE -ne 0) {
+              throw "source_ref is not a valid branch name: $sourceRef"
+          }
+
+          $revision = "${{ inputs.revision }}"
+          if ($revision -notmatch '^[1-9][0-9]*$') {
+              throw "revision must be a positive integer"
+          }
+
+          $expected = $env:EXPECTED_TPZ_SHA256.Trim()
+          if ($expected -and $expected -notmatch '^[0-9A-Fa-f]{64}$') {
+              throw "expected_tpz_sha256 must be empty or a 64-character SHA-256"
+          }
+
+      - name: Checkout selected adapter branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
+      - name: Verify selected branch contract
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $required = @(
+              ".gitmodules",
+              "adapter/ci/requirements-build.txt",
+              "adapter/configs/wechat_2d.py",
+              "adapter/patches/manifest.json",
+              "adapter/scripts/build_wechat_glx.ps1",
+              "adapter/scripts/package_wechat_glx_template.py"
+          )
+          foreach ($path in $required) {
+              if (-not (Test-Path $path -PathType Leaf)) {
+                  throw "source_ref $env:SOURCE_REF is not a buildable 4.5 branch; missing $path"
+              }
+          }
+
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          $remoteLine = git ls-remote --heads origin "refs/heads/$env:SOURCE_REF"
+          if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
+              throw "source_ref does not resolve to a remote branch: $env:SOURCE_REF"
+          }
+          $remoteCommit = (($remoteLine | Select-Object -First 1) -split '\s+')[0].Trim()
+          if ($sourceCommit -ne $remoteCommit) {
+              throw "checked-out commit $sourceCommit differs from remote branch $remoteCommit"
+          }
+
+          git fetch --no-tags origin "refs/heads/4.5:refs/remotes/origin/release-4.5"
+          if ($LASTEXITCODE -ne 0) {
+              throw "failed to resolve the official 4.5 branch"
+          }
+          $officialCommit = (git rev-parse refs/remotes/origin/release-4.5).Trim()
+          git merge-base --is-ancestor $officialCommit $sourceCommit
+          if ($LASTEXITCODE -ne 0) {
+              throw "source_ref $env:SOURCE_REF is not based on the current official 4.5 branch $officialCommit"
+          }
+
+          $manifest = Get-Content -Raw "adapter/patches/manifest.json" | ConvertFrom-Json
+          $godotCommit = "$($manifest.wechat_glx_ref)".Trim()
+          $godotBase = "$($manifest.base_ref)".Trim()
+          if ($godotCommit -notmatch '^[0-9a-f]{40}$' -or $godotBase -notmatch '^[0-9a-f]{40}$') {
+              throw "manifest.json must contain full base_ref and wechat_glx_ref commits"
+          }
+
+          "SOURCE_COMMIT=$sourceCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EXPECTED_GODOT_COMMIT=$godotCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GODOT_BASE=$godotBase" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Checkout branch-pinned Godot source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git submodule sync -- godot
+          if ($LASTEXITCODE -ne 0) { throw "git submodule sync failed" }
+
+          git submodule update --init --depth 8 -- godot
+          if ($LASTEXITCODE -ne 0) { throw "Godot submodule checkout failed" }
+
+          $head = (git -C godot rev-parse HEAD).Trim()
+          if ($head -ne $env:EXPECTED_GODOT_COMMIT) {
+              throw "Godot gitlink $head differs from manifest $env:EXPECTED_GODOT_COMMIT"
+          }
+
+          git -C godot merge-base --is-ancestor $env:GODOT_BASE HEAD
+          if ($LASTEXITCODE -ne 0) {
+              throw "Godot checkout does not contain the branch manifest base $env:GODOT_BASE"
+          }
+
+          $dirty = git -C godot status --porcelain --untracked-files=all
+          if ($dirty) {
+              throw "Godot submodule is dirty: $dirty"
+          }
+
+      - name: Set up bootstrap Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13.3"
+
+      - name: Checkout pinned emsdk manager
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: emscripten-core/emsdk
+          ref: ${{ env.EMSDK_COMMIT }}
+          path: .ci-emsdk
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Emscripten and build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $emsdk = Join-Path $env:GITHUB_WORKSPACE ".ci-emsdk"
+
+          python "$emsdk\emsdk.py" install $env:EMSCRIPTEN_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "emsdk install failed" }
+
+          python "$emsdk\emsdk.py" activate $env:EMSCRIPTEN_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "emsdk activate failed" }
+
+          & "$env:GITHUB_WORKSPACE\adapter\scripts\build_wechat_glx.ps1" `
+              -EmsdkPath $emsdk `
+              -Revision ([int]"${{ inputs.revision }}")
+          if ($LASTEXITCODE -ne 0) { throw "WeChat GLX build failed" }
+
+      - name: Verify artifact identity
+        id: identity
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          EXPECTED_TPZ_SHA256: ${{ inputs.expected_tpz_sha256 }}
+        shell: pwsh
+        run: |
+          $revision = [int]"${{ inputs.revision }}"
+          $stem = "minigame4.5.2-glx-2d-r$revision"
+          $tpz = Join-Path $env:GITHUB_WORKSPACE "dist\$stem.tpz"
+          if (-not (Test-Path $tpz -PathType Leaf)) { throw "Missing TPZ: $tpz" }
+
+          $actual = (Get-FileHash $tpz -Algorithm SHA256).Hash.ToUpperInvariant()
+          $expected = $env:EXPECTED_TPZ_SHA256.Trim().ToUpperInvariant()
+          $hashMatches = -not $expected -or $actual -eq $expected
+          if (-not $hashMatches) {
+              Write-Warning "CI TPZ SHA-256 $actual does not match local candidate $expected"
+          }
+
+          $slug = $env:SOURCE_REF.ToLowerInvariant()
+          $slug = [regex]::Replace($slug, '[^a-z0-9._-]+', '-')
+          $slug = $slug.Trim([char[]]'-.')
+          if (-not $slug) { throw "source_ref does not produce a usable release slug" }
+          if ($slug.Length -gt 48) { $slug = $slug.Substring(0, 48).TrimEnd('-') }
+
+          $shortCommit = $env:SOURCE_COMMIT.Substring(0, 7)
+          if ($env:SOURCE_REF -eq "4.5") {
+              $releaseTag = "4.5.2"
+              $releaseTitle = "Godot 4.5.2 WeChat GLX 2D templates"
+          } else {
+              $releaseTag = "4.5.2-branch-$slug-r$revision-$shortCommit"
+              $releaseTitle = "Godot 4.5.2 WeChat GLX 2D candidate ($env:SOURCE_REF)"
+          }
+          $artifactName = "$stem-$slug-$shortCommit"
+
+          "artifact_name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "artifact_stem=$stem" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_title=$releaseTitle" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_commit=$env:SOURCE_COMMIT" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "source_slug=$slug" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tpz_sha256=$actual" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "hash_matches=$($hashMatches.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Source: $env:SOURCE_REF@$env:SOURCE_COMMIT"
+          Write-Host "Release tag: $releaseTag"
+          Write-Host "TPZ SHA-256: $actual"
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: |
+            dist/${{ steps.identity.outputs.artifact_stem }}.tpz
+            dist/${{ steps.identity.outputs.artifact_stem }}.build-info.md
+            dist/${{ steps.identity.outputs.artifact_stem }}.profile.json
+            dist/${{ steps.identity.outputs.artifact_stem }}.sha256.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Enforce expected TPZ SHA-256
+        if: steps.identity.outputs.hash_matches != 'true'
+        env:
+          ACTUAL_TPZ_SHA256: ${{ steps.identity.outputs.tpz_sha256 }}
+          EXPECTED_TPZ_SHA256: ${{ inputs.expected_tpz_sha256 }}
+        shell: pwsh
+        run: |
+          throw "CI TPZ SHA-256 $env:ACTUAL_TPZ_SHA256 does not match expected $env:EXPECTED_TPZ_SHA256"
+
+  release:
+    name: Create prerelease ${{ needs.build.outputs.release_tag }}
+    if: inputs.release_mode == 'prerelease'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: release-assets
+
+      - name: Verify downloaded TPZ
+        env:
+          ARTIFACT_STEM: ${{ needs.build.outputs.artifact_stem }}
+          TPZ_SHA256: ${{ needs.build.outputs.tpz_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tpz="release-assets/${ARTIFACT_STEM}.tpz"
+          test -f "$tpz"
+          actual="$(sha256sum "$tpz" | awk '{print toupper($1)}')"
+          test "$actual" = "$TPZ_SHA256"
+
+          for suffix in build-info.md profile.json sha256.txt; do
+            test -f "release-assets/${ARTIFACT_STEM}.${suffix}"
+          done
+
+      - name: Create immutable branch prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_STEM: ${{ needs.build.outputs.artifact_stem }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.build.outputs.release_title }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TPZ_SHA256: ${{ needs.build.outputs.tpz_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; immutable release creation refused"
+            exit 1
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag $RELEASE_TAG already exists; immutable release creation refused"
+            exit 1
+          fi
+
+          notes="$(printf '%s\n' \
+            'Reproducible Godot 4.5.2 WeChat GLX 2D template candidate.' \
+            '' \
+            "- Source branch: ${SOURCE_REF}" \
+            "- Source commit: ${SOURCE_COMMIT}" \
+            "- Variant: glx-2d" \
+            "- Revision: r${{ inputs.revision }}" \
+            "- TPZ SHA-256: ${TPZ_SHA256}" \
+            '- Profile: adapter/configs/wechat_2d.py' \
+            '- Validation: build/profile/WASM ABI/Brotli/TPZ gates passed' \
+            '- Device status: same-package real-device smoke test pending' \
+            '' \
+            'This release remains a prerelease until the exact TPZ asset passes the device smoke test.')"
+
+          gh release create "$RELEASE_TAG" \
+            "release-assets/${ARTIFACT_STEM}.tpz" \
+            "release-assets/${ARTIFACT_STEM}.build-info.md" \
+            "release-assets/${ARTIFACT_STEM}.profile.json" \
+            "release-assets/${ARTIFACT_STEM}.sha256.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_COMMIT" \
+            --title "$RELEASE_TITLE" \
+            --prerelease \
+            --notes "$notes"
