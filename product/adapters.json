@@ -6,7 +6,7 @@
       "branch": "4.5",
       "godot_version": "4.5.2",
       "status": "stable",
-      "workflow": "build-wechat-glx.yml",
+      "workflow": "wechat-template.yml",
       "adapter_tag_prefix": "adapter-4.5.2-r",
       "template_tag_prefix": "template-4.5.2-r",
       "required_paths": [
