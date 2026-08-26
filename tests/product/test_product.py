@@ -48,7 +48,7 @@ class ProductToolTests(unittest.TestCase):
                     {
                         "godot_major": "godot4",
                         "godot_version": "4.5.2",
-                        "tag": "template-4.5.2-r1",
+                        "tag": "4.5.2-test-r1",
                         "file": "minigame4.5.2-r1.tpz",
                         "sha256": "1" * 64,
                         "minimum_plugin": "1.0.4",
@@ -65,7 +65,7 @@ class ProductToolTests(unittest.TestCase):
                 versions=versions_path,
                 godot_major="godot4",
                 godot_version="4.5.2",
-                tag="template-4.5.2-r2",
+                tag="4.5.2-test-r2",
                 file="minigame4.5.2-r2.tpz",
                 sha256="2" * 64,
                 minimum_plugin="1.0.4",
@@ -75,8 +75,8 @@ class ProductToolTests(unittest.TestCase):
             )
             product.command_promote_template(args)
             promoted = product.load_json(catalog_path)["templates"][0]
-            self.assertEqual(promoted["tag"], "template-4.5.2-r2")
-            self.assertIn("tag: template-4.5.2-r2", versions_path.read_text(encoding="utf-8"))
+            self.assertEqual(promoted["tag"], "4.5.2-test-r2")
+            self.assertIn("tag: 4.5.2-test-r2", versions_path.read_text(encoding="utf-8"))
 
     def test_plugin_zip_has_installable_addon_prefix(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -101,7 +101,7 @@ class ProductToolTests(unittest.TestCase):
     def test_plugin_zip_can_bundle_template_once(self):
         with tempfile.TemporaryDirectory() as temporary:
             temporary_path = Path(temporary)
-            template = temporary_path / "minigame4.5.1.2.tpz"
+            template = temporary_path / "minigame4.5.2-glx-2d-r1.tpz"
             template.write_bytes(b"template")
             output = temporary_path / "output"
             args = argparse.Namespace(
@@ -116,7 +116,7 @@ class ProductToolTests(unittest.TestCase):
             archive = output / "godot-minigame-plugin-1.0.4.zip"
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
-                bundled = "addons/godot-minigame/resources/templates/minigame4.5.1.2.tpz"
+                bundled = "addons/godot-minigame/resources/templates/minigame4.5.2-glx-2d-r1.tpz"
                 self.assertEqual(names.count(bundled), 1)
                 self.assertEqual(package.read(bundled), b"template")
 
