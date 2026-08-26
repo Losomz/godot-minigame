@@ -391,6 +391,26 @@ def iter_addon_files(addon_path: Path):
         yield path, relative
 
 
+NATIVE_SUFFIXES = {".dll", ".so", ".dylib"}
+
+
+def versioned_native_relative(relative: Path, version: str) -> Path:
+    """Return the release-package path for a native library."""
+    if relative.suffix.lower() not in NATIVE_SUFFIXES:
+        raise ProductError(f"Unsupported native library: {relative}")
+    return relative.with_name(f"{relative.stem}.{version}{relative.suffix}")
+
+
+def rewrite_release_gdextension(descriptor: Path, native_renames: dict[str, str]) -> None:
+    content = descriptor.read_text(encoding="utf-8")
+    for original_name, versioned_name in native_renames.items():
+        occurrences = content.count(original_name)
+        if occurrences == 0:
+            raise ProductError(f"GDExtension descriptor does not reference {original_name}")
+        content = content.replace(original_name, versioned_name)
+    descriptor.write_text(content, encoding="utf-8", newline="\n")
+
+
 def command_package_plugin(args: argparse.Namespace) -> None:
     plugin = load_json(args.root / "product/plugin.json")
     validate_repository(args.root)
@@ -404,10 +424,17 @@ def command_package_plugin(args: argparse.Namespace) -> None:
     native_files = [
         (path, relative)
         for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
-        if path.suffix.lower() in {".dll", ".so", ".dylib"}
+        if path.suffix.lower() in NATIVE_SUFFIXES
     ]
     if args.require_binaries and not native_files:
         raise ProductError(f"Plugin package requires native binaries under {native_path}")
+    if args.require_binaries:
+        present_platforms = {relative.parts[0] for _, relative in native_files if relative.parts}
+        missing_platforms = {"windows", "linux", "macos"} - present_platforms
+        if missing_platforms:
+            raise ProductError(
+                "Plugin package is missing native binaries for: " + ", ".join(sorted(missing_platforms))
+            )
 
     bundled_templates: list[tuple[Path, Path]] = []
     seen_template_names: set[str] = set()
@@ -438,13 +465,20 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         shutil.rmtree(staging_addon.parent)
     staging_addon.mkdir(parents=True)
     for source, relative in source_files:
+        if relative.parts and relative.parts[0] == "bin" and source.suffix.lower() in NATIVE_SUFFIXES:
+            continue
         target = staging_addon / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    native_renames: dict[str, str] = {}
     for source, relative in native_files:
-        target = staging_addon / "bin" / relative
+        release_relative = versioned_native_relative(relative, version)
+        target = staging_addon / "bin" / release_relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        native_renames[relative.name] = release_relative.name
+    if native_renames:
+        rewrite_release_gdextension(staging_addon / "godot-minigame.gdextension", native_renames)
     for source, relative in bundled_templates:
         target = staging_addon / relative
         target.parent.mkdir(parents=True, exist_ok=True)

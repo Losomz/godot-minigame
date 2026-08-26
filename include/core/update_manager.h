@@ -17,6 +17,7 @@ public:
 		STATE_UPDATE_AVAILABLE,
 		STATE_DOWNLOADING,
 		STATE_DOWNLOADED,
+		STATE_INSTALLING,
 		STATE_UP_TO_DATE,
 		STATE_ERROR,
 	};
@@ -42,10 +43,12 @@ private:
 	godot::String local_version;
 	godot::Dictionary remote_version_info;
 	UpdateState current_state = STATE_IDLE;
+	bool stale_native_cleanup_attempted = false;
 
 	void _on_version_check_completed(int p_result, int p_response_code, const godot::PackedStringArray &p_headers, const godot::PackedByteArray &p_body);
 	void _on_download_completed(int p_result, int p_response_code, const godot::PackedStringArray &p_headers, const godot::PackedByteArray &p_body);
 	void set_state(UpdateState p_state);
+	void cleanup_stale_native_libraries();
 
 	// HTTP nodes lifecycle management
 	void track_http_node(godot::Node* node);
@@ -76,7 +79,8 @@ public:
 	void check_for_updates(const godot::String &p_local_version);
 	void download_update();
 	void cancel_download();
-	bool perform_update();
+	bool perform_update(godot::String &r_error);
+	void install_downloaded_update();
 	void restart_editor_for_update();
 
 	bool is_properly_configured() const;

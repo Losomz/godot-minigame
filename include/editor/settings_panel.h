@@ -44,6 +44,7 @@ private:
 	void _on_plugin_update_state_changed(int state);
 	void _on_plugin_update_available(const godot::Dictionary &version_info);
 	void _on_plugin_update_download_finished(bool success);
+	void _on_plugin_update_installation_finished(bool success, const godot::String &message);
 	void _on_plugin_update_error(const godot::String &message);
 	void _on_distribution_provider_selected(int index);
 	void _on_save_distribution_config_pressed();

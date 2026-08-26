@@ -30,6 +30,7 @@ void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_state_changed", "state"), &SettingsPanel::_on_plugin_update_state_changed);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_available", "version_info"), &SettingsPanel::_on_plugin_update_available);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_download_finished", "success"), &SettingsPanel::_on_plugin_update_download_finished);
+	ClassDB::bind_method(D_METHOD("_on_plugin_update_installation_finished", "success", "message"), &SettingsPanel::_on_plugin_update_installation_finished);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_error", "message"), &SettingsPanel::_on_plugin_update_error);
 	ClassDB::bind_method(D_METHOD("_on_distribution_provider_selected", "index"), &SettingsPanel::_on_distribution_provider_selected);
 	ClassDB::bind_method(D_METHOD("_on_save_distribution_config_pressed"), &SettingsPanel::_on_save_distribution_config_pressed);
@@ -57,6 +58,7 @@ void SettingsPanel::_ready() {
 		update_manager->connect("update_state_changed", callable_mp(this, &SettingsPanel::_on_plugin_update_state_changed));
 		update_manager->connect("update_available", callable_mp(this, &SettingsPanel::_on_plugin_update_available));
 		update_manager->connect("download_finished", callable_mp(this, &SettingsPanel::_on_plugin_update_download_finished));
+		update_manager->connect("installation_finished", callable_mp(this, &SettingsPanel::_on_plugin_update_installation_finished));
 		update_manager->connect("error", callable_mp(this, &SettingsPanel::_on_plugin_update_error));
 	}
 
@@ -211,10 +213,14 @@ void SettingsPanel::_on_download_plugin_update_pressed() {
 
 void SettingsPanel::_on_plugin_update_state_changed(int state) {
 	if (check_plugin_update_button) {
-		check_plugin_update_button->set_disabled(state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING);
+		check_plugin_update_button->set_disabled(
+			state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING || state == UpdateManager::STATE_INSTALLING);
 	}
 	if (state == UpdateManager::STATE_UP_TO_DATE && plugin_update_label) {
 		plugin_update_label->set_text(String::utf8("插件更新：当前已是最新版本"));
+	}
+	if (state == UpdateManager::STATE_INSTALLING && plugin_update_label) {
+		plugin_update_label->set_text(String::utf8("插件更新已下载，正在安装并重启 Godot..."));
 	}
 }
 
@@ -227,7 +233,7 @@ void SettingsPanel::_on_plugin_update_available(const Dictionary &version_info) 
 void SettingsPanel::_on_plugin_update_download_finished(bool success) {
 	UpdateManager *update_manager = UpdateManager::get_singleton();
 	if (success && update_manager) {
-		plugin_update_label->set_text(String::utf8("插件更新已下载，请关闭 Godot 后安装：") + update_manager->get_download_file_path());
+		plugin_update_label->set_text(String::utf8("插件更新已下载，正在准备安装..."));
 	} else {
 		plugin_update_label->set_text(String::utf8("插件更新下载失败"));
 	}
@@ -375,6 +381,17 @@ void SettingsPanel::_on_versions_loaded() {
 		action_status_label->set_text(String::utf8("远端索引刷新完成"));
 	}
 	refresh_distribution_info();
+}
+
+void SettingsPanel::_on_plugin_update_installation_finished(bool success, const String &message) {
+	if (!plugin_update_label) {
+		return;
+	}
+	if (success) {
+		plugin_update_label->set_text(String::utf8("插件更新安装完成，正在保存并重启 Godot..."));
+	} else {
+		plugin_update_label->set_text(String::utf8("插件更新安装失败，已保留当前版本：") + message);
+	}
 }
 
 void SettingsPanel::_on_versions_refresh_failed(int error_code) {

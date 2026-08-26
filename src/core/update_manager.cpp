@@ -18,7 +18,103 @@
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/classes/tls_options.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+
+#include <algorithm>
+#include <vector>
+
+namespace {
+
+struct PluginInstallEntry {
+    godot::String relative_path;
+    godot::String destination_path;
+    godot::String temporary_path;
+    godot::PackedByteArray data;
+    godot::PackedByteArray previous_data;
+    bool had_previous = false;
+    bool committed = false;
+};
+
+bool read_file_bytes(const godot::String &p_path, godot::PackedByteArray &r_data) {
+    godot::Ref<godot::FileAccess> file = godot::FileAccess::open(p_path, godot::FileAccess::READ);
+    if (file.is_null()) {
+        return false;
+    }
+    const int64_t length = file->get_length();
+    r_data = file->get_buffer(length);
+    return r_data.size() == length;
+}
+
+bool write_file_bytes(const godot::String &p_path, const godot::PackedByteArray &p_data) {
+    godot::Error dir_error = godot::DirAccess::make_dir_recursive_absolute(p_path.get_base_dir());
+    if (dir_error != godot::OK && dir_error != godot::ERR_ALREADY_EXISTS) {
+        return false;
+    }
+    godot::Ref<godot::FileAccess> file = godot::FileAccess::open(p_path, godot::FileAccess::WRITE);
+    if (file.is_null()) {
+        return false;
+    }
+    file->store_buffer(p_data);
+    file->flush();
+    return file->get_error() == godot::OK;
+}
+
+bool is_safe_package_path(const godot::String &p_relative_path) {
+    if (p_relative_path.is_empty() || p_relative_path.is_absolute_path() || p_relative_path.contains(":")) {
+        return false;
+    }
+    if (p_relative_path.simplify_path() != p_relative_path) {
+        return false;
+    }
+    godot::PackedStringArray components = p_relative_path.split("/", false);
+    for (int i = 0; i < components.size(); i++) {
+        if (components[i] == ".." || components[i] == ".") {
+            return false;
+        }
+    }
+    return true;
+}
+
+godot::String expected_native_relative_path(const godot::String &p_version) {
+    godot::String platform = godot::OS::get_singleton()->get_name().to_lower();
+    if (platform == "windows") {
+        return "bin/windows/godot-minigame.windows.x86_64." + p_version + ".dll";
+    }
+    if (platform == "linux") {
+        return "bin/linux/libgodot-minigame.linux.x86_64." + p_version + ".so";
+    }
+    if (platform == "macos") {
+        return "bin/macos/libgodot-minigame.macos." + p_version + ".dylib";
+    }
+    return "";
+}
+
+godot::String current_platform_library_key() {
+    godot::String platform = godot::OS::get_singleton()->get_name().to_lower();
+    if (platform == "windows") {
+        return "windows.x86_64";
+    }
+    if (platform == "linux") {
+        return "linux.x86_64";
+    }
+    if (platform == "macos") {
+        return "macos";
+    }
+    return "";
+}
+
+int install_priority(const godot::String &p_relative_path) {
+    if (p_relative_path == "godot-minigame.gdextension") {
+        return 1;
+    }
+    if (p_relative_path == "plugin.cfg") {
+        return 2;
+    }
+    return 0;
+}
+
+} // namespace
 
 namespace toolkit {
 
@@ -76,6 +172,7 @@ void UpdateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_remote_version_info"), &UpdateManager::get_remote_version_info);
     ClassDB::bind_method(D_METHOD("get_current_state"), &UpdateManager::get_current_state);
     ClassDB::bind_method(D_METHOD("get_download_file_path"), &UpdateManager::get_download_file_path);
+    ClassDB::bind_method(D_METHOD("install_downloaded_update"), &UpdateManager::install_downloaded_update);
    
     ClassDB::bind_method(D_METHOD("_on_version_check_completed"), &UpdateManager::_on_version_check_completed);
     ClassDB::bind_method(D_METHOD("_on_download_completed"), &UpdateManager::_on_download_completed);
@@ -83,6 +180,7 @@ void UpdateManager::_bind_methods() {
    
     ADD_SIGNAL(MethodInfo("update_available", PropertyInfo(Variant::DICTIONARY, "version_info")));
     ADD_SIGNAL(MethodInfo("download_finished", PropertyInfo(Variant::BOOL, "success")));
+    ADD_SIGNAL(MethodInfo("installation_finished", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "message")));
     ADD_SIGNAL(MethodInfo("error", PropertyInfo(Variant::STRING, "message")));
     ADD_SIGNAL(MethodInfo("download_progress_changed", PropertyInfo(Variant::INT, "bytes_received"), PropertyInfo(Variant::INT, "total_bytes")));
     ADD_SIGNAL(MethodInfo("update_state_changed", PropertyInfo(Variant::INT, "new_state")));
@@ -92,6 +190,7 @@ void UpdateManager::_bind_methods() {
     BIND_ENUM_CONSTANT(STATE_UPDATE_AVAILABLE);
     BIND_ENUM_CONSTANT(STATE_DOWNLOADING);
     BIND_ENUM_CONSTANT(STATE_DOWNLOADED);
+    BIND_ENUM_CONSTANT(STATE_INSTALLING);
     BIND_ENUM_CONSTANT(STATE_UP_TO_DATE);
     BIND_ENUM_CONSTANT(STATE_ERROR);
    }
@@ -100,6 +199,8 @@ void UpdateManager::initialize() {
     using namespace godot;
 
     TOOLKIT_LOG("UpdateManager: Starting initialization...");
+
+    cleanup_stale_native_libraries();
 
     // Check if already initialized
     if (version_checker && version_checker->get_parent()) {
@@ -183,7 +284,7 @@ void UpdateManager::initialize() {
    void UpdateManager::check_for_updates(const godot::String &p_local_version) {
     using namespace godot;
 
-    if (current_state == STATE_CHECKING || current_state == STATE_DOWNLOADING) {
+    if (current_state == STATE_CHECKING || current_state == STATE_DOWNLOADING || current_state == STATE_INSTALLING) {
     	TOOLKIT_LOG("UpdateManager: Already checking/downloading, skipping");
     	return;
     }
@@ -401,6 +502,7 @@ void UpdateManager::_on_download_completed(int p_result, int p_response_code, co
     			TOOLKIT_LOG("UpdateManager: Download successful. File size: ", file_size, " bytes");
     			set_state(STATE_DOWNLOADED);
     			emit_signal("download_finished", true);
+                call_deferred("install_downloaded_update");
     		} else {
     			set_state(STATE_ERROR);
     			emit_signal("download_finished", false);
@@ -486,118 +588,256 @@ void toolkit::UpdateManager::cancel_download() {
 	}
 }
 
-bool toolkit::UpdateManager::perform_update() {
+bool toolkit::UpdateManager::perform_update(godot::String &r_error) {
 	using namespace godot;
 
-	const String TEMP_DOWNLOAD_FILE = download_file_path;
-	if (TEMP_DOWNLOAD_FILE.is_empty()) {
-		UtilityFunctions::push_warning("No downloaded plugin update is available.");
+	const String update_package = download_file_path;
+	if (update_package.is_empty()) {
+		r_error = "No downloaded plugin update is available.";
 		return false;
 	}
-	if (!FileAccess::file_exists(TEMP_DOWNLOAD_FILE)) {
-		UtilityFunctions::push_warning("Update file not found. Nothing to do.");
+	if (!FileAccess::file_exists(update_package)) {
+		r_error = "Downloaded update package was not found.";
+		return false;
+	}
+	String remote_version = String(remote_version_info.get("version", "")).strip_edges();
+	if (remote_version.is_empty() || remote_version.contains("/") || remote_version.contains("\\") || remote_version.contains(":")) {
+		r_error = "Update manifest contains an invalid plugin version.";
+		return false;
+	}
+	String required_native_path = expected_native_relative_path(remote_version);
+	if (required_native_path.is_empty()) {
+		r_error = "Automatic installation is not supported on this platform.";
 		return false;
 	}
 
 	TOOLKIT_LOG("--- Starting C++ update process ---");
 
-	// 1. Unzip the package
 	Ref<ZIPReader> zip_reader = memnew(ZIPReader);
-	Error zip_err = zip_reader->open(TEMP_DOWNLOAD_FILE);
+	Error zip_err = zip_reader->open(update_package);
 	if (zip_err != OK) {
-		UtilityFunctions::push_error("Failed to open downloaded zip package.");
+		r_error = "Failed to open downloaded ZIP package.";
 		return false;
 	}
 
 	PackedStringArray files = zip_reader->get_files();
 	String addon_path = ProjectSettings::get_singleton()->globalize_path("res://addons/godot-minigame/");
 	const String package_prefix = "addons/godot-minigame/";
+	HashSet<String> package_paths;
+	std::vector<PluginInstallEntry> entries;
+	String plugin_config_content;
+	String extension_content;
+	bool has_required_native = false;
 
 	for (int i = 0; i < files.size(); i++) {
 		String archive_path = String(files[i]).replace("\\", "/");
 		if (!archive_path.begins_with(package_prefix)) {
-			UtilityFunctions::push_error("Plugin update contains a file outside addons/godot-minigame: " + archive_path);
+			r_error = "Update package contains a file outside addons/godot-minigame: " + archive_path;
 			zip_reader->close();
 			return false;
 		}
 
 		String relative_path = archive_path.substr(package_prefix.length());
-		PackedStringArray components = relative_path.split("/", false);
-		bool unsafe_path = relative_path.is_absolute_path() || relative_path.contains(":");
-		for (int component_index = 0; component_index < components.size(); component_index++) {
-			if (components[component_index] == "..") {
-				unsafe_path = true;
-				break;
-			}
+		if (relative_path.is_empty() || archive_path.ends_with("/")) {
+			continue;
 		}
-		if (unsafe_path) {
-			UtilityFunctions::push_error("Plugin update contains an unsafe path: " + archive_path);
+		if (!is_safe_package_path(relative_path)) {
+			r_error = "Update package contains an unsafe path: " + archive_path;
 			zip_reader->close();
 			return false;
 		}
-		if (relative_path.is_empty()) {
-			continue;
+		String package_path_key = relative_path.to_lower();
+		if (package_paths.has(package_path_key)) {
+			r_error = "Update package contains a duplicate path: " + relative_path;
+			zip_reader->close();
+			return false;
 		}
+		package_paths.insert(package_path_key);
 
-		String dest_path = addon_path.path_join(relative_path);
-		if (archive_path.ends_with("/")) {
-			DirAccess::make_dir_recursive_absolute(dest_path);
-		} else {
-			DirAccess::make_dir_recursive_absolute(dest_path.get_base_dir());
-			PackedByteArray data = zip_reader->read_file(files[i]);
-			Ref<FileAccess> file = FileAccess::open(dest_path, FileAccess::WRITE);
-			if (file.is_valid()) {
-				file->store_buffer(data);
-				file->close();
-			} else {
-				UtilityFunctions::push_error("Failed to write file: " + dest_path);
-				zip_reader->close();
+		PluginInstallEntry entry;
+		entry.relative_path = relative_path;
+		entry.destination_path = addon_path.path_join(relative_path);
+		entry.temporary_path = entry.destination_path + ".godot-minigame-update";
+		entry.data = zip_reader->read_file(files[i]);
+		if (relative_path == "plugin.cfg") {
+			plugin_config_content = entry.data.get_string_from_utf8();
+		} else if (relative_path == "godot-minigame.gdextension") {
+			extension_content = entry.data.get_string_from_utf8();
+		} else if (relative_path == required_native_path) {
+			has_required_native = true;
+		}
+		entries.push_back(entry);
+	}
+	zip_reader->close();
+
+	Ref<ConfigFile> package_plugin_config;
+	package_plugin_config.instantiate();
+	if (!package_paths.has("plugin.cfg") || package_plugin_config->parse(plugin_config_content) != OK ||
+			String(package_plugin_config->get_value("plugin", "version", "")).strip_edges() != remote_version) {
+		r_error = "Update package plugin.cfg does not match version " + remote_version + ".";
+		return false;
+	}
+	Ref<ConfigFile> package_extension_config;
+	package_extension_config.instantiate();
+	String library_key = current_platform_library_key();
+	String configured_library;
+	if (package_paths.has("godot-minigame.gdextension") && package_extension_config->parse(extension_content) == OK) {
+		configured_library = String(package_extension_config->get_value("libraries", library_key, "")).strip_edges().trim_prefix("./");
+	}
+	if (library_key.is_empty() || configured_library != required_native_path) {
+		r_error = "Update package GDExtension descriptor does not reference the versioned native library.";
+		return false;
+	}
+	if (!has_required_native) {
+		r_error = "Update package is missing the native library for this platform: " + required_native_path;
+		return false;
+	}
+
+	std::stable_sort(entries.begin(), entries.end(), [](const PluginInstallEntry &a, const PluginInstallEntry &b) {
+		return install_priority(a.relative_path) < install_priority(b.relative_path);
+	});
+
+	for (PluginInstallEntry &entry : entries) {
+		entry.had_previous = FileAccess::file_exists(entry.destination_path);
+		if (entry.had_previous && !read_file_bytes(entry.destination_path, entry.previous_data)) {
+			r_error = "Failed to back up existing plugin file: " + entry.relative_path;
+			for (PluginInstallEntry &cleanup_entry : entries) {
+				DirAccess::remove_absolute(cleanup_entry.temporary_path);
+			}
+			return false;
+		}
+		if (!write_file_bytes(entry.temporary_path, entry.data)) {
+			r_error = "Failed to stage plugin file: " + entry.relative_path;
+			for (PluginInstallEntry &cleanup_entry : entries) {
+				DirAccess::remove_absolute(cleanup_entry.temporary_path);
+			}
+			return false;
+		}
+	}
+
+	auto rollback = [&entries]() -> bool {
+		bool rollback_ok = true;
+		for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+			PluginInstallEntry &entry = *it;
+			DirAccess::remove_absolute(entry.temporary_path);
+			if (!entry.committed) {
+				continue;
+			}
+			DirAccess::remove_absolute(entry.destination_path);
+			if (entry.had_previous && !write_file_bytes(entry.destination_path, entry.previous_data)) {
+				rollback_ok = false;
+			}
+		}
+		return rollback_ok;
+	};
+
+	for (PluginInstallEntry &entry : entries) {
+		if (FileAccess::file_exists(entry.destination_path)) {
+			Error remove_error = DirAccess::remove_absolute(entry.destination_path);
+			if (remove_error != OK) {
+				r_error = "Failed to replace plugin file: " + entry.relative_path;
+				if (!rollback()) {
+					r_error += " Rollback was incomplete.";
+				}
 				return false;
 			}
 		}
-	}
-	zip_reader->close();
-	TOOLKIT_LOG("Unzipped all files successfully.");
-
-	// 2. Update plugin.cfg version
-	if (remote_version_info.has("version")) {
-		String new_version = remote_version_info.get("version", "0.0.0");
-		Ref<ConfigFile> config_file = memnew(ConfigFile);
-		String config_path = "res://addons/godot-minigame/plugin.cfg";
-		if (config_file->load(config_path) == OK) {
-			config_file->set_value("plugin", "version", new_version);
-			config_file->save(config_path);
-			TOOLKIT_LOG("Updated plugin.cfg to version: " + new_version);
-		} else {
-			UtilityFunctions::push_warning("Failed to load plugin.cfg to update version.");
+		Error rename_error = DirAccess::rename_absolute(entry.temporary_path, entry.destination_path);
+		if (rename_error != OK) {
+			r_error = "Failed to commit plugin file: " + entry.relative_path;
+			if (entry.had_previous && !write_file_bytes(entry.destination_path, entry.previous_data)) {
+				r_error += " The current file could not be restored.";
+			}
+			if (!rollback()) {
+				r_error += " Rollback was incomplete.";
+			}
+			return false;
 		}
+		entry.committed = true;
 	}
 
-	// 3. Clean up temporary file
-	Ref<DirAccess> dir = DirAccess::open("user://");
-	if (dir.is_valid()) {
-		dir->remove(TEMP_DOWNLOAD_FILE.get_file());
+	String absolute_package_path = ProjectSettings::get_singleton()->globalize_path(update_package);
+	Error remove_package_error = DirAccess::remove_absolute(absolute_package_path);
+	if (remove_package_error != OK) {
+		TOOLKIT_LOG("UpdateManager: Installed update but could not remove package: ", absolute_package_path);
 	}
-
+	local_version = remote_version;
 	TOOLKIT_LOG("--- C++ update process finished ---");
 	return true;
 }
 
+void toolkit::UpdateManager::install_downloaded_update() {
+	using namespace godot;
+	if (current_state != STATE_DOWNLOADED) {
+		return;
+	}
+	if (!Engine::get_singleton()->is_editor_hint() || !EditorInterface::get_singleton()) {
+		set_state(STATE_ERROR);
+		String error_message = "Godot editor restart interface is unavailable; update was not installed.";
+		emit_signal("error", error_message);
+		emit_signal("installation_finished", false, error_message);
+		return;
+	}
+
+	set_state(STATE_INSTALLING);
+	String error_message;
+	if (!perform_update(error_message)) {
+		set_state(STATE_ERROR);
+		emit_signal("error", error_message);
+		emit_signal("installation_finished", false, error_message);
+		return;
+	}
+
+	emit_signal("installation_finished", true, "");
+	TOOLKIT_LOG("Update applied. Restarting editor...");
+	EditorInterface::get_singleton()->restart_editor(true);
+}
+
 void toolkit::UpdateManager::restart_editor_for_update() {
-	if (perform_update()) {
-		TOOLKIT_LOG("Update applied. Restarting editor...");
-		if (!godot::Engine::get_singleton()->is_editor_hint()) {
-			godot::UtilityFunctions::push_warning("Restart editor is only available in editor mode.");
-			return;
+	install_downloaded_update();
+}
+
+void toolkit::UpdateManager::cleanup_stale_native_libraries() {
+	using namespace godot;
+	if (stale_native_cleanup_attempted) {
+		return;
+	}
+	stale_native_cleanup_attempted = true;
+
+	PackedByteArray descriptor_data;
+	String descriptor_path = ProjectSettings::get_singleton()->globalize_path("res://addons/godot-minigame/godot-minigame.gdextension");
+	if (!read_file_bytes(descriptor_path, descriptor_data)) {
+		return;
+	}
+	String descriptor = descriptor_data.get_string_from_utf8();
+	const char *platform_dirs[] = { "windows", "linux", "macos" };
+	for (const char *platform_dir : platform_dirs) {
+		String directory_path = ProjectSettings::get_singleton()->globalize_path(
+			String("res://addons/godot-minigame/bin/") + platform_dir);
+		Ref<DirAccess> directory = DirAccess::open(directory_path);
+		if (directory.is_null()) {
+			continue;
 		}
-		godot::EditorInterface *editor = godot::EditorInterface::get_singleton();
-		if (editor) {
-			editor->restart_editor(true);
-		} else {
-			godot::UtilityFunctions::push_warning("EditorInterface is unavailable, restart skipped.");
+		directory->list_dir_begin();
+		String file_name = directory->get_next();
+		while (!file_name.is_empty()) {
+			bool is_directory = directory->current_is_dir();
+			bool known_library =
+				(file_name.begins_with("godot-minigame.windows.") && file_name.ends_with(".dll")) ||
+				(file_name.begins_with("libgodot-minigame.linux.") && file_name.ends_with(".so")) ||
+				(file_name.begins_with("libgodot-minigame.macos.") && file_name.ends_with(".dylib"));
+			if (!is_directory && known_library && !descriptor.contains(file_name)) {
+				String stale_path = directory_path.path_join(file_name);
+				Error remove_error = DirAccess::remove_absolute(stale_path);
+				if (remove_error == OK) {
+					TOOLKIT_LOG("UpdateManager: Removed stale native library: ", stale_path);
+				} else {
+					TOOLKIT_LOG("UpdateManager: Could not remove stale native library: ", stale_path);
+				}
+			}
+			file_name = directory->get_next();
 		}
-	} else {
-		godot::UtilityFunctions::push_error("Failed to apply update. Restart aborted.");
+		directory->list_dir_end();
 	}
 }
 

@@ -56,6 +56,18 @@ class ProductToolTests(unittest.TestCase):
         self.assertIn('legacy_template_source == String::utf8("仅插件内模板")', export_source)
         self.assertIn('legacy_template_source == String::utf8("自动")', export_source)
 
+    def test_automatic_update_install_contract_is_present(self):
+        update_source = (ROOT / "src/core/update_manager.cpp").read_text(encoding="utf-8")
+        update_header = (ROOT / "include/core/update_manager.h").read_text(encoding="utf-8")
+        settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        self.assertIn("STATE_INSTALLING", update_header)
+        self.assertIn('call_deferred("install_downloaded_update")', update_source)
+        self.assertIn("package_plugin_config->parse", update_source)
+        self.assertIn("package_extension_config->parse", update_source)
+        self.assertIn("Rollback was incomplete", update_source)
+        self.assertIn("restart_editor(true)", update_source)
+        self.assertIn("正在安装并重启 Godot", settings_source)
+
     def test_promote_template_updates_catalog_and_projection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -109,13 +121,54 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[],
             )
             product.command_package_plugin(args)
-            archive = output / "godot-minigame-plugin-1.0.5.zip"
+            archive = output / "godot-minigame-plugin-1.0.6.zip"
             self.assertTrue(archive.is_file())
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
             self.assertIn("addons/godot-minigame/plugin.cfg", names)
             self.assertTrue(all(name.startswith("addons/godot-minigame/") for name in names))
             self.assertFalse(any(name.endswith((".lib", ".exp")) for name in names))
+
+    def test_plugin_zip_versions_native_libraries_and_descriptor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            native = output / "native"
+            libraries = {
+                "windows/godot-minigame.windows.x86_64.dll": b"windows",
+                "linux/libgodot-minigame.linux.x86_64.so": b"linux",
+                "macos/libgodot-minigame.macos.dylib": b"macos",
+            }
+            for relative, content in libraries.items():
+                path = native / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            args = argparse.Namespace(
+                root=ROOT,
+                output_dir=output / "package",
+                native_dir=native,
+                staging_dir=output / "staging",
+                require_binaries=True,
+                bundle_template=[],
+            )
+            product.command_package_plugin(args)
+            archive = output / "package" / "godot-minigame-plugin-1.0.6.zip"
+            with zipfile.ZipFile(archive) as package:
+                names = package.namelist()
+                descriptor = package.read(
+                    "addons/godot-minigame/godot-minigame.gdextension"
+                ).decode("utf-8")
+
+            expected = {
+                "addons/godot-minigame/bin/windows/godot-minigame.windows.x86_64.1.0.6.dll",
+                "addons/godot-minigame/bin/linux/libgodot-minigame.linux.x86_64.1.0.6.so",
+                "addons/godot-minigame/bin/macos/libgodot-minigame.macos.1.0.6.dylib",
+            }
+            self.assertTrue(expected.issubset(names))
+            self.assertNotIn("godot-minigame.windows.x86_64.dll\"", descriptor)
+            self.assertIn("godot-minigame.windows.x86_64.1.0.6.dll", descriptor)
+            self.assertIn("libgodot-minigame.linux.x86_64.1.0.6.so", descriptor)
+            self.assertIn("libgodot-minigame.macos.1.0.6.dylib", descriptor)
 
     def test_plugin_zip_can_bundle_template_once(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -132,7 +185,7 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[template],
             )
             product.command_package_plugin(args)
-            archive = output / "godot-minigame-plugin-1.0.5.zip"
+            archive = output / "godot-minigame-plugin-1.0.6.zip"
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
                 bundled = "addons/godot-minigame/resources/templates/minigame4.5.2-glx-2d-r1.tpz"

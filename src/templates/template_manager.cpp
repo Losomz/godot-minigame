@@ -48,7 +48,7 @@ constexpr const char *TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG = "gitee_release
 constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER = "atomgit_owner";
 constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO = "atomgit_repo";
 constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG = "atomgit_release_tag";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.5";
+constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.6";
 
 String _sanitize_cache_component(const String &value) {
     String sanitized = value.strip_edges().to_lower();

@@ -78,7 +78,7 @@ TPZ 在插件 ZIP 中只保存一份。插件启动时从当前分发源的 `mai
 
 `product/adapters.json` 只登记模板的适配来源和构建契约，不代表第三种产品。
 
-插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板目录从所选仓库 `main` 分支的 `catalog/templates.json` 读取，记录中的 Release tag 决定 `<version>-<variant>-rN` TPZ 下载位置。下载后的插件 ZIP 需要关闭 Godot 后安装，不会在编辑器运行时覆盖原生库。
+插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板目录从所选仓库 `main` 分支的 `catalog/templates.json` 读取，记录中的 Release tag 决定 `<version>-<variant>-rN` TPZ 下载位置。插件 1.0.6 起会在 ZIP 校验通过后自动安装版本化原生库、保存项目并重启 Godot；1.0.4/1.0.5 升级到 1.0.6 仍需手动覆盖一次。
 
 `resources/versions.yaml` 是由 `catalog/templates.json` 生成的旧插件兼容投影，禁止手工双写：
 
@@ -89,7 +89,7 @@ python tools/product/product.py render-versions --check
 
 ## Release 命名
 
-- 插件：`plugin-v1.0.5`
+- 插件：`plugin-v1.0.6`
 - 模板：`4.5.2-glx-2d-r1`（版本-变体-修订号，与产物文件名一致）
 
 一个仓库只有一个 Release 列表和一个全局 latest，因此所有产品线都使用命名空间 tag 和独立 Catalog。
