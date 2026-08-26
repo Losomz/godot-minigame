@@ -37,6 +37,25 @@ class ProductToolTests(unittest.TestCase):
             self.assertNotIn(adapter["branch"], {"main", "develop", "upstream-sync"})
             self.assertTrue((ROOT / ".github/workflows" / adapter["workflow"]).is_file())
 
+    def test_staged_plugin_version_may_lead_published_stable_catalog(self):
+        plugin = product.load_json(ROOT / "product/plugin.json")
+        stable = product.load_json(ROOT / "catalog/plugin-stable.json")
+        self.assertGreaterEqual(
+            product.parse_semver(plugin["version"], "plugin"),
+            product.parse_semver(stable["version"], "stable"),
+        )
+        self.assertEqual(stable["tag"], f"plugin-v{stable['version']}")
+
+    def test_runtime_catalog_contract_and_legacy_preset_mapping_are_present(self):
+        source = (ROOT / "src/templates/template_manager.cpp").read_text(encoding="utf-8")
+        export_source = (ROOT / "src/editor/wechat_export_platform.cpp").read_text(encoding="utf-8")
+        self.assertIn('status != "stable"', source)
+        self.assertIn('minimum_plugin', source)
+        self.assertIn('sha256', source)
+        self.assertIn('templates-v1.json', source)
+        self.assertIn('legacy_template_source == String::utf8("仅插件内模板")', export_source)
+        self.assertIn('legacy_template_source == String::utf8("自动")', export_source)
+
     def test_promote_template_updates_catalog_and_projection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -90,7 +109,7 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[],
             )
             product.command_package_plugin(args)
-            archive = output / "godot-minigame-plugin-1.0.4.zip"
+            archive = output / "godot-minigame-plugin-1.0.5.zip"
             self.assertTrue(archive.is_file())
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
@@ -113,7 +132,7 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[template],
             )
             product.command_package_plugin(args)
-            archive = output / "godot-minigame-plugin-1.0.4.zip"
+            archive = output / "godot-minigame-plugin-1.0.5.zip"
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
                 bundled = "addons/godot-minigame/resources/templates/minigame4.5.2-glx-2d-r1.tpz"

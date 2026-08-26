@@ -99,6 +99,9 @@ if ARGUMENTS.get("embed_resources", "no") == "yes":
             for file in files:
                 if file.endswith((".zip", ".tpz", ".js", ".json", ".yaml", ".yml", ".svg", ".png", ".jpg", ".jpeg", ".webp")):
                     resource_files.append(os.path.join(root, file))
+    catalog_file = os.path.join("catalog", "templates.json")
+    if os.path.isfile(catalog_file):
+        resource_files.append(catalog_file)
     
     if resource_files:
         # Generate resource header

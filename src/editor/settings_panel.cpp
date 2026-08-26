@@ -36,6 +36,7 @@ void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_reset_config_pressed"), &SettingsPanel::_on_reset_config_pressed);
 	ClassDB::bind_method(D_METHOD("_on_refresh_versions_pressed"), &SettingsPanel::_on_refresh_versions_pressed);
 	ClassDB::bind_method(D_METHOD("_on_versions_loaded"), &SettingsPanel::_on_versions_loaded);
+	ClassDB::bind_method(D_METHOD("_on_versions_refresh_failed", "error_code"), &SettingsPanel::_on_versions_refresh_failed);
 }
 
 void SettingsPanel::_ready() {
@@ -45,6 +46,9 @@ void SettingsPanel::_ready() {
 		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
 		if (template_manager && !template_manager->is_connected("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded))) {
 			template_manager->connect("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded));
+		}
+		if (template_manager && !template_manager->is_connected("versions_refresh_failed", callable_mp(this, &SettingsPanel::_on_versions_refresh_failed))) {
+			template_manager->connect("versions_refresh_failed", callable_mp(this, &SettingsPanel::_on_versions_refresh_failed));
 		}
 	}
 	UpdateManager *update_manager = UpdateManager::get_singleton();
@@ -369,6 +373,13 @@ void SettingsPanel::_on_refresh_versions_pressed() {
 void SettingsPanel::_on_versions_loaded() {
 	if (action_status_label) {
 		action_status_label->set_text(String::utf8("远端索引刷新完成"));
+	}
+	refresh_distribution_info();
+}
+
+void SettingsPanel::_on_versions_refresh_failed(int error_code) {
+	if (action_status_label) {
+		action_status_label->set_text(String::utf8("远端索引刷新失败，已保留当前索引。错误码: ") + String::num_int64(error_code));
 	}
 	refresh_distribution_info();
 }

@@ -30,6 +30,7 @@ private:
     double export_progress_value = 0.0;
     godot::Array previous_native_audio_subpackages;
     godot::PackedStringArray previous_native_audio_output_paths;
+    int64_t observed_catalog_revision = -1;
 
 protected:
 	static void _bind_methods();
@@ -38,6 +39,7 @@ public:
     // Virtual methods from EditorExportPlatformExtension
 	virtual godot::PackedStringArray _get_preset_features(const godot::Ref<godot::EditorExportPreset> &p_preset) const override;
 	virtual godot::TypedArray<godot::Dictionary> _get_export_options() const override;
+	virtual bool _should_update_export_options() override;
 	virtual godot::String _get_name() const override;
 	virtual godot::String _get_os_name() const override;
 	virtual godot::Ref<godot::Texture2D> _get_logo() const override;

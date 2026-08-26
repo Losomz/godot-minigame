@@ -50,6 +50,7 @@ private:
 	void _on_reset_config_pressed();
 	void _on_refresh_versions_pressed();
 	void _on_versions_loaded();
+	void _on_versions_refresh_failed(int error_code);
 
 protected:
 	static void _bind_methods();

@@ -49,8 +49,13 @@ private:
     String atomgit_release_tag = "latest";
 
     Dictionary versions_cache;
+    Dictionary catalog_cache;
     Array available_versions;
     bool versions_loaded = false;
+    bool initialization_complete = false;
+    bool remote_refresh_started = false;
+    bool refresh_in_flight = false;
+    int64_t catalog_revision = 0;
 
 protected:
     static void _bind_methods();
@@ -68,6 +73,7 @@ public:
     Error load_versions_from_local_cache();
     Array get_available_versions() const;
     Dictionary get_versions_data() const;
+    int64_t get_catalog_revision() const;
 
     // Version selection with nearest match
     String get_best_version_for_editor() const;
@@ -151,7 +157,8 @@ private:
     // bool is_downloading_with_progress = false;
 
     Error parse_versions_yaml(const String& yaml_content);
-    Error download_template_url_sync(const String& filename, const String& download_url, const String& output_path);
+    Error parse_templates_catalog(const String& json_content);
+    Error download_template_url_sync(const String& filename, const String& download_url, const String& output_path, bool verify_catalog_digest);
     TemplateVersion parse_version_entry(const String& godot_major, const String& version, const String& filename);
     String build_versions_url() const;
     String build_release_download_url(DistributionProvider provider, const String& owner, const String& repo, const String& release_tag, const String& filename) const;
@@ -183,16 +190,17 @@ private:
     Error http_get_sync_follow_redirects(const String& url, PackedByteArray& r_body, int& r_response_code, Dictionary* r_response_headers = nullptr) const;
     Dictionary normalize_template_entry(const Variant& entry, const String& fallback_release_tag = "") const;
     String find_release_tag_for_filename(const String& filename) const;
+    String find_sha256_for_filename(const String& filename) const;
+    bool verify_template_file(const String& filename, const String& path) const;
     String get_latest_version_for_minor_line(const String& target_version, const String& major_version) const;
     int compare_version_numbers(const String& version1, const String& version2) const;
     Array parse_version_components(const String& version) const;
-    String dictionary_to_simple_yaml(const Dictionary& dict) const;
     String get_distribution_cache_root_dir() const;
     Array build_available_versions_from_cache() const;
 
     // Signal handlers
     void _on_template_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& filename, const String& output_path);
-    void _on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body);
+    void _on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& request_url);
 };
 
 } // namespace templates

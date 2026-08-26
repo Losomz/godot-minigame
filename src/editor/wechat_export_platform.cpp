@@ -568,8 +568,9 @@ PackedStringArray WeChatExportPlatform::_get_preset_features(const Ref<EditorExp
 
 TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     TypedArray<Dictionary> options;
+    const int64_t basic_usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_EDITOR_BASIC_SETTING;
 
-    String template_versions = String::utf8("自动");
+    String template_versions = String::utf8("自动（推荐）");
     templates::TemplateManager *tm = templates::TemplateManager::get_singleton();
     if (tm) {
         Array available_versions = tm->get_available_versions();
@@ -587,21 +588,32 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     template_version["type"] = Variant::STRING;
     template_version["hint"] = PROPERTY_HINT_ENUM_SUGGESTION;
     template_version["hint_string"] = template_versions;
-    template_version["default_value"] = String::utf8("自动");
+    template_version["default_value"] = String::utf8("自动（推荐）");
+    template_version["usage"] = basic_usage;
     options.append(template_version);
 
-    Dictionary template_source;
-    template_source["name"] = String::utf8("模板/模板来源");
-    template_source["type"] = Variant::STRING;
-    template_source["hint"] = PROPERTY_HINT_ENUM;
-    template_source["hint_string"] = String::utf8("自动,仅插件内模板");
-    template_source["default_value"] = String::utf8("自动");
-    options.append(template_source);
+    Dictionary template_strategy;
+    template_strategy["name"] = String::utf8("模板/模板获取策略");
+    template_strategy["type"] = Variant::STRING;
+    template_strategy["hint"] = PROPERTY_HINT_ENUM;
+    template_strategy["hint_string"] = String::utf8("自动下载,仅使用本地模板");
+    template_strategy["default_value"] = String::utf8("自动下载");
+    template_strategy["usage"] = basic_usage;
+    options.append(template_strategy);
+
+    // Storage-only compatibility option for presets created by 1.0.4 and earlier.
+    Dictionary legacy_template_source;
+    legacy_template_source["name"] = String::utf8("模板/模板来源");
+    legacy_template_source["type"] = Variant::STRING;
+    legacy_template_source["default_value"] = "";
+    legacy_template_source["usage"] = PROPERTY_USAGE_STORAGE;
+    options.append(legacy_template_source);
 
     Dictionary custom_template_url;
     custom_template_url["name"] = String::utf8("模板/自定义模板链接");
     custom_template_url["type"] = Variant::STRING;
     custom_template_url["default_value"] = "";
+    custom_template_url["usage"] = PROPERTY_USAGE_DEFAULT;
     options.append(custom_template_url);
 
     // 微信小游戏基本信息
@@ -609,12 +621,14 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     appid["name"] = String::utf8("微信小游戏/游戏_AppID");
     appid["type"] = Variant::STRING;
     appid["default_value"] = "wxf40904ea6120ad08";
+    appid["usage"] = basic_usage;
     options.append(appid);
 
     Dictionary project_name;
     project_name["name"] = String::utf8("微信小游戏/小游戏项目名");
     project_name["type"] = Variant::STRING;
     project_name["default_value"] = "GodotMiniGame";
+    project_name["usage"] = basic_usage;
     options.append(project_name);
 
     Dictionary orientation;
@@ -623,6 +637,7 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     orientation["hint"] = PROPERTY_HINT_ENUM;
     orientation["hint_string"] = "portrait,landscape";
     orientation["default_value"] = "portrait";
+    orientation["usage"] = basic_usage;
     options.append(orientation);
 
     // 资源信息
@@ -632,6 +647,7 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     cover_image["hint"] = PROPERTY_HINT_FILE;
     cover_image["hint_string"] = "*.png,*.jpg,*.jpeg";
     cover_image["default_value"] = "";
+    cover_image["usage"] = basic_usage;
     options.append(cover_image);
 
     Dictionary logo_image;
@@ -640,6 +656,7 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     logo_image["hint"] = PROPERTY_HINT_FILE;
     logo_image["hint_string"] = "*.png,*.jpg,*.jpeg";
     logo_image["default_value"] = "";
+    logo_image["usage"] = basic_usage;
     options.append(logo_image);
 
     Dictionary native_audio_duration;
@@ -648,6 +665,7 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     native_audio_duration["hint"] = PROPERTY_HINT_RANGE;
     native_audio_duration["hint_string"] = "0,60,0.1,or_greater,suffix:s";
     native_audio_duration["default_value"] = 3.0;
+    native_audio_duration["usage"] = basic_usage;
     options.append(native_audio_duration);
 
     Dictionary native_audio_cache_limit;
@@ -656,9 +674,20 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     native_audio_cache_limit["hint"] = PROPERTY_HINT_RANGE;
     native_audio_cache_limit["hint_string"] = "1,64,1,or_greater,suffix: MiB";
     native_audio_cache_limit["default_value"] = 8;
+    native_audio_cache_limit["usage"] = basic_usage;
     options.append(native_audio_cache_limit);
 
     return options;
+}
+
+bool WeChatExportPlatform::_should_update_export_options() {
+    templates::TemplateManager *tm = templates::TemplateManager::get_singleton();
+    int64_t revision = tm ? tm->get_catalog_revision() : 0;
+    if (revision == observed_catalog_revision) {
+        return false;
+    }
+    observed_catalog_revision = revision;
+    return true;
 }
 
 String WeChatExportPlatform::_get_name() const {
@@ -796,11 +825,25 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
 
         templates::TemplateManager* tm = templates::TemplateManager::get_singleton();
         String selected_version = String(p_preset->get(String::utf8("模板/模板版本"))).strip_edges();
-        String template_source = String(p_preset->get(String::utf8("模板/模板来源"))).strip_edges();
-        bool bundled_only = template_source == String::utf8("仅插件内模板");
+        bool automatic_version = selected_version.is_empty() ||
+                selected_version == String::utf8("自动") ||
+                selected_version == String::utf8("自动（推荐）");
+        String template_strategy = String(p_preset->get(String::utf8("模板/模板获取策略"))).strip_edges();
+        String legacy_template_source = String(p_preset->get(String::utf8("模板/模板来源"))).strip_edges();
+        if ((template_strategy.is_empty() || template_strategy == String::utf8("自动下载")) && !legacy_template_source.is_empty()) {
+            if (legacy_template_source == String::utf8("仅插件内模板")) {
+                template_strategy = String::utf8("仅使用本地模板");
+            } else if (legacy_template_source == String::utf8("自动")) {
+                template_strategy = String::utf8("自动下载");
+            }
+        }
+        if (template_strategy.is_empty()) {
+            template_strategy = String::utf8("自动下载");
+        }
+        bool local_only = template_strategy == String::utf8("仅使用本地模板");
         String custom_template_url = String(p_preset->get(String::utf8("模板/自定义模板链接"))).strip_edges();
-        if (bundled_only && !custom_template_url.is_empty()) {
-            UtilityFunctions::push_warning("Custom template URL cannot be used with bundled-only template mode.");
+        if (local_only && !custom_template_url.is_empty()) {
+            UtilityFunctions::push_warning("Custom template URL cannot be used in local-only template mode.");
             return ERR_INVALID_PARAMETER;
         }
         _product_log("Template source: " + (custom_template_url.is_empty() ? _format_release_source(tm) : custom_template_url) + ", editor " + tm->get_current_godot_version());
@@ -811,12 +854,6 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
             TOOLKIT_LOG("WeChatExportPlatform: ", msg);
             return init_err;
         }
-        Error embedded_index_err = tm->load_versions_from_embedded();
-        if (bundled_only && embedded_index_err != OK) {
-                UtilityFunctions::push_warning("Bundled template index is unavailable.");
-                return embedded_index_err;
-        }
-
         String best_template_ref;
         if (!custom_template_url.is_empty()) {
             if ((!custom_template_url.begins_with("https://") && !custom_template_url.begins_with("http://")) ||
@@ -839,40 +876,23 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
             }
             best_template_ref = cache_path;
         } else {
-            if (embedded_index_err == OK) {
-                if (selected_version.is_empty() || selected_version == String::utf8("自动")) {
-                    best_template_ref = tm->get_best_bundled_template_for_editor();
-                } else {
-                    PackedStringArray version_parts = selected_version.split(".");
-                    String major_version = version_parts.is_empty() ? tm->get_godot_major_version() : "godot" + String(version_parts[0]);
-                    String filename = tm->get_template_filename(major_version, selected_version);
-                    best_template_ref = tm->get_bundled_template_path(filename);
+            if (automatic_version) {
+                best_template_ref = tm->get_best_available_template_for_editor();
+            } else {
+                PackedStringArray version_parts = selected_version.split(".");
+                String major_version = version_parts.is_empty() ? tm->get_godot_major_version() : "godot" + String(version_parts[0]);
+                String filename = tm->get_template_filename(major_version, selected_version);
+                if (!filename.is_empty()) {
+                    best_template_ref = tm->get_template_path(filename);
                 }
             }
-
-            if (best_template_ref.is_empty() && !bundled_only) {
-                Error remote_versions_err = tm->load_versions_from_remote_sync();
-                if (remote_versions_err != OK) {
-                    _product_log("Template index refresh failed, using cached data. error=" + _describe_export_error(remote_versions_err));
-                    TOOLKIT_LOG("WeChatExportPlatform: remote versions refresh failed, falling back to cached versions. error=", remote_versions_err);
-                } else {
-                    _product_log("Template index loaded: " + String::num_int64(tm->get_available_versions().size()) + " version(s)");
-                }
-                if (selected_version.is_empty() || selected_version == String::utf8("自动")) {
-                    best_template_ref = tm->get_best_available_template_for_editor();
-                } else {
-                    PackedStringArray version_parts = selected_version.split(".");
-                    String major_version = version_parts.is_empty() ? tm->get_godot_major_version() : "godot" + String(version_parts[0]);
-                    String filename = tm->get_template_filename(major_version, selected_version);
-                    if (!filename.is_empty()) {
-                        best_template_ref = tm->get_template_path(filename);
-                    }
-                }
+            if (local_only && best_template_ref.begins_with("remote://")) {
+                best_template_ref = "";
             }
         }
 
         if (best_template_ref.is_empty()) {
-            String requested_version = (selected_version.is_empty() || selected_version == String::utf8("自动")) ? tm->get_current_godot_version() : selected_version;
+            String requested_version = automatic_version ? tm->get_current_godot_version() : selected_version;
             String detailed_warning = String("No compatible template for version ")
                     + requested_version
                     + " from " + _format_release_source(tm)
@@ -1024,17 +1044,20 @@ String WeChatExportPlatform::_get_export_option_warning(const Ref<EditorExportPr
             return String::utf8("请输入直接指向 .tpz 文件的 HTTP(S) 链接");
         }
     }
-    if (p_name == StringName(String::utf8("模板/模板来源"))) {
-        String source = String(p_preset->get(p_name)).strip_edges();
+    if (p_name == StringName(String::utf8("模板/模板获取策略"))) {
+        String strategy = String(p_preset->get(p_name)).strip_edges();
         String custom_url = String(p_preset->get(String::utf8("模板/自定义模板链接"))).strip_edges();
-        if (source == String::utf8("仅插件内模板") && !custom_url.is_empty()) {
-            return String::utf8("仅插件内模板模式不能同时使用自定义模板链接");
+        if (strategy == String::utf8("仅使用本地模板") && !custom_url.is_empty()) {
+            return String::utf8("仅使用本地模板模式不能同时使用自定义模板链接");
         }
     }
     return "";
 }
 
 bool WeChatExportPlatform::_get_export_option_visibility(const Ref<EditorExportPreset> &p_preset, const String &p_option) const {
+    if (p_option == String::utf8("模板/自定义模板链接")) {
+        return p_preset->are_advanced_options_enabled();
+    }
     return true;
 }
 

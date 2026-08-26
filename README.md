@@ -18,7 +18,7 @@
 ## 功能
 
 - 按当前 Godot 版本匹配已晋升模板
-- 支持 GitHub、Gitee 和 AtomGit Release 模板源
+- 支持 GitHub、Gitee 和 AtomGit Catalog 与 Release 模板源
 - 模板下载、缓存、解压和导出
 - 插件与模板独立版本和更新通道
 - 可选微信小游戏广告组件
@@ -56,13 +56,15 @@ python tools/product/product.py package-plugin \
   --bundle-template /path/to/minigame4.5.1.2.tpz
 ```
 
-TPZ 在插件 ZIP 中只保存一份。导出预设的“模板/模板来源”可选择“自动”或“仅插件内模板”；自动模式优先使用兼容的插件内模板，否则使用本地缓存或模板 Release。
+TPZ 在插件 ZIP 中只保存一份。插件启动时从当前分发源的 `main/catalog/templates.json` 异步刷新模板目录，并只展示 `stable` 且与当前插件兼容的版本；离线时继续使用新缓存或二进制中嵌入的 Catalog。
+
+导出预设提供“模板版本”和“模板获取策略”。“自动下载”依次使用插件内模板、已下载缓存或 Catalog 指向的模板 Release；“仅使用本地模板”只允许前两者，绝不联网。自定义 TPZ URL 位于 Godot 的高级选项中，是用户明确指定的无 Catalog 摘要校验覆盖项。1.0.4 及更早预设中的“模板/模板来源”值“自动”和“仅插件内模板”会分别按上述两种策略继续工作。
 
 ## 使用
 
 1. 将 Release 插件包中的 `addons/godot-minigame/` 放入 Godot 项目的 `addons/`。
 2. 在编辑器中启用 Godot Minigame。
-3. 配置模板分发源，或保留默认配置。
+3. 配置模板分发源，或保留默认 GitHub 配置。
 4. 在微信小游戏导出预设中选择自动匹配或指定模板版本。
 5. 导出时插件下载并校验模板，然后生成小游戏工程。
 
@@ -76,7 +78,7 @@ TPZ 在插件 ZIP 中只保存一份。导出预设的“模板/模板来源”�
 
 `product/adapters.json` 只登记模板的适配来源和构建契约，不代表第三种产品。
 
-插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板选择只读取模板索引并下载 `<version>-<variant>-rN` TPZ。下载后的插件 ZIP 需要关闭 Godot 后安装，不会在编辑器运行时覆盖原生库。
+插件更新和模板分发互不影响：设置页的“检查插件更新”只读取 `catalog/plugin-stable.json` 并下载 `plugin-v*` ZIP；模板目录从所选仓库 `main` 分支的 `catalog/templates.json` 读取，记录中的 Release tag 决定 `<version>-<variant>-rN` TPZ 下载位置。下载后的插件 ZIP 需要关闭 Godot 后安装，不会在编辑器运行时覆盖原生库。
 
 `resources/versions.yaml` 是由 `catalog/templates.json` 生成的旧插件兼容投影，禁止手工双写：
 
@@ -87,7 +89,7 @@ python tools/product/product.py render-versions --check
 
 ## Release 命名
 
-- 插件：`plugin-v1.0.4`
+- 插件：`plugin-v1.0.5`
 - 模板：`4.5.2-glx-2d-r1`（版本-变体-修订号，与产物文件名一致）
 
 一个仓库只有一个 Release 列表和一个全局 latest，因此所有产品线都使用命名空间 tag 和独立 Catalog。

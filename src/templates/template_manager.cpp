@@ -48,6 +48,7 @@ constexpr const char *TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG = "gitee_release
 constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER = "atomgit_owner";
 constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO = "atomgit_repo";
 constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG = "atomgit_release_tag";
+constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.5";
 
 String _sanitize_cache_component(const String &value) {
     String sanitized = value.strip_edges().to_lower();
@@ -176,6 +177,35 @@ String _strip_wrapping_quotes(const String &value) {
 String _get_env_trimmed(const char *name) {
     return OS::get_singleton()->get_environment(String::utf8(name)).strip_edges();
 }
+
+bool _is_sha256(const String &value) {
+    if (value.length() != 64) {
+        return false;
+    }
+    String normalized = value.to_lower();
+    for (int i = 0; i < normalized.length(); i++) {
+        char32_t c = normalized[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool _is_semver(const String &value) {
+    String core = value.get_slice("-", 0);
+    PackedStringArray parts = core.split(".");
+    if (parts.size() != 3) {
+        return false;
+    }
+    for (int i = 0; i < parts.size(); i++) {
+        String part = String(parts[i]);
+        if (part.is_empty() || !part.is_valid_int() || part.to_int() < 0) {
+            return false;
+        }
+    }
+    return true;
+}
 }
 
 TemplateManager* TemplateManager::singleton = nullptr;
@@ -252,6 +282,7 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_versions_from_embedded"), &TemplateManager::load_versions_from_embedded);
     ClassDB::bind_method(D_METHOD("load_versions_from_local_cache"), &TemplateManager::load_versions_from_local_cache);
     ClassDB::bind_method(D_METHOD("get_available_versions"), &TemplateManager::get_available_versions);
+    ClassDB::bind_method(D_METHOD("get_catalog_revision"), &TemplateManager::get_catalog_revision);
     ClassDB::bind_method(D_METHOD("get_best_version_for_editor"), &TemplateManager::get_best_version_for_editor);
     ClassDB::bind_method(
             D_METHOD("resolve_template_filename_for_version", "target_version", "major_version"),
@@ -321,6 +352,7 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("_on_versions_download_completed"), &TemplateManager::_on_versions_download_completed);
 
     ADD_SIGNAL(MethodInfo("versions_loaded"));
+    ADD_SIGNAL(MethodInfo("versions_refresh_failed", PropertyInfo(Variant::INT, "error_code")));
     ADD_SIGNAL(MethodInfo("template_download_finished", PropertyInfo(Variant::STRING, "filename"), PropertyInfo(Variant::BOOL, "success")));
     ADD_SIGNAL(MethodInfo("template_download_progress", PropertyInfo(Variant::STRING, "filename"), PropertyInfo(Variant::FLOAT, "progress")));
 }
@@ -335,12 +367,16 @@ Error TemplateManager::load_versions_from_remote() {
         return ERR_UNCONFIGURED;
     }
 
+    if (refresh_in_flight) {
+        return ERR_BUSY;
+    }
+
     String versions_url = build_versions_url();
     if (versions_url.is_empty()) {
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Remote versions URL is empty, provider config is invalid.[/color]");
         return ERR_INVALID_PARAMETER;
     }
-    TOOLKIT_LOG("TemplateManager: Downloading versions.yaml from remote: ", versions_url);
+    TOOLKIT_LOG("TemplateManager: Downloading templates catalog from remote: ", versions_url);
 
     HTTPRequest* http_request = memnew(HTTPRequest);
     http_request->set_name("TemplateManager_VersionsRequest");
@@ -354,15 +390,16 @@ Error TemplateManager::load_versions_from_remote() {
     }
     parent_node->add_child(http_request);
 
-    http_request->connect("request_completed", callable_mp(this, &TemplateManager::_on_versions_download_completed));
+    http_request->connect("request_completed", callable_mp(this, &TemplateManager::_on_versions_download_completed).bind(versions_url));
 
     Error err = http_request->request(versions_url);
     if (err != OK) {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to start versions.yaml download request.[/color]");
+        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to start templates catalog download request.[/color]");
         http_request->queue_free();
         return err;
     }
 
+    refresh_in_flight = true;
     return OK;
 }
 
@@ -560,14 +597,14 @@ Error TemplateManager::load_versions_from_remote_sync() {
     }
     TOOLKIT_LOG("TemplateManager: Synchronous versions request completed. response_code=", response_code, ", body_size=", response_body.size());
 
-    String yaml_content = response_body.get_string_from_utf8();
-    Error parse_err = parse_versions_yaml(yaml_content);
+    String catalog_content = response_body.get_string_from_utf8();
+    Error parse_err = parse_templates_catalog(catalog_content);
     if (parse_err != OK) {
         TOOLKIT_LOG("TemplateManager: Failed to parse remote versions synchronously. parse_err=", parse_err);
         return parse_err;
     }
 
-    TOOLKIT_LOG("TemplateManager: Remote versions parsed successfully. available_versions=", available_versions);
+    TOOLKIT_LOG("TemplateManager: Remote templates catalog parsed successfully. available_versions=", available_versions);
 
     return save_versions_to_local_cache();
 }
@@ -586,10 +623,10 @@ Error TemplateManager::load_versions_from_local_cache() {
         return ERR_FILE_CANT_READ;
     }
 
-    String yaml_content = file->get_as_text();
+    String catalog_content = file->get_as_text();
     file->close();
 
-    Error result = parse_versions_yaml(yaml_content);
+    Error result = parse_templates_catalog(catalog_content);
     if (result == OK) {
         TOOLKIT_LOG("TemplateManager: Loaded versions from local cache");
     }
@@ -598,17 +635,34 @@ Error TemplateManager::load_versions_from_local_cache() {
 
 Error TemplateManager::load_versions_from_embedded() {
 #ifdef EMBED_RESOURCES
-    // Try to find versions.yaml in embedded resources
+    // The JSON catalog is authoritative; YAML remains a compatibility fallback.
     for (int i = 0; toolkit::resources::embedded_resources[i].path != nullptr; i++) {
         const auto& resource = toolkit::resources::embedded_resources[i];
-        if (String(resource.path) == "resources/versions.yaml") {
-            String yaml_content = String::utf8((const char*)resource.data, resource.size);
-            return parse_versions_yaml(yaml_content);
+        if (String(resource.path) == "catalog/templates.json") {
+            String catalog_content = String::utf8((const char*)resource.data, resource.size);
+            return parse_templates_catalog(catalog_content);
         }
     }
 #endif
 
-    // Fallback: try to read from file system.
+    const char *catalog_paths[] = {
+        "res://catalog/templates.json",
+        "res://addons/godot-minigame/catalog/templates.json",
+        nullptr
+    };
+    for (int i = 0; catalog_paths[i] != nullptr; i++) {
+        Ref<FileAccess> file = FileAccess::open(String::utf8(catalog_paths[i]), FileAccess::READ);
+        if (file.is_valid()) {
+            String catalog_content = file->get_as_text();
+            file->close();
+            Error result = parse_templates_catalog(catalog_content);
+            if (result == OK) {
+                return OK;
+            }
+        }
+    }
+
+    // Legacy development builds may only contain the generated YAML projection.
     const char *versions_paths[] = {
         "res://resources/versions.yaml",
         "res://addons/godot-minigame/resources/versions.yaml",
@@ -732,6 +786,7 @@ Error TemplateManager::parse_versions_yaml(const String& yaml_content) {
     TOOLKIT_LOG("TemplateManager: Parsed YAML: ", parsed);
 
     versions_cache = parsed;
+    catalog_cache.clear();
     available_versions.clear();
 
     // Build available versions list
@@ -797,7 +852,94 @@ Error TemplateManager::parse_versions_yaml(const String& yaml_content) {
     }
 
     versions_loaded = true;
+    catalog_revision++;
     TOOLKIT_LOG("TemplateManager: Loaded ", available_versions.size(), " template versions");
+    return OK;
+}
+
+Error TemplateManager::parse_templates_catalog(const String& json_content) {
+    Variant root_variant = JSON::parse_string(json_content);
+    if (root_variant.get_type() != Variant::DICTIONARY) {
+        return ERR_PARSE_ERROR;
+    }
+
+    Dictionary root = root_variant;
+    if (int(root.get("schema_version", 0)) != 1) {
+        return ERR_INVALID_DATA;
+    }
+    Variant templates_variant = root.get("templates", Variant());
+    if (templates_variant.get_type() != Variant::ARRAY) {
+        return ERR_INVALID_DATA;
+    }
+
+    Dictionary parsed_versions;
+    Array parsed_available;
+    Array accepted_templates;
+    Array templates = templates_variant;
+    for (int i = 0; i < templates.size(); i++) {
+        if (templates[i].get_type() != Variant::DICTIONARY) {
+            return ERR_INVALID_DATA;
+        }
+        Dictionary entry = templates[i];
+        String status = String(entry.get("status", "")).strip_edges().to_lower();
+        String minimum_plugin = String(entry.get("minimum_plugin", "")).strip_edges();
+        if (status != "stable" || !_is_semver(minimum_plugin) ||
+                compare_version_numbers(minimum_plugin, TOOLKIT_PLUGIN_VERSION) > 0) {
+            continue;
+        }
+
+        String major = String(entry.get("godot_major", "")).strip_edges();
+        String version = String(entry.get("godot_version", "")).strip_edges();
+        String filename = String(entry.get("file", "")).strip_edges();
+        String release_tag = String(entry.get("tag", "")).strip_edges();
+        String sha256 = String(entry.get("sha256", "")).strip_edges().to_lower();
+        if (major.is_empty() || version.is_empty() || filename.is_empty() ||
+                !filename.ends_with(".tpz") || filename.get_file() != filename ||
+                release_tag.is_empty() || !_is_sha256(sha256)) {
+            return ERR_INVALID_DATA;
+        }
+
+        Dictionary normalized_entry;
+        normalized_entry["file"] = filename;
+        normalized_entry["tag"] = release_tag;
+        normalized_entry["sha256"] = sha256;
+        normalized_entry["minimum_plugin"] = minimum_plugin;
+        normalized_entry["status"] = status;
+
+        Dictionary major_versions;
+        if (parsed_versions.has(major)) {
+            major_versions = parsed_versions[major];
+        }
+        major_versions[version] = normalized_entry;
+        parsed_versions[major] = major_versions;
+
+        Dictionary version_info;
+        version_info["godot_major"] = major;
+        version_info["version"] = version;
+        version_info["filename"] = filename;
+        version_info["release_tag"] = release_tag;
+        version_info["sha256"] = sha256;
+        version_info["minimum_plugin"] = minimum_plugin;
+        version_info["is_embedded"] = is_template_embedded(filename);
+        parsed_available.append(version_info);
+        accepted_templates.append(entry.duplicate(true));
+    }
+
+    if (parsed_available.is_empty()) {
+        return ERR_INVALID_DATA;
+    }
+
+    Dictionary accepted_catalog;
+    accepted_catalog["schema_version"] = 1;
+    accepted_catalog["templates"] = accepted_templates;
+
+    // Commit only after the complete payload has passed validation.
+    versions_cache = parsed_versions;
+    available_versions = parsed_available;
+    catalog_cache = accepted_catalog;
+    versions_loaded = true;
+    catalog_revision++;
+    TOOLKIT_LOG("TemplateManager: Accepted ", available_versions.size(), " stable compatible catalog template(s)");
     return OK;
 }
 
@@ -816,6 +958,10 @@ Dictionary TemplateManager::get_versions_data() const {
     return versions_cache;
 }
 
+int64_t TemplateManager::get_catalog_revision() const {
+    return catalog_revision;
+}
+
 Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const String &fallback_release_tag) const {
     Dictionary normalized;
     normalized["filename"] = "";
@@ -830,6 +976,9 @@ Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const
         Dictionary dict_entry = entry;
         normalized["filename"] = String(dict_entry.get("file", dict_entry.get("filename", ""))).strip_edges();
         normalized["release_tag"] = String(dict_entry.get("tag", dict_entry.get("release_tag", fallback_release_tag))).strip_edges();
+        normalized["sha256"] = String(dict_entry.get("sha256", "")).strip_edges().to_lower();
+        normalized["minimum_plugin"] = String(dict_entry.get("minimum_plugin", "")).strip_edges();
+        normalized["status"] = String(dict_entry.get("status", "")).strip_edges();
     }
 
     return normalized;
@@ -847,6 +996,34 @@ String TemplateManager::find_release_tag_for_filename(const String &filename) co
         }
     }
     return "";
+}
+
+String TemplateManager::find_sha256_for_filename(const String &filename) const {
+    Array versions = get_available_versions();
+    for (int i = 0; i < versions.size(); i++) {
+        Dictionary version_info = versions[i];
+        if (String(version_info.get("filename", "")) == filename) {
+            return String(version_info.get("sha256", "")).strip_edges().to_lower();
+        }
+    }
+    return "";
+}
+
+bool TemplateManager::verify_template_file(const String &filename, const String &path) const {
+    String expected = find_sha256_for_filename(filename);
+    if (expected.is_empty()) {
+        return true;
+    }
+    if (!FileAccess::file_exists(path)) {
+        return false;
+    }
+    String actual = FileAccess::get_sha256(path).to_lower();
+    if (actual == expected) {
+        return true;
+    }
+    TOOLKIT_LOG_RICH("[color=red]TemplateManager: SHA-256 mismatch for ", filename,
+            ". expected=", expected, ", actual=", actual, "[/color]");
+    return false;
 }
 
 String TemplateManager::get_best_version_for_editor() const {
@@ -1073,7 +1250,14 @@ String TemplateManager::get_best_bundled_template_for_editor() const {
 
 bool TemplateManager::is_template_downloaded(const String& filename) const {
     String cache_path = get_download_cache_path(filename);
-    return FileAccess::file_exists(cache_path);
+    if (!FileAccess::file_exists(cache_path)) {
+        return false;
+    }
+    if (verify_template_file(filename, cache_path)) {
+        return true;
+    }
+    DirAccess::remove_absolute(cache_path);
+    return false;
 }
 
 String TemplateManager::get_template_path(const String& filename) const {
@@ -1090,7 +1274,7 @@ String TemplateManager::get_template_path(const String& filename) const {
 
     // Check downloaded cache
     String cache_path = get_download_cache_path(filename);
-    if (FileAccess::file_exists(cache_path)) {
+    if (is_template_downloaded(filename)) {
         return cache_path;
     }
 
@@ -1168,7 +1352,7 @@ Error TemplateManager::download_template_sync(const String& filename, const Stri
         return ERR_INVALID_PARAMETER;
     }
     String output_path = target_path.is_empty() ? get_download_cache_path(filename) : target_path;
-    return download_template_url_sync(filename, download_url, output_path);
+    return download_template_url_sync(filename, download_url, output_path, true);
 }
 
 Error TemplateManager::download_template_from_url_sync(const String& filename, const String& download_url, const String& target_path) {
@@ -1177,10 +1361,10 @@ Error TemplateManager::download_template_from_url_sync(const String& filename, c
         UtilityFunctions::push_warning("Custom template URL and output path cannot be empty.");
         return ERR_INVALID_PARAMETER;
     }
-    return download_template_url_sync(filename, normalized_url, target_path);
+    return download_template_url_sync(filename, normalized_url, target_path, false);
 }
 
-Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path) {
+Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path, bool verify_catalog_digest) {
     if (output_path.is_empty()) {
         UtilityFunctions::push_warning("Template output path is empty.");
         update_download_state(filename, "failed", 0.0f);
@@ -1188,9 +1372,12 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
         return ERR_FILE_CANT_WRITE;
     }
 
-    if (FileAccess::file_exists(output_path)) {
+    if (FileAccess::file_exists(output_path) && (!verify_catalog_digest || verify_template_file(filename, output_path))) {
         update_download_state(filename, "completed", 1.0f);
         return OK;
+    }
+    if (FileAccess::file_exists(output_path)) {
+        DirAccess::remove_absolute(output_path);
     }
 
     String cache_dir = output_path.get_base_dir();
@@ -1226,7 +1413,8 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
         return request_err;
     }
 
-    Ref<FileAccess> out = FileAccess::open(output_path, FileAccess::WRITE);
+    String write_path = verify_catalog_digest ? output_path + String(".download") : output_path;
+    Ref<FileAccess> out = FileAccess::open(write_path, FileAccess::WRITE);
     if (out.is_null()) {
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot open output file for write: ", output_path, "[/color]");
         UtilityFunctions::push_warning(String("Template output write failed: ") + output_path);
@@ -1237,6 +1425,24 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
 
     out->store_buffer(response_body);
     out->close();
+    if (verify_catalog_digest && !verify_template_file(filename, write_path)) {
+        DirAccess::remove_absolute(write_path);
+        update_download_state(filename, "failed", 0.0f);
+        emit_signal("template_download_finished", filename, false);
+        return ERR_FILE_CORRUPT;
+    }
+    if (verify_catalog_digest) {
+        if (FileAccess::file_exists(output_path)) {
+            DirAccess::remove_absolute(output_path);
+        }
+        Error rename_err = DirAccess::rename_absolute(write_path, output_path);
+        if (rename_err != OK) {
+            DirAccess::remove_absolute(write_path);
+            update_download_state(filename, "failed", 0.0f);
+            emit_signal("template_download_finished", filename, false);
+            return rename_err;
+        }
+    }
     update_download_state(filename, "completed", 1.0f);
     emit_signal("template_download_progress", filename, 1.0f);
     emit_signal("template_download_finished", filename, true);
@@ -1491,6 +1697,7 @@ Error TemplateManager::extract_embedded_template(const String& filename, const S
 
 void TemplateManager::clear_cache() {
     versions_cache.clear();
+    catalog_cache.clear();
     available_versions.clear();
     download_states.clear();
     versions_loaded = false;
@@ -1503,16 +1710,7 @@ Error TemplateManager::purge_distribution_cache() {
 }
 
 Error TemplateManager::refresh_versions() {
-    versions_cache.clear();
-    available_versions.clear();
-    versions_loaded = false;
-    Error remote_result = load_versions_from_remote();
-    if (remote_result != OK) {
-        if (load_versions_from_local_cache() != OK) {
-            return load_versions_from_embedded();
-        }
-    }
-    return remote_result;
+    return load_versions_from_remote();
 }
 
 void TemplateManager::set_distribution_provider(const String& provider) {
@@ -1662,7 +1860,7 @@ String TemplateManager::get_update_manifest_url() const {
 }
 
 String TemplateManager::get_distribution_asset_url(const String& asset_name) const {
-    if (asset_name == "versions.yaml") {
+    if (asset_name == "versions.yaml" || asset_name == "catalog/templates.json" || asset_name == "templates.json") {
         return build_versions_url();
     }
     return build_download_url(asset_name);
@@ -1677,28 +1875,30 @@ int TemplateManager::get_download_timeout() const {
 }
 
 String TemplateManager::build_versions_url() const {
+    String owner;
+    String repo;
     switch (distribution_provider) {
         case DistributionProvider::ATOMGIT_RELEASE:
-            return build_release_download_url(
-                    DistributionProvider::ATOMGIT_RELEASE,
-                    atomgit_repo_owner,
-                    atomgit_repo_name,
-                    atomgit_release_tag,
-                    "versions.yaml");
+            owner = atomgit_repo_owner.strip_edges();
+            repo = atomgit_repo_name.strip_edges();
+            if (owner.is_empty() || repo.is_empty()) {
+                return "";
+            }
+            return "https://raw.atomgit.com/" + owner + "/" + repo + "/raw/main/catalog/templates.json";
         case DistributionProvider::GITHUB_RELEASE:
-            return build_release_download_url(
-                    DistributionProvider::GITHUB_RELEASE,
-                    github_repo_owner,
-                    github_repo_name,
-                    github_release_tag,
-                    "versions.yaml");
+            owner = github_repo_owner.strip_edges();
+            repo = github_repo_name.strip_edges();
+            if (owner.is_empty() || repo.is_empty()) {
+                return "";
+            }
+            return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/main/catalog/templates.json";
         case DistributionProvider::GITEE_RELEASE:
-            return build_release_download_url(
-                    DistributionProvider::GITEE_RELEASE,
-                    gitee_repo_owner,
-                    gitee_repo_name,
-                    gitee_release_tag,
-                    "versions.yaml");
+            owner = gitee_repo_owner.strip_edges();
+            repo = gitee_repo_name.strip_edges();
+            if (owner.is_empty() || repo.is_empty()) {
+                return "";
+            }
+            return "https://gitee.com/" + owner + "/" + repo + "/raw/main/catalog/templates.json";
         default:
             return "";
     }
@@ -1773,7 +1973,7 @@ String TemplateManager::get_download_cache_path(const String& filename) const {
 }
 
 String TemplateManager::get_local_versions_cache_path() const {
-    return get_distribution_cache_root_dir().path_join("versions.yaml");
+    return get_distribution_cache_root_dir().path_join("templates-v1.json");
 }
 
 String TemplateManager::get_download_state_cache_path() const {
@@ -1872,7 +2072,7 @@ String TemplateManager::get_best_available_template_for_version(const String &ta
 }
 
 Error TemplateManager::save_versions_to_local_cache() {
-    if (!versions_loaded || versions_cache.is_empty()) {
+    if (!versions_loaded || catalog_cache.is_empty()) {
         return ERR_INVALID_DATA;
     }
 
@@ -1882,18 +2082,25 @@ Error TemplateManager::save_versions_to_local_cache() {
     String cache_dir = local_cache_path.get_base_dir();
     UserDataPath::create_directory_if_not_exists(cache_dir);
 
-    // Convert Dictionary to simple YAML format manually (since YAML::stringify doesn't exist)
-    String yaml_content = dictionary_to_simple_yaml(versions_cache);
-
-    Ref<FileAccess> file = FileAccess::open(local_cache_path, FileAccess::WRITE);
+    String temporary_path = local_cache_path + ".tmp";
+    Ref<FileAccess> file = FileAccess::open(temporary_path, FileAccess::WRITE);
     if (file.is_null()) {
         return ERR_FILE_CANT_WRITE;
     }
 
-    file->store_string(yaml_content);
+    file->store_string(JSON::stringify(catalog_cache, "  ") + "\n");
     file->close();
 
-    TOOLKIT_LOG("TemplateManager: Saved versions to local cache: ", local_cache_path);
+    if (FileAccess::file_exists(local_cache_path)) {
+        DirAccess::remove_absolute(local_cache_path);
+    }
+    Error rename_err = DirAccess::rename_absolute(temporary_path, local_cache_path);
+    if (rename_err != OK) {
+        DirAccess::remove_absolute(temporary_path);
+        return rename_err;
+    }
+
+    TOOLKIT_LOG("TemplateManager: Saved templates catalog to local cache: ", local_cache_path);
     return OK;
 }
 
@@ -2130,50 +2337,10 @@ Array TemplateManager::build_available_versions_from_cache() const {
     return rebuilt_versions;
 }
 
-// Simple YAML serialization helper
-String TemplateManager::dictionary_to_simple_yaml(const Dictionary& dict) const {
-    String yaml_content = "";
-
-    Array keys = dict.keys();
-    for (int i = 0; i < keys.size(); i++) {
-        Variant key_variant = keys[i];
-        String key = String(key_variant);
-        Variant value = dict[key_variant];
-
-        yaml_content += key + ":\n";
-
-        if (value.get_type() == Variant::DICTIONARY) {
-            Dictionary sub_dict = value;
-            Array sub_keys = sub_dict.keys();
-
-            for (int j = 0; j < sub_keys.size(); j++) {
-                Variant sub_key_variant = sub_keys[j];
-                String sub_key = String(sub_key_variant);
-                Variant sub_value_variant = sub_dict[sub_key_variant];
-
-                if (sub_value_variant.get_type() == Variant::DICTIONARY) {
-                    Dictionary nested_dict = sub_value_variant;
-                    yaml_content += "  " + sub_key + ":\n";
-                    Array nested_keys = nested_dict.keys();
-                    for (int k = 0; k < nested_keys.size(); k++) {
-                        Variant nested_key_variant = nested_keys[k];
-                        String nested_key = String(nested_key_variant);
-                        String nested_value = String(nested_dict[nested_key_variant]);
-                        yaml_content += "    " + nested_key + ": " + nested_value + "\n";
-                    }
-                } else {
-                    String sub_value = String(sub_value_variant);
-                    yaml_content += "  " + sub_key + ": " + sub_value + "\n";
-                }
-            }
-        }
-        yaml_content += "\n";
-    }
-
-    return yaml_content;
-}
-
 Error TemplateManager::initialize_template_system() {
+    if (initialization_complete) {
+        return versions_loaded ? OK : ERR_UNCONFIGURED;
+    }
     TOOLKIT_LOG("TemplateManager: Initializing template system...");
     load_distribution_preferences();
 
@@ -2188,6 +2355,17 @@ Error TemplateManager::initialize_template_system() {
         if (load_result != OK) {
             TOOLKIT_LOG_RICH("[color=yellow]Warning: No version data available[/color]");
             return load_result;
+        }
+    }
+
+    initialization_complete = true;
+
+    // Refresh once in the background. Failure leaves the cache/embedded catalog intact.
+    if (!remote_refresh_started && Engine::get_singleton()->is_editor_hint()) {
+        remote_refresh_started = true;
+        Error refresh_err = load_versions_from_remote();
+        if (refresh_err != OK && refresh_err != ERR_BUSY) {
+            TOOLKIT_LOG("TemplateManager: Startup catalog refresh could not be started: ", refresh_err);
         }
     }
 
@@ -2368,7 +2546,7 @@ void TemplateManager::load_distribution_preferences() {
         provider_value = String(editor_settings->get_project_metadata(
                 TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
                 TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
-                String("atomgit")));
+                String("github")));
     }
     String provider = provider_value;
     apply_distribution_provider(provider, false, false);
@@ -2531,6 +2709,7 @@ void TemplateManager::reload_active_distribution_cache(bool load_remote_versions
     load_download_states();
 
     versions_cache.clear();
+    catalog_cache.clear();
     available_versions.clear();
     versions_loaded = false;
 
@@ -2659,12 +2838,28 @@ void TemplateManager::_on_template_download_completed(int p_result, int p_respon
     // The HTTPRequest node is a child of the editor main screen, it will be freed automatically.
 
     if (p_result == HTTPRequest::RESULT_SUCCESS && p_response_code == 200) {
-        // Manually write the downloaded data to the file
-        Ref<FileAccess> file = FileAccess::open(output_path, FileAccess::WRITE);
+        String temporary_path = output_path + String(".download");
+        Ref<FileAccess> file = FileAccess::open(temporary_path, FileAccess::WRITE);
         if (file.is_valid()) {
             file->store_buffer(p_body);
             file->close();
 
+            if (!verify_template_file(filename, temporary_path)) {
+                DirAccess::remove_absolute(temporary_path);
+                update_download_state(filename, "failed", 0.0f);
+                emit_signal("template_download_finished", filename, false);
+                return;
+            }
+            if (FileAccess::file_exists(output_path)) {
+                DirAccess::remove_absolute(output_path);
+            }
+            Error rename_err = DirAccess::rename_absolute(temporary_path, output_path);
+            if (rename_err != OK) {
+                DirAccess::remove_absolute(temporary_path);
+                update_download_state(filename, "failed", 0.0f);
+                emit_signal("template_download_finished", filename, false);
+                return;
+            }
             update_download_state(filename, "completed", 1.0f);
             TOOLKIT_LOG_RICH("[color=green]TemplateManager: Downloaded file written successfully to: ", output_path, "[/color]");
             emit_signal("template_download_finished", filename, true);
@@ -2680,29 +2875,35 @@ void TemplateManager::_on_template_download_completed(int p_result, int p_respon
     }
 }
 
-void TemplateManager::_on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body) {
-    TOOLKIT_LOG("TemplateManager: versions.yaml download completed. Result: ", p_result, ", Response Code: ", p_response_code);
+void TemplateManager::_on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& request_url) {
+    refresh_in_flight = false;
+    TOOLKIT_LOG("TemplateManager: templates catalog download completed. Result: ", p_result, ", Response Code: ", p_response_code);
+
+    if (request_url != build_versions_url()) {
+        TOOLKIT_LOG("TemplateManager: Distribution changed during refresh; discarding stale response and refreshing the active source.");
+        Error restart_err = load_versions_from_remote();
+        if (restart_err != OK) {
+            emit_signal("versions_refresh_failed", restart_err);
+        }
+        return;
+    }
 
     // The HTTPRequest node is a child of the editor main screen, it will be freed automatically.
 
     if (p_result == HTTPRequest::RESULT_SUCCESS && p_response_code == 200) {
-        String yaml_content = p_body.get_string_from_utf8();
-        Error parse_err = parse_versions_yaml(yaml_content);
+        String catalog_content = p_body.get_string_from_utf8();
+        Error parse_err = parse_templates_catalog(catalog_content);
         if (parse_err == OK) {
-            TOOLKIT_LOG("TemplateManager: Successfully parsed remote versions.yaml");
+            TOOLKIT_LOG("TemplateManager: Successfully parsed remote templates catalog");
             save_versions_to_local_cache();
             emit_signal("versions_loaded");
         } else {
-            TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to parse remote versions.yaml[/color]");
-            // Fallback to embedded if remote parsing fails
-            load_versions_from_embedded();
+            TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to parse remote templates catalog; retaining current catalog.[/color]");
+            emit_signal("versions_refresh_failed", parse_err);
         }
     } else {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to download versions.yaml, falling back to local/embedded.[/color]");
-        // Fallback to local cache or embedded
-        if (load_versions_from_local_cache() != OK) {
-            load_versions_from_embedded();
-        }
+        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to download templates catalog; retaining current catalog.[/color]");
+        emit_signal("versions_refresh_failed", ERR_CANT_CONNECT);
     }
 }
 

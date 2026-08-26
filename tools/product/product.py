@@ -136,14 +136,20 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
 
     if update_catalog.get("schema_version") != 1:
         errors.append("catalog/plugin-stable.json schema_version must be 1")
-    if update_catalog.get("version") != version:
-        errors.append("Plugin update catalog version must match product/plugin.json")
+    stable_version = str(update_catalog.get("version", ""))
+    try:
+        stable_version_key = parse_semver(stable_version, "catalog/plugin-stable.json version")
+    except ProductError as exc:
+        errors.append(str(exc))
+        stable_version_key = None
+    if stable_version_key is not None and stable_version_key > parse_semver(version, "product/plugin.json version"):
+        errors.append("Plugin stable catalog version cannot be newer than product/plugin.json")
 
     published = update_catalog.get("published")
     if not isinstance(published, bool):
         errors.append("Plugin update catalog published must be boolean")
     if published:
-        expected_tag = f"plugin-v{version}"
+        expected_tag = f"plugin-v{stable_version}"
         if update_catalog.get("tag") != expected_tag:
             errors.append(f"Published plugin tag must be {expected_tag}")
         platforms = update_catalog.get("platforms")
@@ -162,6 +168,16 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
                     errors.append(f"Plugin platform {platform} asset must be a zip")
     elif update_catalog.get("tag") or update_catalog.get("platforms"):
         errors.append("Unpublished plugin catalog must not expose a tag or platform assets")
+
+    runtime_source = root / "src/templates/template_manager.cpp"
+    try:
+        runtime_text = runtime_source.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"Cannot read {runtime_source}: {exc}")
+    else:
+        runtime_match = re.search(r'TOOLKIT_PLUGIN_VERSION\s*=\s*"([^"]+)"', runtime_text)
+        if not runtime_match or runtime_match.group(1) != version:
+            errors.append("Template runtime plugin version must match product/plugin.json")
 
     return errors
 
