@@ -25,6 +25,7 @@ SettingsPanel::~SettingsPanel() {
 
 void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("refresh_distribution_info"), &SettingsPanel::refresh_distribution_info);
+	ClassDB::bind_method(D_METHOD("refresh_template_cache_info"), &SettingsPanel::refresh_template_cache_info);
 	ClassDB::bind_method(D_METHOD("_on_check_plugin_update_pressed"), &SettingsPanel::_on_check_plugin_update_pressed);
 	ClassDB::bind_method(D_METHOD("_on_download_plugin_update_pressed"), &SettingsPanel::_on_download_plugin_update_pressed);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_state_changed", "state"), &SettingsPanel::_on_plugin_update_state_changed);
@@ -36,6 +37,9 @@ void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_reset_config_pressed"), &SettingsPanel::_on_reset_config_pressed);
 	ClassDB::bind_method(D_METHOD("_on_refresh_versions_pressed"), &SettingsPanel::_on_refresh_versions_pressed);
 	ClassDB::bind_method(D_METHOD("_on_versions_loaded"), &SettingsPanel::_on_versions_loaded);
+	ClassDB::bind_method(D_METHOD("_on_prefetch_template_pressed"), &SettingsPanel::_on_prefetch_template_pressed);
+	ClassDB::bind_method(D_METHOD("_on_template_download_progress", "filename", "progress"), &SettingsPanel::_on_template_download_progress);
+	ClassDB::bind_method(D_METHOD("_on_template_cache_download_finished", "filename", "success"), &SettingsPanel::_on_template_cache_download_finished);
 }
 
 void SettingsPanel::_ready() {
@@ -45,6 +49,12 @@ void SettingsPanel::_ready() {
 		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
 		if (template_manager && !template_manager->is_connected("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded))) {
 			template_manager->connect("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded));
+		}
+		if (template_manager && !template_manager->is_connected("template_download_progress", callable_mp(this, &SettingsPanel::_on_template_download_progress))) {
+			template_manager->connect("template_download_progress", callable_mp(this, &SettingsPanel::_on_template_download_progress));
+		}
+		if (template_manager && !template_manager->is_connected("template_download_finished", callable_mp(this, &SettingsPanel::_on_template_cache_download_finished))) {
+			template_manager->connect("template_download_finished", callable_mp(this, &SettingsPanel::_on_template_cache_download_finished));
 		}
 	}
 	UpdateManager *update_manager = UpdateManager::get_singleton();
@@ -57,6 +67,7 @@ void SettingsPanel::_ready() {
 	}
 
 	call_deferred("refresh_distribution_info");
+	call_deferred("refresh_template_cache_info");
 }
 
 void SettingsPanel::create_interface() {
@@ -173,6 +184,34 @@ void SettingsPanel::create_interface() {
 	action_status_label->set_text(String::utf8("配置已就绪"));
 	action_status_label->set_custom_minimum_size(Vector2(0, 30));
 	main_vbox->add_child(action_status_label);
+
+	Control *template_cache_gap = memnew(Control);
+	template_cache_gap->set_custom_minimum_size(Vector2(0, 5));
+	main_vbox->add_child(template_cache_gap);
+
+	template_cache_row = memnew(HBoxContainer);
+	template_cache_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(template_cache_row);
+
+	template_cache_label = memnew(Label);
+	template_cache_label->set_text(String::utf8("模板缓存："));
+	template_cache_label->set_custom_minimum_size(Vector2(0, 30));
+	template_cache_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	template_cache_row->add_child(template_cache_label);
+
+	prefetch_template_button = memnew(Button);
+	prefetch_template_button->set_text(String::utf8("预下载当前版本模板"));
+	prefetch_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_prefetch_template_pressed));
+	template_cache_row->add_child(prefetch_template_button);
+
+	template_cache_progress = memnew(ProgressBar);
+	template_cache_progress->set_custom_minimum_size(Vector2(0, 6));
+	template_cache_progress->set_min(0.0);
+	template_cache_progress->set_max(1.0);
+	template_cache_progress->set_value(0.0);
+	template_cache_progress->set_show_percentage(false);
+	template_cache_progress->set_visible(false);
+	main_vbox->add_child(template_cache_progress);
 
 	Control *spacer = memnew(Control);
 	spacer->set_v_size_flags(Control::SIZE_EXPAND_FILL);
@@ -371,6 +410,101 @@ void SettingsPanel::_on_versions_loaded() {
 		action_status_label->set_text(String::utf8("远端索引刷新完成"));
 	}
 	refresh_distribution_info();
+	refresh_template_cache_info();
+}
+
+void SettingsPanel::refresh_template_cache_info() {
+	String target;
+	bool prefetch_active = false;
+
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		if (template_manager) {
+			if (template_manager->has_method("get_prefetch_target_filename")) {
+				target = template_manager->call("get_prefetch_target_filename");
+			}
+			if (template_manager->has_method("is_prefetch_active")) {
+				prefetch_active = bool(template_manager->call("is_prefetch_active"));
+			}
+			if (!target.is_empty() && template_manager->has_method("get_download_status_text")) {
+				String status_text = template_manager->call("get_download_status_text", target);
+				if (template_cache_label) {
+					template_cache_label->set_text(
+							String::utf8("模板缓存：") + target + String::utf8("（") + status_text + String::utf8("）"));
+				}
+			}
+		}
+	}
+
+	if (target.is_empty() && template_cache_label) {
+		template_cache_label->set_text(String::utf8("模板缓存：暂无匹配版本，请先配置分发源并刷新索引"));
+	}
+	if (prefetch_template_button) {
+		prefetch_template_button->set_disabled(prefetch_active);
+	}
+	if (template_cache_progress) {
+		template_cache_progress->set_visible(prefetch_active);
+	}
+}
+
+void SettingsPanel::_on_prefetch_template_pressed() {
+	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	if (!template_manager || !template_manager->has_method("prefetch_current_template_async")) {
+		return;
+	}
+
+	Variant result = template_manager->call("prefetch_current_template_async");
+	int error_code = ERR_UNCONFIGURED;
+	if (result.get_type() == Variant::INT) {
+		error_code = int(result);
+	}
+
+	if (action_status_label) {
+		if (error_code == OK) {
+			action_status_label->set_text(String::utf8("模板后台预下载已启动"));
+		} else if (error_code == ERR_BUSY) {
+			action_status_label->set_text(String::utf8("已有下载任务在进行"));
+		} else {
+			action_status_label->set_text(String::utf8("预下载启动失败，错误码: ") + String::num_int64(error_code));
+		}
+	}
+	refresh_template_cache_info();
+}
+
+void SettingsPanel::_on_template_download_progress(const String &filename, float progress) {
+	if (!template_cache_progress || !template_cache_progress->is_visible()) {
+		return;
+	}
+	template_cache_progress->set_value(progress);
+	if (template_cache_label && Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		if (template_manager && template_manager->has_method("get_download_status_text") && !filename.is_empty()
+				&& filename != String("__prefetch__")) {
+			String status_text = template_manager->call("get_download_status_text", filename);
+			template_cache_label->set_text(
+					String::utf8("模板缓存：") + filename + String::utf8("（") + status_text + String::utf8("）"));
+		}
+	}
+}
+
+void SettingsPanel::_on_template_cache_download_finished(const String &filename, bool success) {
+	if (template_cache_progress) {
+		template_cache_progress->set_visible(false);
+		template_cache_progress->set_value(0.0);
+	}
+	if (action_status_label) {
+		if (success) {
+			action_status_label->set_text(String::utf8("模板预下载完成，导出时将直接使用本地缓存"));
+		} else if (filename == String("__prefetch__")) {
+			action_status_label->set_text(String::utf8("模板预下载失败：没有可用的模板版本"));
+		} else {
+			action_status_label->set_text(String::utf8("模板预下载失败，请检查分发源配置或网络后重试"));
+		}
+	}
+	refresh_template_cache_info();
 }
 
 } // namespace editor

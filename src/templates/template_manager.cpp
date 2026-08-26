@@ -241,6 +241,7 @@ TemplateManager::TemplateManager() {
 }
 
 TemplateManager::~TemplateManager() {
+    _join_prefetch_thread();
     if (singleton == this) {
         singleton = nullptr;
     }
@@ -258,6 +259,10 @@ void TemplateManager::_bind_methods() {
             &TemplateManager::resolve_template_filename_for_version,
             DEFVAL(""));
     ClassDB::bind_method(D_METHOD("download_template", "filename", "target_path"), &TemplateManager::download_template, DEFVAL(""));
+    ClassDB::bind_method(D_METHOD("get_prefetch_target_filename"), &TemplateManager::get_prefetch_target_filename);
+    ClassDB::bind_method(D_METHOD("prefetch_current_template_async"), &TemplateManager::prefetch_current_template_async);
+    ClassDB::bind_method(D_METHOD("is_prefetch_active"), &TemplateManager::is_prefetch_active);
+    ClassDB::bind_method(D_METHOD("get_download_status_text", "filename"), &TemplateManager::get_download_status_text);
     ClassDB::bind_method(D_METHOD("extract_template", "template_path", "output_path"), &TemplateManager::extract_template);
     ClassDB::bind_method(D_METHOD("get_current_godot_version"), &TemplateManager::get_current_godot_version);
     ClassDB::bind_method(D_METHOD("get_godot_major_version"), &TemplateManager::get_godot_major_version);
@@ -366,7 +371,7 @@ Error TemplateManager::load_versions_from_remote() {
     return OK;
 }
 
-Error TemplateManager::http_get_sync_follow_redirects(const String &url, PackedByteArray &r_body, int &r_response_code, Dictionary *r_response_headers) const {
+Error TemplateManager::http_get_sync_follow_redirects(const String &url, PackedByteArray &r_body, int &r_response_code, Dictionary *r_response_headers, const std::function<void(int64_t downloaded, int64_t total)> &progress_callback) const {
     String current_url = url.strip_edges();
     if (current_url.is_empty()) {
         r_response_code = 0;
@@ -502,6 +507,9 @@ Error TemplateManager::http_get_sync_follow_redirects(const String &url, PackedB
                 }
                 downloaded += chunk.size();
                 body_idle_deadline_ms = Time::get_singleton()->get_ticks_msec() + uint64_t(download_timeout) * 1000;
+                if (progress_callback) {
+                    progress_callback(downloaded, total);
+                }
             }
 
             HTTPClient::Status status = client->get_status();
@@ -1210,11 +1218,58 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
     update_download_state(filename, "downloading", 0.0f);
     emit_signal("template_download_progress", filename, 0.0f);
 
+    // 唯一的线程外调用方是预下载工作线程；据此选择直发或 deferred 信号。
+    const bool on_main_thread = !prefetch_running;
+    int64_t last_emit_ticks = 0;
+    float last_emit_fraction = -1.0f;
+    auto emit_progress = [&](float fraction) {
+        if (on_main_thread) {
+            emit_signal("template_download_progress", filename, fraction);
+        } else {
+            call_deferred("emit_signal", "template_download_progress", filename, fraction);
+        }
+    };
+    auto report_progress = [&](int64_t downloaded, int64_t total) {
+        String note;
+        float fraction = 0.0f;
+        if (total > 0) {
+            fraction = float((double)downloaded / (double)total);
+            if (fraction > 1.0f) {
+                fraction = 1.0f;
+            }
+        } else {
+            note = String::num_int64(downloaded / (1024 * 1024)) + " MiB";
+        }
+
+        int64_t now = Time::get_singleton()->get_ticks_msec();
+        bool significant = fraction - last_emit_fraction >= 0.01f || note != String::utf8("");
+        bool enough_time = now - last_emit_ticks >= 100;
+        if (!significant && !enough_time) {
+            return;
+        }
+        last_emit_ticks = now;
+        last_emit_fraction = fraction;
+        update_download_state(filename, "downloading", fraction, note);
+        emit_progress(fraction);
+    };
+    auto emit_finished = [&](bool success) {
+        if (on_main_thread) {
+            emit_signal("template_download_finished", filename, success);
+        } else {
+            call_deferred("emit_signal", "template_download_finished", filename, success);
+        }
+    };
+
     PackedByteArray response_body;
     int response_code = 0;
     Error request_err = ERR_CANT_CONNECT;
     for (int attempt = 0; attempt < 5; attempt++) {
-        request_err = http_get_sync_follow_redirects(download_url, response_body, response_code);
+        if (attempt > 0) {
+            update_download_state(
+                    filename, "downloading", last_emit_fraction < 0.0f ? 0.0f : last_emit_fraction,
+                    String::utf8("第 ") + String::num_int64(attempt + 1) + String::utf8("/5 次重试"));
+        }
+        request_err = http_get_sync_follow_redirects(download_url, response_body, response_code, nullptr, report_progress);
         if (request_err == OK || request_err == ERR_FILE_NOT_FOUND || request_err == ERR_INVALID_PARAMETER) {
             break;
         }
@@ -1222,7 +1277,7 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
     }
     if (request_err != OK) {
         update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
+        emit_finished(false);
         return request_err;
     }
 
@@ -1231,21 +1286,129 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot open output file for write: ", output_path, "[/color]");
         UtilityFunctions::push_warning(String("Template output write failed: ") + output_path);
         update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
+        emit_finished(false);
         return ERR_FILE_CANT_WRITE;
     }
 
     out->store_buffer(response_body);
     out->close();
     update_download_state(filename, "completed", 1.0f);
-    emit_signal("template_download_progress", filename, 1.0f);
-    emit_signal("template_download_finished", filename, true);
+    emit_progress(1.0f);
+    emit_finished(true);
     return OK;
 }
 
 Error TemplateManager::download_template_async(const String& filename, const String& target_path) {
-    // TODO: Implement async download
-    return download_template(filename, target_path);
+    // Manual-trigger background download: runs the blocking pipeline on a worker
+    // thread so the editor main thread never stalls. Only cache-target downloads
+    // are supported here; a custom target path keeps the legacy blocking path.
+    if (!target_path.is_empty()) {
+        return download_template_sync(filename, target_path);
+    }
+    if (is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    _join_prefetch_thread();
+    prefetch_pinned_filename = filename.strip_edges();
+    prefetch_running = true;
+    prefetch_thread = memnew(Thread);
+    prefetch_thread->start(callable_mp(this, &TemplateManager::_prefetch_worker));
+    return OK;
+}
+
+String TemplateManager::get_prefetch_target_filename() const {
+    if (!versions_loaded || available_versions.is_empty()) {
+        return "";
+    }
+    return get_best_version_for_editor();
+}
+
+Error TemplateManager::prefetch_current_template_async() {
+    return download_template_async("", "");
+}
+
+bool TemplateManager::is_prefetch_active() const {
+    return prefetch_running || (prefetch_thread != nullptr && prefetch_thread->is_alive());
+}
+
+void TemplateManager::_join_prefetch_thread() {
+    if (prefetch_thread == nullptr) {
+        return;
+    }
+    if (prefetch_thread->is_alive()) {
+        prefetch_thread->wait_to_finish();
+    }
+    memdelete(prefetch_thread);
+    prefetch_thread = nullptr;
+}
+
+void TemplateManager::_prefetch_worker() {
+    String filename = prefetch_pinned_filename;
+    prefetch_pinned_filename = String();
+
+    if (filename.is_empty()) {
+        filename = get_prefetch_target_filename();
+    }
+    if (filename.is_empty()) {
+        // Worker thread is the one place allowed to refresh the remote index.
+        load_versions_from_remote_sync();
+        filename = get_prefetch_target_filename();
+    }
+    if (filename.is_empty()) {
+        update_download_state("__prefetch__", "failed", 0.0f,
+                String::utf8("没有可用的模板版本，请先在上方配置并刷新分发源"));
+        call_deferred("emit_signal", "template_download_finished", "__prefetch__", false);
+        prefetch_running = false;
+        return;
+    }
+
+    if (is_template_bundled(filename) || is_template_embedded(filename)) {
+        update_download_state(filename, "completed", 1.0f);
+        call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
+        call_deferred("emit_signal", "template_download_finished", filename, true);
+        prefetch_running = false;
+        return;
+    }
+    if (is_template_downloaded(filename)) {
+        update_download_state(filename, "completed", 1.0f);
+        call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
+        call_deferred("emit_signal", "template_download_finished", filename, true);
+        prefetch_running = false;
+        return;
+    }
+
+    download_template_sync(filename, "");
+    prefetch_running = false;
+}
+
+String TemplateManager::get_download_status_text(const String& filename) const {
+    Dictionary info = download_states.get(filename, Dictionary());
+    if (info.is_empty()) {
+        return String::utf8("未下载");
+    }
+    String status = info.get("status", "");
+    float progress = info.get("progress", 0.0f);
+    String note = info.get("note", "");
+
+    if (status == String("completed")) {
+        return String::utf8("已缓存");
+    }
+    if (status == String("downloading")) {
+        if (!note.is_empty() && note.ends_with(String("MiB"))) {
+            return String::utf8("下载中，已下载 ") + note;
+        }
+        if (!note.is_empty()) {
+            return String::utf8("下载中（") + note + String::utf8("）");
+        }
+        return String::utf8("下载中 ") + String::num_int64(int64_t(progress * 100.0f)) + "%";
+    }
+    if (status == String("failed")) {
+        if (!note.is_empty()) {
+            return String::utf8("下载失败（") + note + String::utf8("）");
+        }
+        return String::utf8("下载失败");
+    }
+    return String::utf8("未下载");
 }
 
 bool TemplateManager::is_downloading(const String& filename) const {
@@ -1816,11 +1979,14 @@ void TemplateManager::save_download_states() const {
     file->close();
 }
 
-void TemplateManager::update_download_state(const String& filename, const String& state, float progress) {
+void TemplateManager::update_download_state(const String& filename, const String& state, float progress, const String& note) {
     Dictionary download_info;
     download_info["status"] = state;
     download_info["progress"] = progress;
     download_info["timestamp"] = Time::get_singleton()->get_unix_time_from_system();
+    if (!note.is_empty()) {
+        download_info["note"] = note;
+    }
 
     download_states[filename] = download_info;
     save_download_states();
