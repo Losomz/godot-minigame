@@ -3,24 +3,24 @@
   "product": "godot-minigame",
   "channel": "stable",
   "published": true,
-  "version": "1.0.6",
-  "tag": "plugin-v1.0.6",
+  "version": "1.0.7",
+  "tag": "plugin-v1.0.7",
   "changelog": "Installable all-platform Godot editor plugin.",
   "platforms": {
     "windows-x86_64": {
-      "asset": "godot-minigame-plugin-1.0.6.zip",
-      "url": "https://github.com/Losomz/godot-minigame/releases/download/plugin-v1.0.6/godot-minigame-plugin-1.0.6.zip",
-      "sha256": "e0cf92ff438b6cc969c5c82656c4a9e67f30ffb76dca0cce7c986a9c95e77576"
+      "asset": "godot-minigame-plugin-1.0.7.zip",
+      "url": "https://github.com/Losomz/godot-minigame/releases/download/plugin-v1.0.7/godot-minigame-plugin-1.0.7.zip",
+      "sha256": "f7fa06cb3e31064063030eb3ed017c2657f27e720aeaf45c3a71c2d0ba627169"
     },
     "linux-x86_64": {
-      "asset": "godot-minigame-plugin-1.0.6.zip",
-      "url": "https://github.com/Losomz/godot-minigame/releases/download/plugin-v1.0.6/godot-minigame-plugin-1.0.6.zip",
-      "sha256": "e0cf92ff438b6cc969c5c82656c4a9e67f30ffb76dca0cce7c986a9c95e77576"
+      "asset": "godot-minigame-plugin-1.0.7.zip",
+      "url": "https://github.com/Losomz/godot-minigame/releases/download/plugin-v1.0.7/godot-minigame-plugin-1.0.7.zip",
+      "sha256": "f7fa06cb3e31064063030eb3ed017c2657f27e720aeaf45c3a71c2d0ba627169"
     },
     "macos-universal": {
-      "asset": "godot-minigame-plugin-1.0.6.zip",
-      "url": "https://github.com/Losomz/godot-minigame/releases/download/plugin-v1.0.6/godot-minigame-plugin-1.0.6.zip",
-      "sha256": "e0cf92ff438b6cc969c5c82656c4a9e67f30ffb76dca0cce7c986a9c95e77576"
+      "asset": "godot-minigame-plugin-1.0.7.zip",
+      "url": "https://github.com/Losomz/godot-minigame/releases/download/plugin-v1.0.7/godot-minigame-plugin-1.0.7.zip",
+      "sha256": "f7fa06cb3e31064063030eb3ed017c2657f27e720aeaf45c3a71c2d0ba627169"
     }
   }
 }
