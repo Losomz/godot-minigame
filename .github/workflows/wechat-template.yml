@@ -34,6 +34,11 @@ on:
         required: false
         default: ""
         type: string
+      include_ad:
+        description: "构建: 融合微信广告组件(adapter/wechat_ad),产物为 -ad 变体;默认开启,仅明确需要无广告模板时改为 false"
+        required: false
+        default: true
+        type: boolean
       release_tag:
         description: "提升: exact <version>-<variant>-rN Release tag to promote, for example 4.5.2-glx-2d-r1"
         required: false
@@ -243,9 +248,12 @@ jobs:
           python "$emsdk\emsdk.py" activate $env:EMSCRIPTEN_VERSION
           if ($LASTEXITCODE -ne 0) { throw "emsdk activate failed" }
 
-          & "$env:GITHUB_WORKSPACE\ci\build_wechat_glx.ps1" `
-              -EmsdkPath $emsdk `
-              -Revision ([int]"${{ inputs.revision }}")
+          $buildScript = "$env:GITHUB_WORKSPACE\ci\build_wechat_glx.ps1"
+          if ("${{ inputs.include_ad }}" -eq "false") {
+              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}")
+          } else {
+              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Ad
+          }
           if ($LASTEXITCODE -ne 0) { throw "WeChat GLX build failed" }
 
       - name: Verify artifact identity
@@ -363,6 +371,7 @@ jobs:
           SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
           SOURCE_REF: ${{ inputs.source_ref }}
           TPZ_SHA256: ${{ needs.build.outputs.tpz_sha256 }}
+          INCLUDE_AD: ${{ inputs.include_ad }}
         shell: bash
         run: |
           set -euo pipefail
@@ -375,12 +384,18 @@ jobs:
               exit 1
           fi
 
+          if [ "${INCLUDE_AD}" = "true" ]; then
+              ad_note='- Ad layer: merged adapter/wechat_ad component'
+          else
+              ad_note='- Ad layer: not included'
+          fi
           notes="$(printf '%s\n' \
             "Reproducible WeChat minigame template ${RELEASE_TAG} candidate." \
             '' \
             "- Source branch: ${SOURCE_REF}" \
             "- Source commit: ${SOURCE_COMMIT}" \
             "- Artifact: ${ARTIFACT_STEM}.tpz" \
+            "${ad_note}" \
             "- TPZ SHA-256: ${TPZ_SHA256}" \
             '- Validation: build/profile/WASM ABI/Brotli/TPZ gates passed' \
             '' \

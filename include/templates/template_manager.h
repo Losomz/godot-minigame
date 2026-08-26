@@ -4,11 +4,14 @@
 #include <godot_cpp/classes/http_request.hpp>
 #include <godot_cpp/classes/http_client.hpp>
 #include <godot_cpp/classes/timer.hpp>
+#include <godot_cpp/classes/thread.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/core/class_db.hpp>
+
+#include <functional>
 
 using namespace godot;
 
@@ -109,6 +112,12 @@ public:
     bool is_downloading(const String& filename) const;
     float get_download_progress(const String& filename) const;
 
+    // Editor-side prefetch (manual trigger, runs on a worker thread)
+    String get_prefetch_target_filename() const;
+    Error prefetch_current_template_async();
+    bool is_prefetch_active() const;
+    String get_download_status_text(const String& filename) const;
+
     // Utility functions
     String get_current_godot_version() const;
     String get_godot_major_version() const;
@@ -146,6 +155,11 @@ private:
     Dictionary download_states;
     int download_timeout = 30;
 
+    // Prefetch worker (manual trigger from the settings panel)
+    Thread* prefetch_thread = nullptr;
+    bool prefetch_running = false;
+    String prefetch_pinned_filename;
+
     // HTTP download infrastructure (no longer needed)
     // HTTPClient *http_client = nullptr;
     // Timer *polling_timer = nullptr;
@@ -174,7 +188,7 @@ private:
     void reset_distribution_preferences();
     void reload_active_distribution_cache(bool load_remote_versions);
 
-    void update_download_state(const String& filename, const String& state, float progress = 0.0f);
+    void update_download_state(const String& filename, const String& state, float progress = 0.0f, const String& note = "");
 
     // HTTP download methods (no longer needed)
     // void initialize_http_components();
@@ -187,7 +201,7 @@ private:
     // New helper methods
     bool is_template_available_anywhere(const String& filename) const;
     Error save_versions_to_local_cache();
-    Error http_get_sync_follow_redirects(const String& url, PackedByteArray& r_body, int& r_response_code, Dictionary* r_response_headers = nullptr) const;
+    Error http_get_sync_follow_redirects(const String& url, PackedByteArray& r_body, int& r_response_code, Dictionary* r_response_headers = nullptr, const std::function<void(int64_t downloaded, int64_t total)>& progress_callback = {}) const;
     Dictionary normalize_template_entry(const Variant& entry, const String& fallback_release_tag = "") const;
     String find_release_tag_for_filename(const String& filename) const;
     String find_sha256_for_filename(const String& filename) const;
@@ -201,6 +215,10 @@ private:
     // Signal handlers
     void _on_template_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& filename, const String& output_path);
     void _on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& request_url);
+
+    // Prefetch worker entry (runs off the main thread)
+    void _prefetch_worker();
+    void _join_prefetch_thread();
 };
 
 } // namespace templates

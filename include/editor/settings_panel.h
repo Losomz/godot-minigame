@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/button.hpp>
 #include <godot_cpp/classes/h_box_container.hpp>
 #include <godot_cpp/classes/line_edit.hpp>
+#include <godot_cpp/classes/progress_bar.hpp>
 #include <godot_cpp/classes/v_box_container.hpp>
 #include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/classes/option_button.hpp>
@@ -37,8 +38,13 @@ private:
 	godot::Button *reset_config_button = nullptr;
 	godot::Button *refresh_versions_button = nullptr;
 	godot::Label *action_status_label = nullptr;
+	godot::HBoxContainer *template_cache_row = nullptr;
+	godot::Label *template_cache_label = nullptr;
+	godot::Button *prefetch_template_button = nullptr;
+	godot::ProgressBar *template_cache_progress = nullptr;
 
 	void refresh_distribution_info();
+	void refresh_template_cache_info();
 	void _on_check_plugin_update_pressed();
 	void _on_download_plugin_update_pressed();
 	void _on_plugin_update_state_changed(int state);
@@ -52,6 +58,9 @@ private:
 	void _on_refresh_versions_pressed();
 	void _on_versions_loaded();
 	void _on_versions_refresh_failed(int error_code);
+	void _on_prefetch_template_pressed();
+	void _on_template_download_progress(const godot::String &filename, float progress);
+	void _on_template_cache_download_finished(const godot::String &filename, bool success);
 
 protected:
 	static void _bind_methods();

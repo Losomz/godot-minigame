@@ -586,7 +586,7 @@ TypedArray<Dictionary> WeChatExportPlatform::_get_export_options() const {
     Dictionary template_version;
     template_version["name"] = String::utf8("模板/模板版本");
     template_version["type"] = Variant::STRING;
-    template_version["hint"] = PROPERTY_HINT_ENUM_SUGGESTION;
+    template_version["hint"] = PROPERTY_HINT_ENUM;
     template_version["hint_string"] = template_versions;
     template_version["default_value"] = String::utf8("自动（推荐）");
     template_version["usage"] = basic_usage;
@@ -828,6 +828,8 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
         bool automatic_version = selected_version.is_empty() ||
                 selected_version == String::utf8("自动") ||
                 selected_version == String::utf8("自动（推荐）");
+        // 模板获取已统一为"设置面板手动预下载"，导出阶段一律本地化。旧预设
+        // (1.0.4 及之前)只存"模板/模板来源"，此处映射到策略语义仅用于日志兼容。
         String template_strategy = String(p_preset->get(String::utf8("模板/模板获取策略"))).strip_edges();
         String legacy_template_source = String(p_preset->get(String::utf8("模板/模板来源"))).strip_edges();
         if ((template_strategy.is_empty() || template_strategy == String::utf8("自动下载")) && !legacy_template_source.is_empty()) {
@@ -840,13 +842,8 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
         if (template_strategy.is_empty()) {
             template_strategy = String::utf8("自动下载");
         }
-        bool local_only = template_strategy == String::utf8("仅使用本地模板");
         String custom_template_url = String(p_preset->get(String::utf8("模板/自定义模板链接"))).strip_edges();
-        if (local_only && !custom_template_url.is_empty()) {
-            UtilityFunctions::push_warning("Custom template URL cannot be used in local-only template mode.");
-            return ERR_INVALID_PARAMETER;
-        }
-        _product_log("Template source: " + (custom_template_url.is_empty() ? _format_release_source(tm) : custom_template_url) + ", editor " + tm->get_current_godot_version());
+        _product_log("Template strategy: " + template_strategy + ", source: " + (custom_template_url.is_empty() ? _format_release_source(tm) : custom_template_url) + ", editor " + tm->get_current_godot_version());
         Error init_err = tm->initialize_template_system();
         if (init_err != OK) {
             String msg = "Template system init failed: " + _describe_export_error(init_err) + " (" + String::num_int64(init_err) + ")";
@@ -886,9 +883,6 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
                     best_template_ref = tm->get_template_path(filename);
                 }
             }
-            if (local_only && best_template_ref.begins_with("remote://")) {
-                best_template_ref = "";
-            }
         }
 
         if (best_template_ref.is_empty()) {
@@ -898,30 +892,17 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
                     + " from " + _format_release_source(tm)
                     + ".";
             UtilityFunctions::push_warning(detailed_warning);
+            UtilityFunctions::push_warning(String::utf8("可在插件设置面板点击「预下载当前版本模板」后重试导出。"));
             return ERR_FILE_NOT_FOUND;
         }
 
         if (best_template_ref.begins_with("remote://")) {
             String filename = best_template_ref.replace("remote://", "");
-            _product_log("Selected template: " + filename + " (download)");
-
-            active_download_filename = filename;
-            _set_export_progress(16.0, String::utf8("模板缺失，准备下载..."));
-            Error download_err = tm->download_template_sync(filename, "");
-            active_download_filename = "__export__";
-
-            if (download_err != OK) {
-                String msg = "Template download failed: " + _describe_export_error(download_err) + " (" + String::num_int64(download_err) + ")";
-                UtilityFunctions::push_warning(msg);
-                TOOLKIT_LOG("WeChatExportPlatform: ", msg);
-                return download_err;
-            }
-
-            best_template_ref = tm->get_template_path(filename);
-            if (best_template_ref.is_empty() || best_template_ref.begins_with("remote://")) {
-                UtilityFunctions::push_warning("Template download finished but local template file is still missing.");
-                return ERR_FILE_NOT_FOUND;
-            }
+            String guide = String::utf8("模板 ") + filename
+                    + String::utf8(" 未下载。导出不再联网下载以避免卡死：请打开插件设置面板，点击「预下载当前版本模板」后重试。");
+            _product_log("Export aborted: template not cached locally: " + filename);
+            UtilityFunctions::push_warning(guide);
+            return ERR_FILE_NOT_FOUND;
         } else {
             String selected_template = best_template_ref;
             if (best_template_ref.begins_with("embedded://")) {
@@ -1053,7 +1034,6 @@ String WeChatExportPlatform::_get_export_option_warning(const Ref<EditorExportPr
     }
     return "";
 }
-
 bool WeChatExportPlatform::_get_export_option_visibility(const Ref<EditorExportPreset> &p_preset, const String &p_option) const {
     if (p_option == String::utf8("模板/自定义模板链接")) {
         return p_preset->are_advanced_options_enabled();
