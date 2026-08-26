@@ -48,8 +48,8 @@ class ProductToolTests(unittest.TestCase):
                     {
                         "godot_major": "godot4",
                         "godot_version": "4.5.2",
-                        "tag": "template-4.5.2-r1",
-                        "file": "minigame4.5.2-r1.tpz",
+                        "tag": "4.5.2-glx-2d-r1",
+                        "file": "minigame4.5.2-glx-2d-r1.tpz",
                         "sha256": "1" * 64,
                         "minimum_plugin": "1.0.4",
                         "source_branch": "4.5",
@@ -65,8 +65,8 @@ class ProductToolTests(unittest.TestCase):
                 versions=versions_path,
                 godot_major="godot4",
                 godot_version="4.5.2",
-                tag="template-4.5.2-r2",
-                file="minigame4.5.2-r2.tpz",
+                tag="4.5.2-glx-2d-r2",
+                file="minigame4.5.2-glx-2d-r2.tpz",
                 sha256="2" * 64,
                 minimum_plugin="1.0.4",
                 source_branch="4.5",
@@ -75,8 +75,8 @@ class ProductToolTests(unittest.TestCase):
             )
             product.command_promote_template(args)
             promoted = product.load_json(catalog_path)["templates"][0]
-            self.assertEqual(promoted["tag"], "template-4.5.2-r2")
-            self.assertIn("tag: template-4.5.2-r2", versions_path.read_text(encoding="utf-8"))
+            self.assertEqual(promoted["tag"], "4.5.2-glx-2d-r2")
+            self.assertIn("tag: 4.5.2-glx-2d-r2", versions_path.read_text(encoding="utf-8"))
 
     def test_plugin_zip_has_installable_addon_prefix(self):
         with tempfile.TemporaryDirectory() as temporary:
