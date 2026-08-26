@@ -1,6 +1,6 @@
 ---
 name: godot-wechat-minigame-adapter
-description: Apply the bundled self-contained Godot WeChat Mini Game adapter kit to an official Godot checkout. Use when the user wants to port official Godot to WeChat Mini Game, refresh a nearby 4.6-based port, or inspect the shipped patch/source bundle for WXMEMFS, `wx.request`, audio cleanup, `wx.getWindowInfo`, `wx.showKeyboard`, `.wasm.br`, and `wx.exitMiniProgram`. This skill is version-locked to the bundled upstream base and must not be described as a generic “Godot 4.x” patch dump.
+description: Apply the bundled self-contained Godot WeChat Mini Game adapter kit to an official Godot checkout. Use when the user wants to port official Godot to WeChat Mini Game, refresh a nearby 4.6-based port, or inspect the shipped patch/source bundle for WXMEMFS, `wx.request`, audio cleanup, display/input, WXGLX dual-path rendering, `.wasm.br`, and `wx.exitMiniProgram`. This skill is version-locked to the bundled upstream base and must not be described as a generic “Godot 4.x” patch dump.
 ---
 
 # Godot WeChat Minigame Adapter
@@ -40,6 +40,8 @@ Pick one mode before editing:
 - Do not pull missing code from `C:\toolkit\godot4-custom` or any other machine-local repo.
 - Do not describe this skill as “supports all Godot 4.x” or “works on any 4.6 build” unless you actually verified that target.
 - Keep donor-only features out of the default public path.
+- Do not infer WXGLX capability from `godot-loader.js`. The engine must be built with the GLX library and engine-side integration before the loader may select `wxwebgl2`.
+- Pin one rendering mode before the first canvas context is created. Never switch between WXGLX and standard WebGL during a running session.
 
 ## Workflow
 
@@ -94,6 +96,15 @@ node <skill-dir>\scripts\godot_process.js
 cmd /c <skill-dir>\scripts\compress_wasm.bat
 ```
 
+For a forward-ported source tree that already contains the complete WXGLX engine integration described in `references/wxglx-adaptation.md`:
+
+```powershell
+scons platform=web target=template_release threads=no wasm_simd=no use_wx_glx=yes
+cmd /c <skill-dir>\scripts\compress_wasm.bat
+```
+
+Do not add `use_wx_glx=yes` to the version-locked 4.6 bundle unless its manifest also ships the GLX static library and every engine-side integration point.
+
 On Unix-like shells:
 
 ```bash
@@ -103,6 +114,7 @@ sh <skill-dir>/scripts/compress_wasm.sh
 ### 5. Validate
 
 - Read `references/validation-checklist.md`.
+- For WXGLX-capable builds, also read and run the dual-path checks in `references/wxglx-adaptation.md`.
 - Do not call the port complete until the runtime shell, WXMEMFS persistence, large fetches, audio replay, display/input, and exit path all pass.
 
 ## Package Layout
@@ -126,6 +138,8 @@ Read `references/migration-modules.md` for the exact core vs optional module spl
   - Recent deltas already baked into the bundled base, plus what to replay when moving forward from it.
 - `references/runtime-shell.md`
   - The minimal runtime shell contract for `godot-sdk.js` and `godot-loader.js`.
+- `references/wxglx-adaptation.md`
+  - Complete WXGLX build integration, startup mode pinning, standard-WebGL fallback, frame presentation, packaging, and regression checks.
 - `references/validation-checklist.md`
   - Build, packaging, and smoke-test gates.
 
@@ -139,3 +153,4 @@ When using this skill on a real repo, always leave behind:
 - the exact validation steps run
 - any patch rejects or manual conflict resolutions
 - any intentionally skipped donor features that remain out of scope
+- whether the output is standard-WebGL-only or WXGLX-capable, and which startup mode was tested

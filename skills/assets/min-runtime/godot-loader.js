@@ -100,9 +100,16 @@
                 stencil: false,
             };
 
-            this.gl = this.onScreenCanvas.getContext("webgl2", attrs);
+            const useWXGLX =
+                gameGlobal.__GODOT_DISABLE_WXGLX !== true &&
+                !!wxApi &&
+                !!wxApi.env &&
+                !!wxApi.env.isSupportEmscriptenGLX;
+            gameGlobal.__godotMinigameWXGLXEnabled = useWXGLX;
+            const contextType = useWXGLX ? "wxwebgl2" : "webgl2";
+            this.gl = this.onScreenCanvas.getContext(contextType, attrs);
             if (!this.gl) {
-                console.error("Unable to initialize WebGL.");
+                console.error(`Unable to initialize ${contextType}.`);
                 return;
             }
 

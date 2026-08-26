@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "godot_major": "godot3",
+      "godot_version": "3.6.0",
+      "file": "minigame3.6.0.tpz",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "upstream-sync",
+      "status": "legacy"
+    },
+    {
+      "godot_major": "godot4",
+      "godot_version": "4.3.0",
+      "tag": "4.3.0",
+      "file": "minigame4.3.0.3.tpz",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "upstream-sync",
+      "status": "legacy"
+    },
+    {
+      "godot_major": "godot4",
+      "godot_version": "4.4.0",
+      "tag": "4.4.0",
+      "file": "minigame4.4.0.1.tpz",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "upstream-sync",
+      "status": "legacy"
+    },
+    {
+      "godot_major": "godot4",
+      "godot_version": "4.5.1",
+      "tag": "4.5.1",
+      "file": "minigame4.5.1.2.tpz",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "upstream-sync",
+      "status": "legacy"
+    },
+    {
+      "godot_major": "godot4",
+      "godot_version": "4.6.2",
+      "tag": "4.6.2",
+      "file": "minigame4.6.2.3.tpz",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "upstream-sync",
+      "status": "legacy"
+    },
+    {
+      "godot_major": "godot4",
+      "godot_version": "4.7.0",
+      "tag": "4.7",
+      "file": "minigame4.7.0.5.tpz",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "upstream-sync",
+      "status": "legacy"
+    }
+  ]
+}

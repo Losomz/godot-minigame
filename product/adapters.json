@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "adapters": [
+    {
+      "id": "wechat-godot-4.5",
+      "branch": "4.5",
+      "godot_version": "4.5.2",
+      "status": "stable",
+      "workflow": "wechat-template.yml",
+      "adapter_tag_prefix": "adapter-4.5.2-r",
+      "template_tag_prefix": "4.5.2-glx-2d-r",
+      "required_paths": [
+        ".gitmodules",
+        "adapter/patches/manifest.json",
+        "adapter/scripts/package_wechat_glx_template.py",
+        "ci/build_wechat_glx.ps1",
+        "ci/requirements-build.txt",
+        "templates/configs/wechat_2d.py"
+      ]
+    }
+  ]
+}

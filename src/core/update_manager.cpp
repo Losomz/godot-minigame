@@ -1,7 +1,7 @@
 #include "core/update_manager.h"
 #include "core/toolkit_core.h"
 #include "core/logging.h"
-#include "templates/template_manager.h"
+#include "core/types.h"
 
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/json.hpp>
@@ -72,11 +72,10 @@ void UpdateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("check_for_updates", "local_version"), &UpdateManager::check_for_updates);
     ClassDB::bind_method(D_METHOD("download_update"), &UpdateManager::download_update);
     ClassDB::bind_method(D_METHOD("cancel_download"), &UpdateManager::cancel_download);
-    ClassDB::bind_method(D_METHOD("perform_update"), &UpdateManager::perform_update);
-    ClassDB::bind_method(D_METHOD("restart_editor_for_update"), &UpdateManager::restart_editor_for_update);
     ClassDB::bind_method(D_METHOD("get_local_version"), &UpdateManager::get_local_version);
     ClassDB::bind_method(D_METHOD("get_remote_version_info"), &UpdateManager::get_remote_version_info);
     ClassDB::bind_method(D_METHOD("get_current_state"), &UpdateManager::get_current_state);
+    ClassDB::bind_method(D_METHOD("get_download_file_path"), &UpdateManager::get_download_file_path);
    
     ClassDB::bind_method(D_METHOD("_on_version_check_completed"), &UpdateManager::_on_version_check_completed);
     ClassDB::bind_method(D_METHOD("_on_download_completed"), &UpdateManager::_on_download_completed);
@@ -93,6 +92,7 @@ void UpdateManager::_bind_methods() {
     BIND_ENUM_CONSTANT(STATE_UPDATE_AVAILABLE);
     BIND_ENUM_CONSTANT(STATE_DOWNLOADING);
     BIND_ENUM_CONSTANT(STATE_DOWNLOADED);
+    BIND_ENUM_CONSTANT(STATE_UP_TO_DATE);
     BIND_ENUM_CONSTANT(STATE_ERROR);
    }
 
@@ -199,13 +199,13 @@ void UpdateManager::initialize() {
     }
 
     if (!is_properly_configured()) {
-    	set_state(STATE_ERROR);
-    	emit_signal("error", "UpdateManager not properly configured - release distribution is missing.");
-    	return;
+		set_state(STATE_ERROR);
+		emit_signal("error", "Plugin update manifest URL is not configured.");
+		return;
     }
 
     local_version = p_local_version;
-    String update_url = resolve_distribution_asset_url("latest.json");
+    String update_url = resolve_update_manifest_url();
 
     TOOLKIT_LOG("UpdateManager: Checking for updates from: ", update_url);
     TOOLKIT_LOG("UpdateManager: Current version: ", local_version);
@@ -271,18 +271,20 @@ void UpdateManager::_on_version_check_completed(int p_result, int p_response_cod
     }
 
     remote_version_info = result;
-    String remote_v_str = remote_version_info.get("version", "0.0.0");
+    bool published = bool(remote_version_info.get("published", true));
+    String remote_v_str = String(remote_version_info.get("version", "")).strip_edges();
+    VersionInfo local = VersionInfo::from_string(local_version);
+    VersionInfo remote = VersionInfo::from_string(remote_v_str);
 
     TOOLKIT_LOG("UpdateManager: Remote version: ", remote_v_str, ", Local version: ", local_version);
 
-    // Simple string comparison for version checking
-    if (remote_v_str != local_version && !remote_v_str.is_empty()) {
-    	set_state(STATE_UPDATE_AVAILABLE);
-    	TOOLKIT_LOG("UpdateManager: Update available!");
-    	emit_signal("update_available", remote_version_info);
+    if (published && !remote_v_str.is_empty() && remote.is_newer_than(local)) {
+		set_state(STATE_UPDATE_AVAILABLE);
+		TOOLKIT_LOG("UpdateManager: Plugin update available.");
+		emit_signal("update_available", remote_version_info);
     } else {
-    	set_state(STATE_UP_TO_DATE);
-    	TOOLKIT_LOG("UpdateManager: No update needed, already up to date.");
+		set_state(STATE_UP_TO_DATE);
+		TOOLKIT_LOG("UpdateManager: No published plugin update is newer than the local version.");
     }
    }
 
@@ -335,15 +337,23 @@ void UpdateManager::download_update() {
     	return;
     }
 
-    String full_url = resolve_distribution_asset_url(asset_name);
+    String full_url = resolve_update_asset_url(platform_data);
     if (full_url.is_empty()) {
         set_state(STATE_ERROR);
-        String error_msg = "Failed to build update URL for asset: " + asset_name;
+        String error_msg = "Update asset URL is missing for platform: " + platform_key;
         TOOLKIT_LOG("UpdateManager: ", error_msg);
         emit_signal("error", error_msg);
         return;
     }
-    String download_path = "user://toolkit_update.zip";
+    expected_download_sha256 = String(platform_data.get("sha256", "")).strip_edges().to_lower();
+    if (expected_download_sha256.length() != 64) {
+        set_state(STATE_ERROR);
+        emit_signal("error", "Update asset is missing a valid SHA-256 digest.");
+        return;
+    }
+    String download_path = "user://godot-minigame/updates/" + asset_name;
+    DirAccess::make_dir_recursive_absolute(ProjectSettings::get_singleton()->globalize_path(download_path.get_base_dir()));
+    download_file_path = download_path;
 
     TOOLKIT_LOG("UpdateManager: Starting download from: ", full_url);
     TOOLKIT_LOG("UpdateManager: Download destination: ", download_path);
@@ -373,9 +383,17 @@ void UpdateManager::_on_download_completed(int p_result, int p_response_code, co
     TOOLKIT_LOG("UpdateManager: Download completed. Result: ", p_result, ", Response code: ", p_response_code);
 
     if (p_result == HTTPRequest::RESULT_SUCCESS && p_response_code == 200) {
-    	// Verify the downloaded file exists
-    	String download_path = "user://toolkit_update.zip";
+		String download_path = download_file_path;
     	if (FileAccess::file_exists(download_path)) {
+            String actual_sha256 = FileAccess::get_sha256(download_path).to_lower();
+            if (actual_sha256 != expected_download_sha256) {
+                set_state(STATE_ERROR);
+                emit_signal("download_finished", false);
+                emit_signal("error", "Downloaded plugin package failed SHA-256 verification.");
+                DirAccess::remove_absolute(ProjectSettings::get_singleton()->globalize_path(download_path));
+                return;
+            }
+
     		Ref<FileAccess> file = FileAccess::open(download_path, FileAccess::READ);
     		if (file.is_valid()) {
     			int64_t file_size = file->get_length();
@@ -403,20 +421,37 @@ void UpdateManager::_on_download_completed(int p_result, int p_response_code, co
    }
 
 bool UpdateManager::is_properly_configured() const {
-    return !resolve_distribution_asset_url("latest.json").is_empty();
+    return !resolve_update_manifest_url().is_empty();
 }
 
-String UpdateManager::resolve_distribution_asset_url(const String &asset_name) const {
-    if (asset_name.strip_edges().is_empty()) {
-        return "";
+String UpdateManager::get_download_file_path() const {
+    return download_file_path;
+}
+
+String UpdateManager::resolve_update_manifest_url() const {
+    String environment_url = OS::get_singleton()->get_environment("GODOT_MINIGAME_PLUGIN_UPDATE_URL").strip_edges();
+    if (!environment_url.is_empty()) {
+        return environment_url;
     }
 
-    templates::TemplateManager *template_manager = templates::TemplateManager::get_singleton();
-    if (!template_manager) {
-        return "";
+    const String setting_name = "godot_minigame/plugin_update_manifest_url";
+    ProjectSettings *settings = ProjectSettings::get_singleton();
+    if (settings && settings->has_setting(setting_name)) {
+        String configured_url = String(settings->get_setting(setting_name, "")).strip_edges();
+        if (!configured_url.is_empty()) {
+            return configured_url;
+        }
     }
 
-    return template_manager->get_distribution_asset_url(asset_name);
+    return "https://raw.githubusercontent.com/Losomz/godot-minigame/main/catalog/plugin-stable.json";
+}
+
+String UpdateManager::resolve_update_asset_url(const Dictionary &platform_data) const {
+    String direct_url = String(platform_data.get("url", "")).strip_edges();
+    if (direct_url.begins_with("https://")) {
+        return direct_url;
+    }
+    return "";
 }
 
 String UpdateManager::resolve_platform_asset_name(const Dictionary &platform_data) const {
@@ -454,7 +489,11 @@ void toolkit::UpdateManager::cancel_download() {
 bool toolkit::UpdateManager::perform_update() {
 	using namespace godot;
 
-	const String TEMP_DOWNLOAD_FILE = "user://toolkit_update.zip";
+	const String TEMP_DOWNLOAD_FILE = download_file_path;
+	if (TEMP_DOWNLOAD_FILE.is_empty()) {
+		UtilityFunctions::push_warning("No downloaded plugin update is available.");
+		return false;
+	}
 	if (!FileAccess::file_exists(TEMP_DOWNLOAD_FILE)) {
 		UtilityFunctions::push_warning("Update file not found. Nothing to do.");
 		return false;
@@ -472,16 +511,40 @@ bool toolkit::UpdateManager::perform_update() {
 
 	PackedStringArray files = zip_reader->get_files();
 	String addon_path = ProjectSettings::get_singleton()->globalize_path("res://addons/godot-minigame/");
+	const String package_prefix = "addons/godot-minigame/";
 
 	for (int i = 0; i < files.size(); i++) {
-		String file_path = files[i];
-		String dest_path = addon_path.path_join(file_path);
+		String archive_path = String(files[i]).replace("\\", "/");
+		if (!archive_path.begins_with(package_prefix)) {
+			UtilityFunctions::push_error("Plugin update contains a file outside addons/godot-minigame: " + archive_path);
+			zip_reader->close();
+			return false;
+		}
 
-		if (file_path.ends_with("/")) { // It's a directory
+		String relative_path = archive_path.substr(package_prefix.length());
+		PackedStringArray components = relative_path.split("/", false);
+		bool unsafe_path = relative_path.is_absolute_path() || relative_path.contains(":");
+		for (int component_index = 0; component_index < components.size(); component_index++) {
+			if (components[component_index] == "..") {
+				unsafe_path = true;
+				break;
+			}
+		}
+		if (unsafe_path) {
+			UtilityFunctions::push_error("Plugin update contains an unsafe path: " + archive_path);
+			zip_reader->close();
+			return false;
+		}
+		if (relative_path.is_empty()) {
+			continue;
+		}
+
+		String dest_path = addon_path.path_join(relative_path);
+		if (archive_path.ends_with("/")) {
 			DirAccess::make_dir_recursive_absolute(dest_path);
-		} else { // It's a file
+		} else {
 			DirAccess::make_dir_recursive_absolute(dest_path.get_base_dir());
-			PackedByteArray data = zip_reader->read_file(file_path);
+			PackedByteArray data = zip_reader->read_file(files[i]);
 			Ref<FileAccess> file = FileAccess::open(dest_path, FileAccess::WRITE);
 			if (file.is_valid()) {
 				file->store_buffer(data);

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "godot-minigame",
+  "name": "Godot Minigame",
+  "version": "1.0.4",
+  "minimum_godot": "4.4",
+  "addon_path": "addons/godot-minigame",
+  "tag_prefix": "plugin-v",
+  "update_catalog": "catalog/plugin-stable.json"
+}

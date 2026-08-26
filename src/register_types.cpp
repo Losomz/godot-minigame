@@ -9,6 +9,7 @@
 
 // Include our classes
 #include "core/toolkit_core.h"
+#include "core/update_manager.h"
 #include "editor/toolkit_dock.h"
 #include "editor/minigame_panel.h"
 #include "editor/taptap_panel.h"
@@ -28,6 +29,7 @@ using namespace toolkit::templates;
 // Pointers to our singletons
 static toolkit::templates::TemplateManager* template_manager_singleton = nullptr;
 static toolkit::core::GodotMinigameCore* godot_minigame_core_singleton = nullptr;
+static toolkit::UpdateManager* update_manager_singleton = nullptr;
 
 void initialize_gdextension_types(ModuleInitializationLevel p_level)
 {
@@ -44,10 +46,13 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 			// Register core utility classes that can be used anywhere
 			ClassDB::register_class<YAML>();
 			ClassDB::register_class<TemplateManager>();
+			ClassDB::register_class<toolkit::UpdateManager>();
 
 			// Initialize and register TemplateManager singleton
 			template_manager_singleton = memnew(TemplateManager);
 			Engine::get_singleton()->register_singleton("TemplateManager", template_manager_singleton);
+			update_manager_singleton = memnew(toolkit::UpdateManager);
+			Engine::get_singleton()->register_singleton("PluginUpdateManager", update_manager_singleton);
 			break;
 		}
 		case MODULE_INITIALIZATION_LEVEL_EDITOR: {
@@ -102,7 +107,15 @@ void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
 			if (Engine::get_singleton()->has_singleton("TemplateManager")) {
 				Engine::get_singleton()->unregister_singleton("TemplateManager");
 			}
+			if (Engine::get_singleton()->has_singleton("PluginUpdateManager")) {
+				Engine::get_singleton()->unregister_singleton("PluginUpdateManager");
+			}
+			if (update_manager_singleton) {
+				memdelete(update_manager_singleton);
+				update_manager_singleton = nullptr;
+			}
 			if (template_manager_singleton) {
+				memdelete(template_manager_singleton);
 				template_manager_singleton = nullptr;
 			}
 			break;

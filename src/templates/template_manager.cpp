@@ -270,8 +270,11 @@ void TemplateManager::_bind_methods() {
 
     // Individual template status
     ClassDB::bind_method(D_METHOD("is_template_embedded", "filename"), &TemplateManager::is_template_embedded);
+    ClassDB::bind_method(D_METHOD("is_template_bundled", "filename"), &TemplateManager::is_template_bundled);
     ClassDB::bind_method(D_METHOD("is_template_downloaded", "filename"), &TemplateManager::is_template_downloaded);
     ClassDB::bind_method(D_METHOD("get_template_path", "filename"), &TemplateManager::get_template_path);
+    ClassDB::bind_method(D_METHOD("get_bundled_template_path", "filename"), &TemplateManager::get_bundled_template_path);
+    ClassDB::bind_method(D_METHOD("get_best_bundled_template_for_editor"), &TemplateManager::get_best_bundled_template_for_editor);
     ClassDB::bind_method(D_METHOD("get_best_available_template_for_editor"), &TemplateManager::get_best_available_template_for_editor);
     ClassDB::bind_method(
             D_METHOD("get_best_available_template_for_version", "target_version", "major_version"),
@@ -280,11 +283,13 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_nearest_compatible_version", "target_version", "major_version"), &TemplateManager::get_nearest_compatible_version);
     ClassDB::bind_method(D_METHOD("get_download_cache_path", "filename"), &TemplateManager::get_download_cache_path);
     ClassDB::bind_method(D_METHOD("download_template_sync", "filename", "target_path"), &TemplateManager::download_template_sync, DEFVAL(""));
+    ClassDB::bind_method(D_METHOD("download_template_from_url_sync", "filename", "download_url", "target_path"), &TemplateManager::download_template_from_url_sync);
     ClassDB::bind_method(D_METHOD("clear_cache"), &TemplateManager::clear_cache);
     ClassDB::bind_method(D_METHOD("purge_distribution_cache"), &TemplateManager::purge_distribution_cache);
     ClassDB::bind_method(D_METHOD("update_polling"), &TemplateManager::update_polling);
     ClassDB::bind_method(D_METHOD("set_distribution_provider", "provider"), &TemplateManager::set_distribution_provider);
     ClassDB::bind_method(D_METHOD("get_distribution_provider"), &TemplateManager::get_distribution_provider);
+    ClassDB::bind_method(D_METHOD("reset_distribution_preferences"), &TemplateManager::reset_distribution_preferences);
     ClassDB::bind_method(
             D_METHOD("set_current_release_config", "owner", "repo", "release_tag"),
             &TemplateManager::set_current_release_config,
@@ -1001,15 +1006,84 @@ bool TemplateManager::is_template_embedded(const String& filename) const {
     return false;
 }
 
+String TemplateManager::get_bundled_template_path(const String& filename) const {
+    if (filename.get_file() != filename || filename.contains("..")) {
+        return "";
+    }
+    String path = "res://addons/godot-minigame/resources/templates/" + filename;
+    return FileAccess::file_exists(path) ? path : "";
+}
+
+bool TemplateManager::is_template_bundled(const String& filename) const {
+    return !get_bundled_template_path(filename).is_empty();
+}
+
+String TemplateManager::get_best_bundled_template_for_editor() const {
+    String current_version = get_current_godot_version();
+    String major_version = get_godot_major_version();
+    if (has_version(major_version, current_version)) {
+        String filename = get_template_filename(major_version, current_version);
+        if (is_template_bundled(filename)) {
+            return get_bundled_template_path(filename);
+        }
+    }
+
+    PackedStringArray current_parts = current_version.split(".");
+    String current_minor = current_parts.size() >= 2 ? String(current_parts[0]) + "." + String(current_parts[1]) + "." : "";
+    String same_minor_version;
+    String nearest_version;
+    String latest_version;
+    String same_minor_filename;
+    String nearest_filename;
+    String latest_filename;
+    Array versions = get_available_versions();
+    for (int i = 0; i < versions.size(); i++) {
+        Dictionary entry = versions[i];
+        if (String(entry.get("godot_major", "")) != major_version) {
+            continue;
+        }
+        String version = String(entry.get("version", ""));
+        String filename = String(entry.get("filename", ""));
+        if (!is_template_bundled(filename)) {
+            continue;
+        }
+        if (!current_minor.is_empty() && version.begins_with(current_minor) &&
+                (same_minor_version.is_empty() || compare_version_numbers(version, same_minor_version) > 0)) {
+            same_minor_version = version;
+            same_minor_filename = filename;
+        }
+        if (compare_version_numbers(version, current_version) <= 0 &&
+                (nearest_version.is_empty() || compare_version_numbers(version, nearest_version) > 0)) {
+            nearest_version = version;
+            nearest_filename = filename;
+        }
+        if (latest_version.is_empty() || compare_version_numbers(version, latest_version) > 0) {
+            latest_version = version;
+            latest_filename = filename;
+        }
+    }
+
+    String selected = !same_minor_filename.is_empty() ? same_minor_filename :
+            (!nearest_filename.is_empty() ? nearest_filename : latest_filename);
+    if (!selected.is_empty()) {
+        return get_bundled_template_path(selected);
+    }
+    return "";
+}
+
 bool TemplateManager::is_template_downloaded(const String& filename) const {
     String cache_path = get_download_cache_path(filename);
     return FileAccess::file_exists(cache_path);
 }
 
 String TemplateManager::get_template_path(const String& filename) const {
-    // Priority: embedded -> cached -> remote
+    // Priority: packaged file -> embedded resource -> cached -> remote.
 
-    // Check embedded first
+    String bundled_path = get_bundled_template_path(filename);
+    if (!bundled_path.is_empty()) {
+        return bundled_path;
+    }
+
     if (is_template_embedded(filename)) {
         return "embedded://" + filename;
     }
@@ -1094,6 +1168,19 @@ Error TemplateManager::download_template_sync(const String& filename, const Stri
         return ERR_INVALID_PARAMETER;
     }
     String output_path = target_path.is_empty() ? get_download_cache_path(filename) : target_path;
+    return download_template_url_sync(filename, download_url, output_path);
+}
+
+Error TemplateManager::download_template_from_url_sync(const String& filename, const String& download_url, const String& target_path) {
+    String normalized_url = download_url.strip_edges();
+    if (normalized_url.is_empty() || target_path.strip_edges().is_empty()) {
+        UtilityFunctions::push_warning("Custom template URL and output path cannot be empty.");
+        return ERR_INVALID_PARAMETER;
+    }
+    return download_template_url_sync(filename, normalized_url, target_path);
+}
+
+Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path) {
     if (output_path.is_empty()) {
         UtilityFunctions::push_warning("Template output path is empty.");
         update_download_state(filename, "failed", 0.0f);
@@ -1753,7 +1840,8 @@ bool TemplateManager::is_template_available_remotely(const String& filename) con
 }
 
 bool TemplateManager::is_template_available_anywhere(const String& filename) const {
-    return is_template_embedded(filename) ||
+    return is_template_bundled(filename) ||
+           is_template_embedded(filename) ||
            is_template_downloaded(filename) ||
            is_template_available_remotely(filename);
 }
@@ -2390,6 +2478,52 @@ void TemplateManager::persist_distribution_preferences() const {
             TOOLKIT_EDITOR_METADATA_SECTION,
             TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
             atomgit_release_tag);
+}
+
+void TemplateManager::reset_distribution_preferences() {
+    distribution_provider = DistributionProvider::GITHUB_RELEASE;
+    github_repo_owner = "Losomz";
+    github_repo_name = "godot-minigame";
+    github_release_tag = "latest";
+    gitee_repo_owner = "Losomz";
+    gitee_repo_name = "godot-minigame";
+    gitee_release_tag = "latest";
+    atomgit_repo_owner = "Losomz";
+    atomgit_repo_name = "godot-minigame";
+    atomgit_release_tag = "latest";
+
+    if (Engine::get_singleton()->is_editor_hint()) {
+        EditorInterface *editor_interface = EditorInterface::get_singleton();
+        if (editor_interface) {
+            Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
+            if (editor_settings.is_valid()) {
+                static const char *metadata_keys[] = {
+                    TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
+                    TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
+                    TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
+                    TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
+                    TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
+                    TOOLKIT_EDITOR_METADATA_GITEE_REPO,
+                    TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
+                    TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER,
+                    TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO,
+                    TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
+                    nullptr,
+                };
+                // The legacy section is cleared too so pre-fork installs stop
+                // resurrecting the upstream mirror configuration.
+                for (int s = 0; s < 2; s++) {
+                    const char *section = (s == 0) ? TOOLKIT_EDITOR_METADATA_SECTION : TOOLKIT_EDITOR_METADATA_SECTION_LEGACY;
+                    for (int k = 0; metadata_keys[k] != nullptr; k++) {
+                        editor_settings->set_project_metadata(section, metadata_keys[k], Variant());
+                    }
+                }
+            }
+        }
+    }
+
+    reload_active_distribution_cache(false);
+    TOOLKIT_LOG("TemplateManager: Distribution preferences reset to defaults");
 }
 
 void TemplateManager::reload_active_distribution_cache(bool load_remote_versions) {
