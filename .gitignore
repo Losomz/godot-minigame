@@ -15,7 +15,8 @@
 /dist/
 /bin/
 /demo/bin/
-/demo/addons/godot-minigame/bin/
+/demo/addons/godot-minigame/
+/addons/godot-minigame/*.gd.uid
 /release-assets/
 /.ci-emsdk/
 /.sconsign.dblite
@@ -53,6 +54,7 @@ Thumbs.db
 .private_release/
 
 demo/.godot/
+demo/export_presets.cfg
 demo/**/*.tpz
 resources/**/*.tpz
 demo/minigame/

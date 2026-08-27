@@ -212,12 +212,36 @@ def validate_adapters(root: Path, adapters: dict) -> list[str]:
             errors.append(str(exc))
         if entry.get("status") not in {"experimental", "stable", "maintenance", "retired"}:
             errors.append(f"Adapter {adapter_id} has an invalid status")
-        workflow = str(entry.get("workflow", ""))
+        build = entry.get("build")
+        if build is None:
+            if entry.get("status") in {"stable", "maintenance"}:
+                errors.append(f"Adapter {adapter_id} must define a build contract")
+            continue
+        if not isinstance(build, dict):
+            errors.append(f"Adapter {adapter_id} build contract must be an object")
+            continue
+        workflow = str(build.get("workflow", ""))
         if Path(workflow).name != workflow or not (root / ".github/workflows" / workflow).is_file():
             errors.append(f"Adapter {adapter_id} workflow does not exist: {workflow!r}")
-        required_paths = entry.get("required_paths")
-        if not isinstance(required_paths, list) or not all(isinstance(item, str) and item for item in required_paths):
-            errors.append(f"Adapter {adapter_id} required_paths must be non-empty strings")
+        for field in (
+            "runner",
+            "manifest_path",
+            "godot_commit_field",
+            "godot_base_field",
+            "build_script",
+            "profile",
+        ):
+            if not isinstance(build.get(field), str) or not build[field]:
+                errors.append(f"Adapter {adapter_id} build.{field} must be a non-empty string")
+        if not isinstance(build.get("production"), bool):
+            errors.append(f"Adapter {adapter_id} build.production must be boolean")
+        if not isinstance(build.get("supports_ad"), bool):
+            errors.append(f"Adapter {adapter_id} build.supports_ad must be boolean")
+        required_paths = build.get("required_paths")
+        if not isinstance(required_paths, list) or not required_paths or not all(
+            isinstance(item, str) and item for item in required_paths
+        ):
+            errors.append(f"Adapter {adapter_id} build.required_paths must be non-empty strings")
     return errors
 
 

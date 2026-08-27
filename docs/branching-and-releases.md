@@ -37,17 +37,26 @@ Promote PR 只允许修改：
 
 ## 模板来源契约
 
-`product/adapters.json` 只是模板来源登记表，不是第三种产品。每条模板生产线登记其 Godot 版本、适配分支、构建 workflow 和必需路径。当前 `4.5` 必须提供：
+`product/adapters.json` 只是模板来源登记表，不是第三种产品。每条记录都登记 Godot 版本、适配分支和状态；只有具备完整 `build` contract 的记录才允许中央 workflow 启动构建。`experimental` 记录可以先占位，但不能发布模板。
+
+所有版本适配分支统一采用以下根目录：
+
+- `.agent/skills/godot-wechat-minigame-adapter/`：薄入口 Skill，只描述维护规则和源码位置
+- `adapter/`：补丁、源码覆盖、脚本、测试、构建配置和模板基底
+- `godot/`：由 gitlink 锁定的 Godot 源码
+
+当前 `4.5` 的 build contract 必须提供：
 
 - `.gitmodules`
 - `godot` gitlink
 - `adapter/patches/manifest.json`
 - `adapter/scripts/package_wechat_glx_template.py`
+- `adapter/configs/wechat_2d.py`
+- `adapter/templates/manifest.json`
 - `ci/build_wechat_glx.ps1`
 - `ci/requirements-build.txt`
-- `templates/configs/wechat_2d.py`
 
-Manifest 必须锁定官方 Godot base commit、适配 commit 和工具链版本。中央 workflow 使用远端分支的精确 commit 构建并记录 SHA-256。临时适配分支只用于 Artifact 验证；正式 `4.5.2-glx-2d-r*` Release 只从登记的 `4.5` 分支创建。
+Manifest 必须锁定官方 Godot base commit、适配 commit 和工具链版本。中央 workflow 从 `main` 的注册表解析 runner、manifest 字段、构建脚本和裁切配置，再检出远端登记分支的精确 commit 构建并记录 SHA-256。没有 build contract 的 `4.6` experimental 分支不会进入生产构建。
 
 ## 插件发布
 
@@ -81,7 +90,7 @@ gh workflow run wechat-template.yml \
 4.5.2-glx-2d-r2
 ```
 
-临时适配分支只生成 Actions Artifact，不创建正式模板 Release，也不进入 Catalog。
+只有注册表中具备 build contract 的精确版本分支能够生成 Actions Artifact；其中 `production: true` 的分支才允许创建正式模板 Release。
 
 ## 晋升模板
 
@@ -98,3 +107,4 @@ gh workflow run wechat-template.yml \
 - 正式产物必须绑定精确 source commit 和 SHA-256。
 - `resources/versions.yaml` 禁止手工修改。
 - 一个模板 revision 只能递增，不能回退或复用。
+- 适配分支定期合入 `develop` 的公共改动；禁止把适配分支反向合回 `develop` 或 `main`。

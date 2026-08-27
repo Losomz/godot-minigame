@@ -35,7 +35,13 @@ class ProductToolTests(unittest.TestCase):
         self.assertTrue(adapters["adapters"])
         for adapter in adapters["adapters"]:
             self.assertNotIn(adapter["branch"], {"main", "develop", "upstream-sync"})
-            self.assertTrue((ROOT / ".github/workflows" / adapter["workflow"]).is_file())
+            build = adapter.get("build")
+            if build:
+                self.assertTrue((ROOT / ".github/workflows" / build["workflow"]).is_file())
+
+        experimental = next(item for item in adapters["adapters"] if item["branch"] == "4.6")
+        self.assertEqual(experimental["status"], "experimental")
+        self.assertNotIn("build", experimental)
 
     def test_staged_plugin_version_may_lead_published_stable_catalog(self):
         plugin = product.load_json(ROOT / "product/plugin.json")

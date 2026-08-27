@@ -23,7 +23,7 @@
 - 模板缓存跨项目共享，下载后无需重启即可导出
 - 插件与模板独立版本和更新通道
 - 可选微信小游戏广告组件
-- 可复现的 Godot 微信适配补丁与验证技能
+- 版本分支内可复现的 Godot 微信适配补丁与验证 Skill
 
 ## 构建插件
 
@@ -54,7 +54,7 @@ python tools/product/product.py package-plugin
 
 ```bash
 python tools/product/product.py package-plugin \
-  --bundle-template /path/to/minigame4.5.1.2.tpz
+  --bundle-template /path/to/minigame4.5.2-glx-2d-r1.tpz
 ```
 
 TPZ 在插件 ZIP 中只保存一份。模板版本与自定义 TPZ 均在插件设置页选择，不再写入各个导出预设。下载的模板保存在 Godot 编辑器全局缓存中，所有项目共享；设置页可以重新下载覆盖、删除当前缓存或清空全部模板缓存。缓存变更立即生效，不需要重启 Godot。
@@ -66,6 +66,16 @@ TPZ 在插件 ZIP 中只保存一份。模板版本与自定义 TPZ 均在插件
 3. 在插件设置页配置模板分发源并选择模板版本，或填写自定义 TPZ 直链。
 4. 在设置页下载模板；需要时可以覆盖下载、删除当前缓存或清空全部缓存。
 5. 创建微信小游戏导出预设并直接导出。导出只使用设置页当前选中的已缓存或内置模板，不会临时下载模板。
+
+## 插件日常调试
+
+`demo/` 是最小 Godot 插件测试项目。插件源码仍只有根目录下的 `addons/godot-minigame/` 一份；本地脚本会把它作为目录 junction 挂载到 demo，并将刚编译的 Windows DLL 放入 addon 的忽略目录：
+
+```powershell
+pwsh tools/dev/build_demo.ps1
+```
+
+随后直接用 Godot 打开 `demo/project.godot`。修改 C++ 后重新运行脚本即可，不需要执行插件 ZIP 打包或发布 CI。
 
 ## Catalog
 
@@ -97,15 +107,16 @@ python tools/product/product.py render-versions --check
 
 - `src/`、`include/`：C++ 编辑器插件源码
 - `addons/godot-minigame/`：可安装 addon 源码骨架
-- `demo/`：示例项目，不作为插件源码或构建产物出口
+- `demo/`：最小插件测试项目，不保存 addon 副本或导出产物
 - `product/`：产品定义与适配生产线注册
 - `catalog/`：已验证发布物目录
 - `resources/`：插件嵌入资源和模板索引
-- `templates/`：历史模板快照与可选模板组件
-- `skills/`：Godot 微信适配移植技能
+- `src/templates/`：插件运行时模板目录与缓存管理实现
 - `tools/product/`：验证、Promote 和插件打包工具
 - `.github/workflows/`：产品、插件和适配自动化
 - `dist/plugin/`、`dist/template/`：未跟踪的插件和模板临时产物出口
+
+版本专用内容只存在于 `4.5`、`4.6` 等适配分支，并统一放在 `.agent/skills/godot-wechat-minigame-adapter/`、`adapter/` 和 `godot/`。这些目录不会从适配分支合回 `develop` 或 `main`。
 
 ## License
 

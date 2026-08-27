@@ -12,7 +12,7 @@ on:
           - build
           - promote
       source_ref:
-        description: "构建: remote 4.5-family source branch to build"
+        description: "构建: product/adapters.json 中登记的适配分支"
         required: false
         default: "4.5"
         type: string
@@ -22,7 +22,7 @@ on:
         default: "1"
         type: string
       release_mode:
-        description: "构建: artifact-only, or prerelease the registered 4.5 production branch"
+        description: "构建: 仅上传 Artifact，或从允许生产发布的适配分支创建 prerelease"
         required: false
         default: artifact-only
         type: choice
@@ -81,14 +81,65 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EMSCRIPTEN_VERSION: "4.0.10"
   EMSDK_COMMIT: "62a853cd3b3134398ce85cde8bb5cbb2ef0194cb"
 
 jobs:
+  resolve:
+    name: Resolve adapter build contract
+    if: inputs.mode == 'build'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      branch: ${{ steps.contract.outputs.branch }}
+      build: ${{ steps.contract.outputs.build }}
+      runner: ${{ steps.contract.outputs.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Resolve registered branch contract
+        id: contract
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+          INCLUDE_AD: ${{ inputs.include_ad }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          source_ref = os.environ["SOURCE_REF"]
+          adapters = json.loads(Path("product/adapters.json").read_text(encoding="utf-8"))["adapters"]
+          adapter = next((item for item in adapters if item.get("branch") == source_ref), None)
+          if adapter is None:
+              raise SystemExit(f"{source_ref!r} is not a registered adapter branch")
+
+          build = adapter.get("build")
+          if not isinstance(build, dict):
+              raise SystemExit(
+                  f"Adapter {source_ref} is {adapter.get('status', 'unknown')} and has no build contract"
+              )
+          if os.environ["RELEASE_MODE"] == "prerelease" and not build.get("production"):
+              raise SystemExit(f"Adapter {source_ref} is not allowed to publish template releases")
+          if os.environ["INCLUDE_AD"] == "true" and not build.get("supports_ad"):
+              raise SystemExit(f"Adapter {source_ref} does not support the ad template variant")
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write(f"branch={source_ref}\n")
+              handle.write(f"runner={build['runner']}\n")
+              handle.write("build=" + json.dumps(build, separators=(",", ":")) + "\n")
+          PY
+
   build:
     name: Build and package ${{ inputs.source_ref }}
     if: inputs.mode == 'build'
-    runs-on: windows-2022
+    needs: resolve
+    runs-on: ${{ needs.resolve.outputs.runner }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -128,11 +179,6 @@ jobs:
               throw "revision must be a positive integer"
           }
 
-          $releaseMode = "${{ inputs.release_mode }}"
-          if ($releaseMode -eq "prerelease" -and $sourceRef -ne "4.5") {
-              throw "prerelease is only allowed from the registered 4.5 template production branch"
-          }
-
           $expected = $env:EXPECTED_TPZ_SHA256.Trim()
           if ($expected -and $expected -notmatch '^[0-9A-Fa-f]{64}$') {
               throw "expected_tpz_sha256 must be empty or a 64-character SHA-256"
@@ -149,21 +195,20 @@ jobs:
       - name: Verify selected branch contract
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
+          REGISTERED_BRANCH: ${{ needs.resolve.outputs.branch }}
+          ADAPTER_BUILD: ${{ needs.resolve.outputs.build }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $required = @(
-              ".gitmodules",
-              "adapter/patches/manifest.json",
-              "adapter/scripts/package_wechat_glx_template.py",
-              "ci/build_wechat_glx.ps1",
-              "ci/requirements-build.txt",
-              "templates/configs/wechat_2d.py"
-          )
-          foreach ($path in $required) {
+          $contract = $env:ADAPTER_BUILD | ConvertFrom-Json
+          foreach ($path in $contract.required_paths) {
               if (-not (Test-Path $path -PathType Leaf)) {
-                  throw "source_ref $env:SOURCE_REF is not a buildable 4.5 branch; missing $path"
+                  throw "source_ref $env:SOURCE_REF violates its build contract; missing $path"
               }
+          }
+
+          if ($env:SOURCE_REF -ne $env:REGISTERED_BRANCH) {
+              throw "source_ref $env:SOURCE_REF differs from registered branch $env:REGISTERED_BRANCH"
           }
 
           $sourceCommit = (git rev-parse HEAD).Trim()
@@ -176,26 +221,23 @@ jobs:
               throw "checked-out commit $sourceCommit differs from remote branch $remoteCommit"
           }
 
-          git fetch --no-tags origin "refs/heads/4.5:refs/remotes/origin/release-4.5"
-          if ($LASTEXITCODE -ne 0) {
-              throw "failed to resolve the official 4.5 branch"
-          }
-          $officialCommit = (git rev-parse refs/remotes/origin/release-4.5).Trim()
-          git merge-base --is-ancestor $officialCommit $sourceCommit
-          if ($LASTEXITCODE -ne 0) {
-              throw "source_ref $env:SOURCE_REF is not based on the current official 4.5 branch $officialCommit"
-          }
-
-          $manifest = Get-Content -Raw "adapter/patches/manifest.json" | ConvertFrom-Json
-          $godotCommit = "$($manifest.wechat_glx_ref)".Trim()
-          $godotBase = "$($manifest.base_ref)".Trim()
+          $manifest = Get-Content -Raw $contract.manifest_path | ConvertFrom-Json
+          $godotCommit = "$($manifest.PSObject.Properties[$contract.godot_commit_field].Value)".Trim()
+          $godotBase = "$($manifest.PSObject.Properties[$contract.godot_base_field].Value)".Trim()
           if ($godotCommit -notmatch '^[0-9a-f]{40}$' -or $godotBase -notmatch '^[0-9a-f]{40}$') {
-              throw "manifest.json must contain full base_ref and wechat_glx_ref commits"
+              throw "adapter manifest must contain full Godot base and adapter commits"
+          }
+          $emscripten = "$($manifest.toolchain.emscripten)".Trim()
+          if (-not $emscripten) {
+              throw "adapter manifest must pin toolchain.emscripten"
           }
 
           "SOURCE_COMMIT=$sourceCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "EXPECTED_GODOT_COMMIT=$godotCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "GODOT_BASE=$godotBase" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EMSCRIPTEN_VERSION=$emscripten" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "BUILD_SCRIPT=$($contract.build_script)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "BUILD_PROFILE=$($contract.profile)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Checkout branch-pinned Godot source
         shell: pwsh
@@ -248,11 +290,11 @@ jobs:
           python "$emsdk\emsdk.py" activate $env:EMSCRIPTEN_VERSION
           if ($LASTEXITCODE -ne 0) { throw "emsdk activate failed" }
 
-          $buildScript = "$env:GITHUB_WORKSPACE\ci\build_wechat_glx.ps1"
+          $buildScript = Join-Path $env:GITHUB_WORKSPACE $env:BUILD_SCRIPT
           if ("${{ inputs.include_ad }}" -eq "false") {
-              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}")
+              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Profile $env:BUILD_PROFILE
           } else {
-              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Ad
+              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Profile $env:BUILD_PROFILE -Ad
           }
           if ($LASTEXITCODE -ne 0) { throw "WeChat GLX build failed" }
 
@@ -455,13 +497,22 @@ jobs:
           source_branch, godot_version = sys.argv[1:]
           with open("product/adapters.json", encoding="utf-8") as handle:
               adapters = json.load(handle)["adapters"]
-          if not any(
-              entry.get("branch") == source_branch and entry.get("godot_version") == godot_version
-              for entry in adapters
-          ):
+          adapter = next(
+              (
+                  entry
+                  for entry in adapters
+                  if entry.get("branch") == source_branch
+                  and entry.get("godot_version") == godot_version
+              ),
+              None,
+          )
+          if adapter is None:
               raise SystemExit(
                   f"{source_branch} is not the registered template source for Godot {godot_version}"
               )
+          build = adapter.get("build")
+          if not isinstance(build, dict) or not build.get("production"):
+              raise SystemExit(f"{source_branch} is not registered for production template releases")
           PY
 
           draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"

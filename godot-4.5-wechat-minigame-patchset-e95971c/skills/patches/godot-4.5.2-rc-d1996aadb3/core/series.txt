@@ -1,1 +1,0 @@
-001-build-and-runtime-glue.patch

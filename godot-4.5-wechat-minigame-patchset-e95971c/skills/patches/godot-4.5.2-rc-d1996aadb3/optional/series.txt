@@ -1,2 +1,0 @@
-001-export-preset-api.patch
-002-branding.patch
