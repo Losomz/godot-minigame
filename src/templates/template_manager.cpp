@@ -37,7 +37,7 @@ static bool _parse_http_url(const String &url, String &host, int &port, String &
 
 namespace {
 constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.8";
+constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.9";
 
 String _sanitize_cache_component(const String &value) {
     String sanitized = value.strip_edges().to_lower();

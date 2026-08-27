@@ -78,6 +78,17 @@ class ProductToolTests(unittest.TestCase):
         self.assertIn("DirAccess.rename_absolute(backup_path, addon_path)", helper_source)
         self.assertIn('PackedStringArray(["--editor", "--path", project_path])', helper_source)
 
+    def test_settings_panel_layout_is_scrollable_and_responsive(self):
+        settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        dock_source = (ROOT / "src/editor/toolkit_dock.cpp").read_text(encoding="utf-8")
+        self.assertIn("ScrollContainer::SCROLL_MODE_DISABLED", settings_source)
+        self.assertIn("ScrollContainer::SCROLL_MODE_AUTO", settings_source)
+        self.assertGreaterEqual(settings_source.count("HFlowContainer"), 4)
+        self.assertGreaterEqual(settings_source.count("GridContainer"), 2)
+        self.assertIn("TextServer::AUTOWRAP_WORD_SMART", settings_source)
+        self.assertNotIn("TabContainer", dock_source)
+        self.assertNotIn('add_theme_constant_override("margin_left", -4)', dock_source)
+
     def test_promote_template_updates_catalog_and_projection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -1,8 +1,6 @@
 #pragma once
 
 #include <godot_cpp/classes/margin_container.hpp>
-#include <godot_cpp/classes/tab_container.hpp>
-#include <godot_cpp/classes/v_box_container.hpp>
 #include <godot_cpp/core/class_db.hpp>
 
 namespace toolkit {
@@ -16,9 +14,6 @@ class GodotMinigameDock : public godot::MarginContainer {
     GDCLASS(GodotMinigameDock, godot::MarginContainer);
 
 private:
-    godot::TabContainer* tab_container = nullptr;
-
-    // 四个功能面板
     SettingsPanel* settings_panel = nullptr;
 
 protected:

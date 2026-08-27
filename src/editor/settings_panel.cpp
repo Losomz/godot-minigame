@@ -3,7 +3,9 @@
 
 #include <godot_cpp/classes/config_file.hpp>
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/v_box_container.hpp>
+#include <godot_cpp/classes/grid_container.hpp>
+#include <godot_cpp/classes/h_separator.hpp>
+#include <godot_cpp/classes/text_server.hpp>
 
 using namespace godot;
 
@@ -14,10 +16,10 @@ SettingsPanel::SettingsPanel() {
 	set_name("Settings");
 
 	set_anchors_preset(Control::PRESET_FULL_RECT);
-	add_theme_constant_override("margin_left", 4);
-	add_theme_constant_override("margin_right", 4);
-	add_theme_constant_override("margin_top", 4);
-	add_theme_constant_override("margin_bottom", 4);
+	add_theme_constant_override("margin_left", 12);
+	add_theme_constant_override("margin_right", 12);
+	add_theme_constant_override("margin_top", 8);
+	add_theme_constant_override("margin_bottom", 8);
 }
 
 SettingsPanel::~SettingsPanel() {
@@ -93,193 +95,89 @@ void SettingsPanel::_ready() {
 }
 
 void SettingsPanel::create_interface() {
-	content_control = memnew(Control);
-	content_control->set_anchors_preset(Control::PRESET_FULL_RECT);
-	add_child(content_control);
+	VBoxContainer *layout_root = memnew(VBoxContainer);
+	layout_root->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	layout_root->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+	add_child(layout_root);
+
+	scroll_container = memnew(ScrollContainer);
+	scroll_container->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	scroll_container->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+	scroll_container->set_horizontal_scroll_mode(ScrollContainer::SCROLL_MODE_DISABLED);
+	scroll_container->set_vertical_scroll_mode(ScrollContainer::SCROLL_MODE_AUTO);
+	scroll_container->set_follow_focus(true);
+	layout_root->add_child(scroll_container);
 
 	main_vbox = memnew(VBoxContainer);
 	main_vbox->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->set_v_size_flags(Control::SIZE_EXPAND_FILL);
-	content_control->add_child(main_vbox);
+	main_vbox->add_theme_constant_override("separation", 8);
+	scroll_container->add_child(main_vbox);
 
-	plugin_update_row = memnew(HBoxContainer);
-	main_vbox->add_child(plugin_update_row);
+	auto add_section_title = [this](const String &text) {
+		Label *title = memnew(Label);
+		title->set_text(text);
+		title->set_theme_type_variation("HeaderSmall");
+		title->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+		main_vbox->add_child(title);
+	};
+	auto add_section_separator = [this]() {
+		HSeparator *separator = memnew(HSeparator);
+		separator->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+		main_vbox->add_child(separator);
+	};
+	auto configure_field_label = [](Label *label) {
+		label->set_custom_minimum_size(Vector2(96, 0));
+		label->set_vertical_alignment(VerticalAlignment::VERTICAL_ALIGNMENT_CENTER);
+	};
+	auto configure_status_label = [](Label *label) {
+		label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+		label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	};
 
-	plugin_update_label = memnew(Label);
-	plugin_update_label->set_text(String::utf8("插件更新：尚未检查"));
-	plugin_update_label->set_custom_minimum_size(Vector2(0, 30));
-	plugin_update_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	plugin_update_row->add_child(plugin_update_label);
+	add_section_title(String::utf8("模板管理"));
 
-	check_plugin_update_button = memnew(Button);
-	check_plugin_update_button->set_text(String::utf8("检查插件更新"));
-	check_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_check_plugin_update_pressed));
-	plugin_update_row->add_child(check_plugin_update_button);
-
-	download_plugin_update_button = memnew(Button);
-	download_plugin_update_button->set_text(String::utf8("下载插件更新"));
-	download_plugin_update_button->set_disabled(true);
-	download_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_download_plugin_update_pressed));
-	plugin_update_row->add_child(download_plugin_update_button);
-
-	update_restart_dialog = memnew(ConfirmationDialog);
-	update_restart_dialog->set_title(String::utf8("安装插件更新"));
-	update_restart_dialog->set_text(String::utf8("将保存当前场景和项目设置，关闭 Godot，安装已下载的插件更新，然后重新打开当前项目。是否继续？"));
-	update_restart_dialog->get_ok_button()->set_text(String::utf8("安装并重启"));
-	update_restart_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_update_restart));
-	add_child(update_restart_dialog);
-
-	distribution_provider_row = memnew(HBoxContainer);
-	distribution_provider_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(distribution_provider_row);
-
-	distribution_provider_title_label = memnew(Label);
-	distribution_provider_title_label->set_text(String::utf8("模板分发源"));
-	distribution_provider_title_label->set_custom_minimum_size(Vector2(72, 30));
-	distribution_provider_row->add_child(distribution_provider_title_label);
-
-	distribution_provider_selector = memnew(OptionButton);
-	distribution_provider_selector->set_custom_minimum_size(Vector2(120, 0));
-	distribution_provider_selector->add_item("AtomGit");
-	distribution_provider_selector->add_item("GitHub");
-	distribution_provider_selector->add_item("Gitee");
-	distribution_provider_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_distribution_provider_selected));
-	distribution_provider_row->add_child(distribution_provider_selector);
-
-	Control *distribution_provider_spacer = memnew(Control);
-	distribution_provider_spacer->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	distribution_provider_row->add_child(distribution_provider_spacer);
-
-	save_config_button = memnew(Button);
-	save_config_button->set_text(String::utf8("保存并刷新"));
-	save_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_save_distribution_config_pressed));
-	distribution_provider_row->add_child(save_config_button);
-
-	reset_config_button = memnew(Button);
-	reset_config_button->set_text(String::utf8("恢复默认配置"));
-	reset_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_reset_config_pressed));
-	distribution_provider_row->add_child(reset_config_button);
-
-	refresh_versions_button = memnew(Button);
-	refresh_versions_button->set_text(String::utf8("刷新远端索引"));
-	refresh_versions_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_refresh_versions_pressed));
-	distribution_provider_row->add_child(refresh_versions_button);
-
-	Control *distribution_repo_gap = memnew(Control);
-	distribution_repo_gap->set_custom_minimum_size(Vector2(0, 5));
-	main_vbox->add_child(distribution_repo_gap);
-
-	release_config_row = memnew(HBoxContainer);
-	release_config_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(release_config_row);
-
-	owner_label = memnew(Label);
-	owner_label->set_text("Owner");
-	owner_label->set_custom_minimum_size(Vector2(48, 30));
-	release_config_row->add_child(owner_label);
-
-	owner_input = memnew(LineEdit);
-	owner_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	owner_input->set_custom_minimum_size(Vector2(120, 0));
-	owner_input->set_stretch_ratio(1.2f);
-	owner_input->set_placeholder("Losomz");
-	release_config_row->add_child(owner_input);
-
-	repo_label = memnew(Label);
-	repo_label->set_text("Repo");
-	repo_label->set_custom_minimum_size(Vector2(44, 30));
-	release_config_row->add_child(repo_label);
-
-	repo_input = memnew(LineEdit);
-	repo_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	repo_input->set_custom_minimum_size(Vector2(160, 0));
-	repo_input->set_stretch_ratio(1.6f);
-	repo_input->set_placeholder("godot-minigame");
-	release_config_row->add_child(repo_input);
-
-	tag_label = memnew(Label);
-	tag_label->set_text("Tag");
-	tag_label->set_custom_minimum_size(Vector2(36, 30));
-	release_config_row->add_child(tag_label);
-
-	tag_input = memnew(LineEdit);
-	tag_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	tag_input->set_custom_minimum_size(Vector2(120, 0));
-	tag_input->set_stretch_ratio(1.0f);
-	tag_input->set_placeholder("latest / 4.5.1");
-	release_config_row->add_child(tag_input);
-
-	action_status_label = memnew(Label);
-	action_status_label->set_text(String::utf8("配置已就绪"));
-	action_status_label->set_custom_minimum_size(Vector2(0, 30));
-	main_vbox->add_child(action_status_label);
-
-	Control *template_cache_gap = memnew(Control);
-	template_cache_gap->set_custom_minimum_size(Vector2(0, 5));
-	main_vbox->add_child(template_cache_gap);
-
-	HBoxContainer *template_selection_row = memnew(HBoxContainer);
-	template_selection_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(template_selection_row);
+	GridContainer *template_form = memnew(GridContainer);
+	template_form->set_columns(2);
+	template_form->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(template_form);
 
 	Label *template_selection_label = memnew(Label);
 	template_selection_label->set_text(String::utf8("当前模板"));
-	template_selection_label->set_custom_minimum_size(Vector2(72, 30));
-	template_selection_row->add_child(template_selection_label);
+	configure_field_label(template_selection_label);
+	template_form->add_child(template_selection_label);
 
 	template_version_selector = memnew(OptionButton);
 	template_version_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	template_version_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_template_version_selected));
-	template_selection_row->add_child(template_version_selector);
-
-	HBoxContainer *custom_template_row = memnew(HBoxContainer);
-	custom_template_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(custom_template_row);
+	template_form->add_child(template_version_selector);
 
 	Label *custom_template_label = memnew(Label);
 	custom_template_label->set_text(String::utf8("自定义 TPZ"));
-	custom_template_label->set_custom_minimum_size(Vector2(72, 30));
-	custom_template_row->add_child(custom_template_label);
+	configure_field_label(custom_template_label);
+	template_form->add_child(custom_template_label);
+
+	VBoxContainer *custom_template_field = memnew(VBoxContainer);
+	custom_template_field->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	template_form->add_child(custom_template_field);
 
 	custom_template_url_input = memnew(LineEdit);
 	custom_template_url_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	custom_template_url_input->set_placeholder("https://.../template.tpz");
-	custom_template_row->add_child(custom_template_url_input);
+	custom_template_field->add_child(custom_template_url_input);
+
+	HFlowContainer *custom_template_actions = memnew(HFlowContainer);
+	custom_template_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	custom_template_field->add_child(custom_template_actions);
 
 	use_custom_template_button = memnew(Button);
 	use_custom_template_button->set_text(String::utf8("设为当前"));
 	use_custom_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_use_custom_template_pressed));
-	custom_template_row->add_child(use_custom_template_button);
-
-	template_cache_row = memnew(HBoxContainer);
-	template_cache_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(template_cache_row);
+	custom_template_actions->add_child(use_custom_template_button);
 
 	template_cache_label = memnew(Label);
 	template_cache_label->set_text(String::utf8("模板缓存："));
-	template_cache_label->set_custom_minimum_size(Vector2(0, 30));
-	template_cache_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	template_cache_row->add_child(template_cache_label);
-
-	prefetch_template_button = memnew(Button);
-	prefetch_template_button->set_text(String::utf8("下载"));
-	prefetch_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_prefetch_template_pressed));
-	template_cache_row->add_child(prefetch_template_button);
-
-	replace_template_button = memnew(Button);
-	replace_template_button->set_text(String::utf8("重新下载并覆盖"));
-	replace_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_replace_template_pressed));
-	template_cache_row->add_child(replace_template_button);
-
-	remove_template_button = memnew(Button);
-	remove_template_button->set_text(String::utf8("删除当前缓存"));
-	remove_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_remove_template_pressed));
-	template_cache_row->add_child(remove_template_button);
-
-	clear_templates_button = memnew(Button);
-	clear_templates_button->set_text(String::utf8("清空全部"));
-	clear_templates_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_clear_templates_pressed));
-	template_cache_row->add_child(clear_templates_button);
+	configure_status_label(template_cache_label);
+	main_vbox->add_child(template_cache_label);
 
 	template_cache_progress = memnew(ProgressBar);
 	template_cache_progress->set_custom_minimum_size(Vector2(0, 6));
@@ -290,16 +188,141 @@ void SettingsPanel::create_interface() {
 	template_cache_progress->set_visible(false);
 	main_vbox->add_child(template_cache_progress);
 
+	HFlowContainer *template_cache_actions = memnew(HFlowContainer);
+	template_cache_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(template_cache_actions);
+
+	prefetch_template_button = memnew(Button);
+	prefetch_template_button->set_text(String::utf8("下载"));
+	prefetch_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_prefetch_template_pressed));
+	template_cache_actions->add_child(prefetch_template_button);
+
+	replace_template_button = memnew(Button);
+	replace_template_button->set_text(String::utf8("重新下载并覆盖"));
+	replace_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_replace_template_pressed));
+	template_cache_actions->add_child(replace_template_button);
+
+	remove_template_button = memnew(Button);
+	remove_template_button->set_text(String::utf8("删除当前缓存"));
+	remove_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_remove_template_pressed));
+	template_cache_actions->add_child(remove_template_button);
+
+	clear_templates_button = memnew(Button);
+	clear_templates_button->set_text(String::utf8("清空全部"));
+	clear_templates_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_clear_templates_pressed));
+	template_cache_actions->add_child(clear_templates_button);
+
+	add_section_separator();
+	add_section_title(String::utf8("模板分发源"));
+
+	GridContainer *distribution_form = memnew(GridContainer);
+	distribution_form->set_columns(2);
+	distribution_form->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(distribution_form);
+
+	distribution_provider_title_label = memnew(Label);
+	distribution_provider_title_label->set_text(String::utf8("分发源"));
+	configure_field_label(distribution_provider_title_label);
+	distribution_form->add_child(distribution_provider_title_label);
+
+	distribution_provider_selector = memnew(OptionButton);
+	distribution_provider_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	distribution_provider_selector->add_item("AtomGit");
+	distribution_provider_selector->add_item("GitHub");
+	distribution_provider_selector->add_item("Gitee");
+	distribution_provider_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_distribution_provider_selected));
+	distribution_form->add_child(distribution_provider_selector);
+
+	owner_label = memnew(Label);
+	owner_label->set_text("Owner");
+	configure_field_label(owner_label);
+	distribution_form->add_child(owner_label);
+
+	owner_input = memnew(LineEdit);
+	owner_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	owner_input->set_placeholder("Losomz");
+	distribution_form->add_child(owner_input);
+
+	repo_label = memnew(Label);
+	repo_label->set_text("Repo");
+	configure_field_label(repo_label);
+	distribution_form->add_child(repo_label);
+
+	repo_input = memnew(LineEdit);
+	repo_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	repo_input->set_placeholder("godot-minigame");
+	distribution_form->add_child(repo_input);
+
+	tag_label = memnew(Label);
+	tag_label->set_text("Tag");
+	configure_field_label(tag_label);
+	distribution_form->add_child(tag_label);
+
+	tag_input = memnew(LineEdit);
+	tag_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	tag_input->set_placeholder("latest / 4.5.1");
+	distribution_form->add_child(tag_input);
+
+	HFlowContainer *distribution_actions = memnew(HFlowContainer);
+	distribution_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(distribution_actions);
+
+	save_config_button = memnew(Button);
+	save_config_button->set_text(String::utf8("保存并刷新"));
+	save_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_save_distribution_config_pressed));
+	distribution_actions->add_child(save_config_button);
+
+	refresh_versions_button = memnew(Button);
+	refresh_versions_button->set_text(String::utf8("刷新远端索引"));
+	refresh_versions_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_refresh_versions_pressed));
+	distribution_actions->add_child(refresh_versions_button);
+
+	reset_config_button = memnew(Button);
+	reset_config_button->set_text(String::utf8("恢复默认配置"));
+	reset_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_reset_config_pressed));
+	distribution_actions->add_child(reset_config_button);
+
+	add_section_separator();
+	add_section_title(String::utf8("插件更新"));
+
+	plugin_update_label = memnew(Label);
+	plugin_update_label->set_text(String::utf8("插件更新：尚未检查"));
+	configure_status_label(plugin_update_label);
+	main_vbox->add_child(plugin_update_label);
+
+	HFlowContainer *plugin_update_actions = memnew(HFlowContainer);
+	plugin_update_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(plugin_update_actions);
+
+	check_plugin_update_button = memnew(Button);
+	check_plugin_update_button->set_text(String::utf8("检查插件更新"));
+	check_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_check_plugin_update_pressed));
+	plugin_update_actions->add_child(check_plugin_update_button);
+
+	download_plugin_update_button = memnew(Button);
+	download_plugin_update_button->set_text(String::utf8("下载插件更新"));
+	download_plugin_update_button->set_disabled(true);
+	download_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_download_plugin_update_pressed));
+	plugin_update_actions->add_child(download_plugin_update_button);
+
+	action_status_label = memnew(Label);
+	action_status_label->set_text(String::utf8("配置已就绪"));
+	configure_status_label(action_status_label);
+	layout_root->add_child(action_status_label);
+
+	update_restart_dialog = memnew(ConfirmationDialog);
+	update_restart_dialog->set_title(String::utf8("安装插件更新"));
+	update_restart_dialog->set_text(String::utf8("将保存当前场景和项目设置，关闭 Godot，安装已下载的插件更新，然后重新打开当前项目。是否继续？"));
+	update_restart_dialog->get_ok_button()->set_text(String::utf8("安装并重启"));
+	update_restart_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_update_restart));
+	add_child(update_restart_dialog);
+
 	clear_templates_dialog = memnew(ConfirmationDialog);
 	clear_templates_dialog->set_title(String::utf8("清空全局模板缓存"));
 	clear_templates_dialog->set_text(String::utf8("将删除所有项目共享的已下载模板。此操作不会修改模板分发源。"));
 	clear_templates_dialog->get_ok_button()->set_text(String::utf8("清空"));
 	clear_templates_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_clear_templates));
 	add_child(clear_templates_dialog);
-
-	Control *spacer = memnew(Control);
-	spacer->set_v_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(spacer);
 }
 
 void SettingsPanel::_on_check_plugin_update_pressed() {

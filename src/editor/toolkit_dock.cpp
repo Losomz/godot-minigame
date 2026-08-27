@@ -1,8 +1,6 @@
 #include "editor/toolkit_dock.h"
 #include "editor/settings_panel.h"
 #include "templates/template_manager.h"
-#include <godot_cpp/variant/utility_functions.hpp>
-#include <godot_cpp/classes/style_box_empty.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include "core/logging.h"
 
@@ -16,11 +14,6 @@ namespace toolkit
         GodotMinigameDock::GodotMinigameDock()
         {
             set_name("Minigame");
-            // 设置边距，完全参考Godot调试面板的样式
-            // 使用更合适的边距值，适合编辑器面板
-            add_theme_constant_override("margin_left", -4);
-            add_theme_constant_override("margin_right", -4);
-            add_theme_constant_override("margin_top", -4);
         }
 
         GodotMinigameDock::~GodotMinigameDock()
@@ -53,24 +46,10 @@ namespace toolkit
 
         void GodotMinigameDock::create_panels()
         {
-            // 直接创建tab container，MarginContainer作为根节点提供边距
-            tab_container = memnew(TabContainer);
-            tab_container->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-            tab_container->set_v_size_flags(Control::SIZE_EXPAND_FILL);
-            tab_container->set_custom_minimum_size(Vector2(300, 200)); // 确保有足够空间显示所有标签
-
-            Ref<StyleBoxEmpty> empty;
-            empty.instantiate();
-            tab_container->add_theme_stylebox_override("panel", empty);
-
-            // 设置标签栏样式，类似编辑器面板
-            tab_container->set_tabs_rearrange_group(-1); // 禁用拖拽重排序
-            add_child(tab_container);
-
-            // Create settings panel (设置)
             settings_panel = memnew(SettingsPanel);
-            settings_panel->set_name(String::utf8("设置"));
-            tab_container->add_child(settings_panel);
+            settings_panel->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+            settings_panel->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+            add_child(settings_panel);
 
             TOOLKIT_LOG("GodotMinigameDock: All panels created successfully");
         }
