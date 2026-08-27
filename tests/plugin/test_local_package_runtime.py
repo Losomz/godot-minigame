@@ -40,6 +40,11 @@ class LocalPackageRuntimeTests(unittest.TestCase):
     def test_real_update_manager_validates_caches_and_cleans_packages(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            runtime_env = os.environ.copy()
+            runtime_env["APPDATA"] = str(root / "appdata/roaming")
+            runtime_env["LOCALAPPDATA"] = str(root / "appdata/local")
+            Path(runtime_env["APPDATA"]).mkdir(parents=True)
+            Path(runtime_env["LOCALAPPDATA"]).mkdir(parents=True)
             project = root / "project"
             addon = project / "addons/godot-minigame"
             shutil.copytree(ROOT / "plugin/addon", addon)
@@ -85,6 +90,10 @@ class LocalPackageRuntimeTests(unittest.TestCase):
 
             manifest = root / "fixtures.json"
             manifest.write_text(json.dumps(cases), encoding="utf-8")
+            local_template = fixtures / "arbitrary-local.tpz"
+            with zipfile.ZipFile(local_template, "w") as package:
+                package.writestr("game.json", "{}")
+                package.writestr("engine/index.js", "")
             command = [
                 str(GODOT_BIN),
                 "--headless",
@@ -97,15 +106,14 @@ class LocalPackageRuntimeTests(unittest.TestCase):
                 "300",
                 "--",
                 str(manifest),
+                str(local_template),
             ]
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
-            self.assertNotIn("LOCAL_PACKAGE_TEST_FAILED", completed.stdout)
-            self.assertIn("Local plugin package runtime tests passed", completed.stdout)
-            windows_headless_shutdown = os.name == "nt" and completed.returncode == 0xC0000374
-            self.assertTrue(
-                completed.returncode == 0 or windows_headless_shutdown,
-                completed.stdout + completed.stderr,
+            completed = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=runtime_env
             )
+            self.assertNotIn("LOCAL_PACKAGE_TEST_FAILED", completed.stdout)
+            self.assertIn("Local package and template runtime tests passed", completed.stdout)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
 
 if __name__ == "__main__":

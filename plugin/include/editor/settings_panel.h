@@ -48,6 +48,8 @@ private:
 	godot::OptionButton *template_version_selector = nullptr;
 	godot::LineEdit *custom_template_url_input = nullptr;
 	godot::Button *use_custom_template_button = nullptr;
+	godot::Button *select_local_template_button = nullptr;
+	godot::EditorFileDialog *local_template_file_dialog = nullptr;
 	godot::Button *prefetch_template_button = nullptr;
 	godot::Button *replace_template_button = nullptr;
 	godot::Button *remove_template_button = nullptr;
@@ -78,6 +80,8 @@ private:
 	void _on_active_template_changed(const godot::Dictionary &template_info);
 	void _on_template_version_selected(int index);
 	void _on_use_custom_template_pressed();
+	void _on_select_local_template_pressed();
+	void _on_local_template_file_selected(const godot::String &path);
 	void _on_prefetch_template_pressed();
 	void _on_replace_template_pressed();
 	void _on_remove_template_pressed();

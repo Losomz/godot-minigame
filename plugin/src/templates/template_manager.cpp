@@ -9,7 +9,6 @@
 #include <godot_cpp/classes/http_request.hpp>
 #include <godot_cpp/classes/http_client.hpp>
 #include <godot_cpp/classes/json.hpp>
-#include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/zip_reader.hpp>
@@ -247,7 +246,7 @@ TemplateManager::TemplateManager() {
 }
 
 TemplateManager::~TemplateManager() {
-    _join_prefetch_thread();
+    cancel_active_template_request();
     if (singleton == this) {
         singleton = nullptr;
     }
@@ -263,7 +262,7 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_template_choices"), &TemplateManager::get_template_choices);
     ClassDB::bind_method(D_METHOD("get_active_template_info"), &TemplateManager::get_active_template_info);
     ClassDB::bind_method(D_METHOD("set_active_catalog_template", "version"), &TemplateManager::set_active_catalog_template);
-    ClassDB::bind_method(D_METHOD("set_active_custom_template", "url"), &TemplateManager::set_active_custom_template);
+    ClassDB::bind_method(D_METHOD("set_active_custom_template", "source"), &TemplateManager::set_active_custom_template);
     ClassDB::bind_method(D_METHOD("resolve_active_template_path"), &TemplateManager::resolve_active_template_path);
     ClassDB::bind_method(D_METHOD("get_best_version_for_editor"), &TemplateManager::get_best_version_for_editor);
     ClassDB::bind_method(
@@ -329,6 +328,9 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_download_timeout"), &TemplateManager::get_download_timeout);
 
     ClassDB::bind_method(D_METHOD("_on_versions_download_completed"), &TemplateManager::_on_versions_download_completed);
+    ClassDB::bind_method(
+            D_METHOD("_on_template_download_request_completed", "result", "response_code", "headers", "body"),
+            &TemplateManager::_on_template_download_request_completed);
 
     ADD_SIGNAL(MethodInfo("versions_loaded"));
     ADD_SIGNAL(MethodInfo("versions_refresh_failed", PropertyInfo(Variant::INT, "error_code")));
@@ -806,6 +808,7 @@ Dictionary TemplateManager::get_active_template_info() const {
     info["kind"] = active_template_kind;
     info["version"] = active_template_version;
     info["url"] = active_custom_url;
+    info["source"] = active_template_kind == "custom" ? (active_custom_url.is_absolute_path() ? String("local") : String("remote")) : String("catalog");
     const String filename = get_active_template_filename();
     info["filename"] = filename;
     if (active_template_kind == "custom") {
@@ -844,10 +847,12 @@ Error TemplateManager::set_active_catalog_template(const String &version) {
     return OK;
 }
 
-Error TemplateManager::set_active_custom_template(const String &url) {
-    const String normalized = url.strip_edges();
+Error TemplateManager::set_active_custom_template(const String &source) {
+    const String normalized = source.strip_edges();
     const String path_without_query = normalized.get_slice("?", 0).to_lower();
-    if ((!normalized.begins_with("https://") && !normalized.begins_with("http://")) || !path_without_query.ends_with(".tpz")) {
+    const bool remote = normalized.begins_with("https://") || normalized.begins_with("http://");
+    const bool local = normalized.is_absolute_path() && FileAccess::file_exists(normalized) && validate_template_archive(normalized);
+    if ((!remote && !local) || !path_without_query.ends_with(".tpz")) {
         return ERR_INVALID_PARAMETER;
     }
     active_template_kind = "custom";
@@ -1190,225 +1195,182 @@ String TemplateManager::get_template_path(const String& filename) const {
     return "";
 }
 
-Error TemplateManager::download_template_sync(const String& filename, const String& target_path) {
-    String download_url = build_download_url(filename);
-    if (download_url.is_empty()) {
-        UtilityFunctions::push_warning(String("Template download URL is empty for: ") + filename);
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_INVALID_PARAMETER;
-    }
-    String output_path = target_path.is_empty() ? get_download_cache_path(filename) : target_path;
-    return download_template_url_sync(filename, download_url, output_path);
-}
-
-Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path) {
-    if (output_path.is_empty()) {
-        UtilityFunctions::push_warning("Template output path is empty.");
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_FILE_CANT_WRITE;
-    }
-
-    if (FileAccess::file_exists(output_path)) {
-        update_download_state(filename, "completed", 1.0f);
-        return OK;
-    }
-
-    String cache_dir = output_path.get_base_dir();
-    if (cache_dir.is_empty()) {
-        UtilityFunctions::push_warning(String("Template cache directory is empty for output path: ") + output_path);
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_FILE_CANT_WRITE;
-    }
-    if (!UserDataPath::create_directory_if_not_exists(cache_dir)) {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot create cache directory: ", cache_dir, "[/color]");
-        UtilityFunctions::push_warning(String("Template cache directory create failed: ") + cache_dir);
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_FILE_CANT_WRITE;
-    }
-    update_download_state(filename, "downloading", 0.0f);
-    call_deferred("emit_signal", "template_download_progress", filename, 0.0f);
-
-    int64_t last_emit_ticks = 0;
-    float last_emit_fraction = -1.0f;
-    auto emit_progress = [&](float fraction) {
-        call_deferred("emit_signal", "template_download_progress", filename, fraction);
-    };
-    auto report_progress = [&](int64_t downloaded, int64_t total) {
-        String note;
-        float fraction = 0.0f;
-        if (total > 0) {
-            fraction = float((double)downloaded / (double)total);
-            if (fraction > 1.0f) {
-                fraction = 1.0f;
-            }
-        } else {
-            note = String::num_int64(downloaded / (1024 * 1024)) + " MiB";
-        }
-
-        int64_t now = Time::get_singleton()->get_ticks_msec();
-        bool significant = fraction - last_emit_fraction >= 0.01f || note != String::utf8("");
-        bool enough_time = now - last_emit_ticks >= 100;
-        if (!significant && !enough_time) {
-            return;
-        }
-        last_emit_ticks = now;
-        last_emit_fraction = fraction;
-        update_download_state(filename, "downloading", fraction, note);
-        emit_progress(fraction);
-    };
-    PackedByteArray response_body;
-    int response_code = 0;
-    Error request_err = ERR_CANT_CONNECT;
-    for (int attempt = 0; attempt < 5; attempt++) {
-        if (attempt > 0) {
-            update_download_state(
-                    filename, "downloading", last_emit_fraction < 0.0f ? 0.0f : last_emit_fraction,
-                    String::utf8("第 ") + String::num_int64(attempt + 1) + String::utf8("/5 次重试"));
-        }
-        request_err = http_get_sync_follow_redirects(download_url, response_body, response_code, nullptr, report_progress);
-        if (request_err == OK || request_err == ERR_FILE_NOT_FOUND || request_err == ERR_INVALID_PARAMETER) {
-            break;
-        }
-        OS::get_singleton()->delay_msec(250 * (attempt + 1));
-    }
-    if (request_err != OK) {
-        update_download_state(filename, "failed", 0.0f);
-        return request_err;
-    }
-
-    Ref<FileAccess> out = FileAccess::open(output_path, FileAccess::WRITE);
-    if (out.is_null()) {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot open output file for write: ", output_path, "[/color]");
-        UtilityFunctions::push_warning(String("Template output write failed: ") + output_path);
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_FILE_CANT_WRITE;
-    }
-
-    out->store_buffer(response_body);
-    out->close();
-    update_download_state(filename, "completed", 1.0f);
-    emit_progress(1.0f);
-    return OK;
-}
-
 Error TemplateManager::download_active_template_async(bool force_replace) {
     if (is_prefetch_active()) {
         return ERR_BUSY;
     }
-    _join_prefetch_thread();
-    prefetch_pinned_filename = active_template_kind == "catalog" ? get_active_template_filename() : String();
-    prefetch_custom_url = active_template_kind == "custom" ? active_custom_url : String();
-    if (prefetch_pinned_filename.is_empty() && prefetch_custom_url.is_empty()) {
+
+    const bool custom_request = active_template_kind == "custom";
+    const bool local_request = custom_request && active_custom_url.is_absolute_path();
+    const String filename = custom_request ? get_custom_template_cache_path(active_custom_url).get_file() : get_active_template_filename();
+    const String output_path = custom_request ? get_custom_template_cache_path(active_custom_url) : get_download_cache_path(filename);
+    if (filename.is_empty() || output_path.is_empty()) {
         return ERR_INVALID_PARAMETER;
     }
-    prefetch_force_replace = force_replace;
-    prefetch_running = true;
-    prefetch_thread = memnew(Thread);
-    prefetch_thread->start(callable_mp(this, &TemplateManager::_prefetch_worker));
+
+    const bool cached_custom = custom_request && FileAccess::file_exists(output_path) && validate_template_archive(output_path);
+    const bool cached_catalog = !custom_request &&
+            ((is_template_bundled(filename) || is_template_embedded(filename)) ||
+                    (is_template_downloaded(filename) && verify_template_file(filename, output_path) && validate_template_archive(output_path)));
+    if (!force_replace && (cached_custom || cached_catalog)) {
+        update_download_state(filename, "completed", 1.0f);
+        call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
+        call_deferred("emit_signal", "template_download_finished", filename, true);
+        return OK;
+    }
+
+    if (!UserDataPath::create_directory_if_not_exists(output_path.get_base_dir())) {
+        update_download_state(filename, "failed", 0.0f);
+        return ERR_FILE_CANT_WRITE;
+    }
+
+    const String temporary_path = output_path + String(".replacement.") +
+            String::num_int64(OS::get_singleton()->get_process_id());
+    DirAccess::remove_absolute(temporary_path);
+
+    if (local_request) {
+        Error err = validate_template_archive(active_custom_url)
+                ? DirAccess::copy_absolute(active_custom_url, temporary_path)
+                : ERR_FILE_CORRUPT;
+        if (err == OK && validate_template_archive(temporary_path)) {
+            err = publish_download_atomically(temporary_path, output_path);
+        }
+        if (err != OK) {
+            DirAccess::remove_absolute(temporary_path);
+            update_download_state(filename, "failed", 0.0f);
+            return err;
+        }
+        update_download_state(filename, "completed", 1.0f);
+        call_deferred("emit_signal", "template_inventory_changed");
+        call_deferred("emit_signal", "template_download_finished", filename, true);
+        return OK;
+    }
+
+    const String download_url = custom_request ? active_custom_url : build_download_url(filename);
+    if (download_url.is_empty()) {
+        return ERR_INVALID_PARAMETER;
+    }
+    EditorInterface *editor = EditorInterface::get_singleton();
+    Node *parent_node = editor ? editor->get_editor_main_screen() : nullptr;
+    if (!parent_node) {
+        update_download_state(filename, "failed", 0.0f);
+        return ERR_UNCONFIGURED;
+    }
+
+    HTTPRequest *request = memnew(HTTPRequest);
+    request->set_name("TemplateManager_TemplateRequest");
+    request->set_use_threads(false);
+    request->set_accept_gzip(false);
+    request->set_max_redirects(5);
+    request->set_timeout(download_timeout);
+    request->set_download_file(temporary_path);
+    parent_node->add_child(request);
+
+    template_request_id = request->get_instance_id();
+    template_request_active = true;
+    template_request_custom = custom_request;
+    template_request_filename = filename;
+    template_request_output_path = output_path;
+    template_request_temporary_path = temporary_path;
+
+    request->connect("request_completed", callable_mp(this, &TemplateManager::_on_template_download_request_completed));
+
+    PackedStringArray headers;
+    headers.append("User-Agent: GodotMinigame/1.0");
+    headers.append("Accept: application/zip, application/octet-stream, */*");
+    const Error request_err = request->request(download_url, headers);
+    if (request_err != OK) {
+        cancel_active_template_request();
+        DirAccess::remove_absolute(temporary_path);
+        update_download_state(filename, "failed", 0.0f);
+        return request_err;
+    }
+
+    update_download_state(filename, "downloading", 0.0f);
+    emit_signal("template_download_progress", filename, 0.0f);
     return OK;
 }
 
 bool TemplateManager::is_prefetch_active() const {
-    return prefetch_running || (prefetch_thread != nullptr && prefetch_thread->is_alive());
+    return template_request_active;
 }
 
-void TemplateManager::_join_prefetch_thread() {
-    if (prefetch_thread == nullptr) {
-        return;
-    }
-    if (prefetch_thread->is_alive()) {
-        prefetch_thread->wait_to_finish();
-    }
-    memdelete(prefetch_thread);
-    prefetch_thread = nullptr;
+HTTPRequest *TemplateManager::get_template_request() const {
+    return Object::cast_to<HTTPRequest>(ObjectDB::get_instance(uint64_t(template_request_id)));
 }
 
-void TemplateManager::_prefetch_worker() {
-    String filename = prefetch_pinned_filename;
-    String custom_url = prefetch_custom_url;
-    const bool force_replace = prefetch_force_replace;
-    prefetch_pinned_filename = String();
-    prefetch_custom_url = String();
-    prefetch_force_replace = false;
+void TemplateManager::release_template_request(bool cancel_request) {
+    HTTPRequest *request = get_template_request();
+    if (request) {
+        if (cancel_request) {
+            request->cancel_request();
+        }
+        const Callable completed_callable = callable_mp(this, &TemplateManager::_on_template_download_request_completed);
+        if (request->is_connected("request_completed", completed_callable)) {
+            request->disconnect("request_completed", completed_callable);
+        }
+        request->queue_free();
+    }
+    template_request_id = ObjectID();
+}
 
-    if (!custom_url.is_empty()) {
-        filename = get_custom_template_cache_path(custom_url).get_file();
-        const String output_path = get_custom_template_cache_path(custom_url);
-        const String temporary_path = output_path + String(".replacement");
-        DirAccess::make_dir_recursive_absolute(output_path.get_base_dir());
+void TemplateManager::cancel_active_template_request() {
+    const String temporary_path = template_request_temporary_path;
+    release_template_request(true);
+    template_request_active = false;
+    template_request_custom = false;
+    template_request_filename = "";
+    template_request_output_path = "";
+    template_request_temporary_path = "";
+    if (!temporary_path.is_empty()) {
         DirAccess::remove_absolute(temporary_path);
-        if (!force_replace && FileAccess::file_exists(output_path) && validate_template_archive(output_path)) {
-            update_download_state(filename, "completed", 1.0f);
-            call_deferred("emit_signal", "template_download_finished", filename, true);
-            prefetch_running = false;
-            return;
-        }
-        Error custom_err = download_template_url_sync(filename, custom_url, temporary_path);
-        if (custom_err == OK && validate_template_archive(temporary_path)) {
-            custom_err = publish_download_atomically(temporary_path, output_path);
-        } else if (custom_err == OK) {
-            custom_err = ERR_FILE_CORRUPT;
-        }
-        if (custom_err != OK) {
-            DirAccess::remove_absolute(temporary_path);
-            update_download_state(filename, "failed", 0.0f);
-            call_deferred("emit_signal", "template_download_finished", filename, false);
-        } else {
-            update_download_state(filename, "completed", 1.0f);
-            call_deferred("emit_signal", "template_inventory_changed");
-            call_deferred("emit_signal", "template_download_finished", filename, true);
-        }
-        prefetch_running = false;
+    }
+}
+
+void TemplateManager::_on_template_download_request_completed(
+        int result,
+        int response_code,
+        const PackedStringArray &headers,
+        const PackedByteArray &body) {
+    (void)headers;
+    (void)body;
+    if (!template_request_active) {
         return;
     }
 
-    if (filename.is_empty()) {
-        filename = get_active_template_filename();
-    }
-    if (filename.is_empty()) {
-        update_download_state("__prefetch__", "failed", 0.0f,
-                String::utf8("没有可用的模板版本，请先在上方配置并刷新分发源"));
-        call_deferred("emit_signal", "template_download_finished", "__prefetch__", false);
-        prefetch_running = false;
-        return;
-    }
+    const String filename = template_request_filename;
+    const String output_path = template_request_output_path;
+    const String temporary_path = template_request_temporary_path;
+    const bool custom_request = template_request_custom;
+    release_template_request(false);
+    template_request_active = false;
+    template_request_custom = false;
+    template_request_filename = "";
+    template_request_output_path = "";
+    template_request_temporary_path = "";
 
-    if (!force_replace && (is_template_bundled(filename) || is_template_embedded(filename))) {
-        update_download_state(filename, "completed", 1.0f);
-        call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
-        call_deferred("emit_signal", "template_download_finished", filename, true);
-        prefetch_running = false;
-        return;
-    }
-    if (!force_replace && is_template_downloaded(filename) &&
-            verify_template_file(filename, get_download_cache_path(filename)) &&
-            validate_template_archive(get_download_cache_path(filename))) {
-        update_download_state(filename, "completed", 1.0f);
-        call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
-        call_deferred("emit_signal", "template_download_finished", filename, true);
-        prefetch_running = false;
-        return;
-    }
-
-    const String output_path = get_download_cache_path(filename);
-    const String temporary_path = output_path + String(".replacement");
-    DirAccess::remove_absolute(temporary_path);
-    Error download_err = download_template_sync(filename, temporary_path);
-    if (download_err == OK && verify_template_file(filename, temporary_path) && validate_template_archive(temporary_path)) {
-        download_err = publish_download_atomically(temporary_path, output_path);
-    } else if (download_err == OK) {
-        download_err = ERR_FILE_CORRUPT;
-    }
-    if (download_err != OK) {
-        DirAccess::remove_absolute(temporary_path);
-        update_download_state(filename, "failed", 0.0f);
-        call_deferred("emit_signal", "template_download_finished", filename, false);
+    Error completion_err = OK;
+    if (result != HTTPRequest::RESULT_SUCCESS || response_code != HTTPClient::RESPONSE_OK) {
+        completion_err = result == HTTPRequest::RESULT_TIMEOUT ? ERR_TIMEOUT : ERR_CANT_CONNECT;
+    } else if (!FileAccess::file_exists(temporary_path)) {
+        completion_err = ERR_FILE_CANT_WRITE;
+    } else if ((!custom_request && !verify_template_file(filename, temporary_path)) || !validate_template_archive(temporary_path)) {
+        completion_err = ERR_FILE_CORRUPT;
     } else {
-        update_download_state(filename, "completed", 1.0f);
-        call_deferred("emit_signal", "template_inventory_changed");
-        call_deferred("emit_signal", "template_download_finished", filename, true);
+        completion_err = publish_download_atomically(temporary_path, output_path);
     }
-    prefetch_running = false;
+
+    if (completion_err != OK) {
+        DirAccess::remove_absolute(temporary_path);
+        update_download_state(filename, "failed", 0.0f, String::utf8("错误码 ") + String::num_int64(completion_err));
+        emit_signal("template_download_finished", filename, false);
+        return;
+    }
+
+    update_download_state(filename, "completed", 1.0f);
+    emit_signal("template_download_progress", filename, 1.0f);
+    emit_signal("template_inventory_changed");
+    emit_signal("template_download_finished", filename, true);
 }
 
 String TemplateManager::get_download_status_text(const String& filename) const {

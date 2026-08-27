@@ -54,6 +54,7 @@ class ProductToolTests(unittest.TestCase):
 
     def test_runtime_catalog_and_global_template_selection_contracts_are_present(self):
         source = (ROOT / "plugin/src/templates/template_manager.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "plugin/include/templates/template_manager.h").read_text(encoding="utf-8")
         export_source = (ROOT / "plugin/src/editor/wechat_export_platform.cpp").read_text(encoding="utf-8")
         settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
         self.assertIn('status != "stable"', source)
@@ -68,6 +69,20 @@ class ProductToolTests(unittest.TestCase):
         self.assertIn('set_active_catalog_template', settings_source)
         self.assertIn('remove_active_template_cache', settings_source)
         self.assertIn('clear_all_template_cache', settings_source)
+        self.assertIn('set_download_file(temporary_path)', source)
+        self.assertIn('TemplateManager_TemplateRequest', source)
+        self.assertIn('HTTPRequest *request = memnew(HTTPRequest)', source)
+        self.assertIn('set_download_file(temporary_path)', source)
+        self.assertIn('publish_download_atomically(temporary_path, output_path)', source)
+        self.assertNotIn('prefetch_thread', header)
+        self.assertNotIn('_prefetch_worker', source)
+        self.assertNotIn('classes/thread.hpp', header)
+        self.assertNotIn('Timer', header)
+        self.assertIn('class TemplateManager : public Object', header)
+        self.assertNotIn('class TemplateManager : public RefCounted', header)
+        self.assertIn('EditorFileDialog::FILE_MODE_OPEN_FILE', settings_source)
+        self.assertIn('add_filter("*.tpz"', settings_source)
+        self.assertIn('set_indeterminate(true)', settings_source)
 
     def test_plugin_update_requires_confirmation_and_relaunches_project(self):
         update_source = (ROOT / "plugin/src/core/update_manager.cpp").read_text(encoding="utf-8")

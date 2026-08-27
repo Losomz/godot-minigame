@@ -15,8 +15,8 @@ func _run() -> void:
 		_fail("PluginUpdateManager singleton is unavailable")
 		return
 	var args := OS.get_cmdline_user_args()
-	if args.size() != 1:
-		_fail("Expected one fixture manifest path")
+	if args.size() != 2:
+		_fail("Expected package manifest and local template paths")
 		return
 	var manifest_file := FileAccess.open(args[0], FileAccess.READ)
 	if manifest_file == null:
@@ -52,4 +52,26 @@ func _run() -> void:
 			_fail("Pending package cleanup failed: %s" % case["name"])
 			return
 
-	print("Local plugin package runtime tests passed")
+	if not Engine.has_singleton("TemplateManager"):
+		_fail("TemplateManager singleton is unavailable")
+		return
+	var template_manager = Engine.get_singleton("TemplateManager")
+	var template_path: String = args[1]
+	if template_manager.set_active_custom_template(template_path) != OK:
+		_fail("Valid local template was rejected")
+		return
+	if template_manager.get_active_template_info().get("source") != "local":
+		_fail("Local template source was not recognized")
+		return
+	if template_manager.download_active_template_async(true) != OK:
+		_fail("Local template import failed")
+		return
+	var template_cache_path: String = template_manager.resolve_active_template_path()
+	if template_cache_path == template_path or not FileAccess.file_exists(template_cache_path):
+		_fail("Local template was not copied to the global cache")
+		return
+	if FileAccess.get_sha256(template_cache_path) != FileAccess.get_sha256(template_path):
+		_fail("Cached template hash mismatch")
+		return
+
+	print("Local package and template runtime tests passed")

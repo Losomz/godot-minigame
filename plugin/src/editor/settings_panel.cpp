@@ -57,6 +57,8 @@ void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_active_template_changed", "template_info"), &SettingsPanel::_on_active_template_changed);
 	ClassDB::bind_method(D_METHOD("_on_template_version_selected", "index"), &SettingsPanel::_on_template_version_selected);
 	ClassDB::bind_method(D_METHOD("_on_use_custom_template_pressed"), &SettingsPanel::_on_use_custom_template_pressed);
+	ClassDB::bind_method(D_METHOD("_on_select_local_template_pressed"), &SettingsPanel::_on_select_local_template_pressed);
+	ClassDB::bind_method(D_METHOD("_on_local_template_file_selected", "path"), &SettingsPanel::_on_local_template_file_selected);
 	ClassDB::bind_method(D_METHOD("_on_prefetch_template_pressed"), &SettingsPanel::_on_prefetch_template_pressed);
 	ClassDB::bind_method(D_METHOD("_on_replace_template_pressed"), &SettingsPanel::_on_replace_template_pressed);
 	ClassDB::bind_method(D_METHOD("_on_remove_template_pressed"), &SettingsPanel::_on_remove_template_pressed);
@@ -176,7 +178,7 @@ void SettingsPanel::create_interface() {
 
 	custom_template_url_input = memnew(LineEdit);
 	custom_template_url_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	custom_template_url_input->set_placeholder("https://.../template.tpz");
+	custom_template_url_input->set_placeholder(String::utf8("https://.../template.tpz 或选择本地文件"));
 	custom_template_field->add_child(custom_template_url_input);
 
 	HFlowContainer *custom_template_actions = memnew(HFlowContainer);
@@ -187,6 +189,11 @@ void SettingsPanel::create_interface() {
 	use_custom_template_button->set_text(String::utf8("设为当前"));
 	use_custom_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_use_custom_template_pressed));
 	custom_template_actions->add_child(use_custom_template_button);
+
+	select_local_template_button = memnew(Button);
+	select_local_template_button->set_text(String::utf8("选择本地 TPZ"));
+	custom_template_actions->add_child(select_local_template_button);
+	select_local_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_select_local_template_pressed));
 
 	template_cache_label = memnew(Label);
 	template_cache_label->set_text(String::utf8("模板缓存："));
@@ -199,6 +206,7 @@ void SettingsPanel::create_interface() {
 	template_cache_progress->set_max(1.0);
 	template_cache_progress->set_value(0.0);
 	template_cache_progress->set_show_percentage(false);
+	template_cache_progress->set_indeterminate(true);
 	template_cache_progress->set_visible(false);
 	main_vbox->add_child(template_cache_progress);
 
@@ -383,6 +391,14 @@ void SettingsPanel::create_interface() {
 	local_plugin_file_dialog->add_filter("*.zip", String::utf8("Godot Minigame 插件包"));
 	local_plugin_file_dialog->connect("file_selected", callable_mp(this, &SettingsPanel::_on_local_plugin_file_selected));
 	add_child(local_plugin_file_dialog);
+
+	local_template_file_dialog = memnew(EditorFileDialog);
+	local_template_file_dialog->set_title(String::utf8("选择本地微信模板"));
+	local_template_file_dialog->set_access(EditorFileDialog::ACCESS_FILESYSTEM);
+	local_template_file_dialog->set_file_mode(EditorFileDialog::FILE_MODE_OPEN_FILE);
+	local_template_file_dialog->add_filter("*.tpz", String::utf8("微信小游戏模板"));
+	add_child(local_template_file_dialog);
+	local_template_file_dialog->connect("file_selected", callable_mp(this, &SettingsPanel::_on_local_template_file_selected));
 
 	clear_templates_dialog = memnew(ConfirmationDialog);
 	clear_templates_dialog->set_title(String::utf8("清空全局模板缓存"));
@@ -787,11 +803,24 @@ void SettingsPanel::_on_use_custom_template_pressed() {
 	Variant result = template_manager->call("set_active_custom_template", custom_template_url_input->get_text());
 	if (int(result) != OK) {
 		if (action_status_label) {
-			action_status_label->set_text(String::utf8("自定义模板必须是 HTTP(S) 的 .tpz 直链"));
+			action_status_label->set_text(String::utf8("请选择有效的本地 TPZ，或填写 HTTP(S) 的 .tpz 直链"));
 		}
 		return;
 	}
 	_on_prefetch_template_pressed();
+}
+
+void SettingsPanel::_on_select_local_template_pressed() {
+	if (local_template_file_dialog) {
+		local_template_file_dialog->popup_file_dialog();
+	}
+}
+
+void SettingsPanel::_on_local_template_file_selected(const String &path) {
+	if (custom_template_url_input) {
+		custom_template_url_input->set_text(path);
+	}
+	_on_use_custom_template_pressed();
 }
 
 void SettingsPanel::_on_replace_template_pressed() {
@@ -801,7 +830,7 @@ void SettingsPanel::_on_replace_template_pressed() {
 	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
 	Variant result = template_manager->call("download_active_template_async", true);
 	if (action_status_label) {
-		action_status_label->set_text(int(result) == OK ? String::utf8("正在重新下载，校验完成后将覆盖全局缓存") : String::utf8("无法启动覆盖下载"));
+		action_status_label->set_text(int(result) == OK ? String::utf8("正在更新模板缓存") : String::utf8("无法更新模板缓存"));
 	}
 	refresh_template_cache_info();
 }
@@ -880,14 +909,17 @@ void SettingsPanel::refresh_template_cache_info() {
 	const bool cached = bool(active_info.get("cached", false));
 	const bool bundled = bool(active_info.get("bundled", false));
 	const bool available = bool(active_info.get("available", false));
+	const bool local_source = String(active_info.get("source", "catalog")) == "local";
 	if (template_cache_label) {
 		String status = cached ? String::utf8("全局缓存") : (bundled ? String::utf8("插件内置") : String::utf8("未下载"));
 		template_cache_label->set_text(display_name + String::utf8("：") + status);
 	}
 	if (prefetch_template_button) {
+		prefetch_template_button->set_text(local_source ? String::utf8("导入") : String::utf8("下载"));
 		prefetch_template_button->set_disabled(prefetch_active || available || active_info.is_empty());
 	}
 	if (replace_template_button) {
+		replace_template_button->set_text(local_source ? String::utf8("重新导入并覆盖") : String::utf8("重新下载并覆盖"));
 		replace_template_button->set_disabled(prefetch_active || active_info.is_empty());
 	}
 	if (remove_template_button) {

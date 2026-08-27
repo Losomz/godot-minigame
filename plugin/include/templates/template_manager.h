@@ -1,8 +1,8 @@
 #pragma once
 
-#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/http_request.hpp>
-#include <godot_cpp/classes/thread.hpp>
+#include <godot_cpp/core/object_id.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -26,8 +26,8 @@ struct TemplateVersion {
 };
 
 // Template manager for version handling and downloads
-class TemplateManager : public RefCounted {
-    GDCLASS(TemplateManager, RefCounted);
+class TemplateManager : public Object {
+    GDCLASS(TemplateManager, Object);
 
 private:
     enum class DistributionProvider {
@@ -78,7 +78,7 @@ public:
     Array get_template_choices() const;
     Dictionary get_active_template_info() const;
     Error set_active_catalog_template(const String& version);
-    Error set_active_custom_template(const String& url);
+    Error set_active_custom_template(const String& source);
     String resolve_active_template_path() const;
 
     // Version selection with nearest match
@@ -111,7 +111,7 @@ public:
     bool is_downloading(const String& filename) const;
     float get_download_progress(const String& filename) const;
 
-    // Editor-side template download (manual trigger, runs on a worker thread)
+    // Editor-side template download (manual trigger, driven by main-thread nodes)
     Error download_active_template_async(bool force_replace = false);
     bool is_prefetch_active() const;
     String get_download_status_text(const String& filename) const;
@@ -153,20 +153,19 @@ private:
     Dictionary download_states;
     int download_timeout = 30;
 
-    // Prefetch worker (manual trigger from the settings panel)
-    Thread* prefetch_thread = nullptr;
-    bool prefetch_running = false;
-    String prefetch_pinned_filename;
-    String prefetch_custom_url;
-    bool prefetch_force_replace = false;
+    // Active remote template request.
+    ObjectID template_request_id;
+    bool template_request_active = false;
+    bool template_request_custom = false;
+    String template_request_filename;
+    String template_request_output_path;
+    String template_request_temporary_path;
 
     String active_template_kind = "catalog";
     String active_template_version;
     String active_custom_url;
 
     Error parse_templates_catalog(const String& json_content);
-    Error download_template_sync(const String& filename, const String& target_path);
-    Error download_template_url_sync(const String& filename, const String& download_url, const String& output_path);
     TemplateVersion parse_version_entry(const String& godot_major, const String& version, const String& filename);
     String build_versions_url() const;
     String build_release_download_url(DistributionProvider provider, const String& owner, const String& repo, const String& release_tag, const String& filename) const;
@@ -209,9 +208,10 @@ private:
     // Signal handlers
     void _on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& request_url);
 
-    // Prefetch worker entry (runs off the main thread)
-    void _prefetch_worker();
-    void _join_prefetch_thread();
+    HTTPRequest* get_template_request() const;
+    void release_template_request(bool cancel_request);
+    void cancel_active_template_request();
+    void _on_template_download_request_completed(int result, int response_code, const PackedStringArray& headers, const PackedByteArray& body);
 };
 
 } // namespace templates
