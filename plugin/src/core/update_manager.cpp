@@ -18,6 +18,8 @@
 #include <godot_cpp/templates/hash_set.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
+#include <regex>
+
 using namespace godot;
 
 namespace toolkit {
@@ -55,9 +57,9 @@ bool safe_relative_path(const String &path) {
     if (path.is_empty() || path.is_absolute_path() || path.contains(":") || path.contains("\\")) {
         return false;
     }
-    PackedStringArray parts = path.split("/", false);
+    PackedStringArray parts = path.split("/", true);
     for (int i = 0; i < parts.size(); i++) {
-        if (parts[i] == ".." || parts[i] == ".") {
+        if (parts[i].is_empty() || parts[i] == ".." || parts[i] == ".") {
             return false;
         }
     }
@@ -82,6 +84,96 @@ bool write_text(const String &path, const String &text) {
 String platform_asset_key() {
     const String platform = OS::get_singleton()->get_name().to_lower();
     return platform == "macos" ? String("macos-universal") : platform + String("-") + Engine::get_singleton()->get_architecture_name();
+}
+
+String platform_native_directory() {
+    const String platform = OS::get_singleton()->get_name().to_lower();
+    return platform == "macos" ? String("macos") : platform;
+}
+
+String platform_native_extension() {
+    const String platform = platform_native_directory();
+    if (platform == "windows") {
+        return "dll";
+    }
+    if (platform == "macos") {
+        return "dylib";
+    }
+    return platform == "linux" ? String("so") : String();
+}
+
+bool valid_plugin_version(const String &version) {
+    const std::regex pattern(R"(^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
+    return std::regex_match(std::string(version.utf8().get_data()), pattern);
+}
+
+uint16_t read_zip_u16(const PackedByteArray &data, int64_t offset) {
+    return uint16_t(data[offset]) | (uint16_t(data[offset + 1]) << 8);
+}
+
+uint32_t read_zip_u32(const PackedByteArray &data, int64_t offset) {
+    return uint32_t(data[offset]) | (uint32_t(data[offset + 1]) << 8) |
+            (uint32_t(data[offset + 2]) << 16) | (uint32_t(data[offset + 3]) << 24);
+}
+
+bool validate_raw_zip_paths(const String &path, String &r_error) {
+    Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
+    if (file.is_null() || file->get_length() < 22) {
+        r_error = "Plugin package has an invalid ZIP directory.";
+        return false;
+    }
+    const PackedByteArray data = file->get_buffer(file->get_length());
+    file->close();
+
+    int64_t eocd = -1;
+    const int64_t search_start = data.size() > 65557 ? data.size() - 65557 : 0;
+    for (int64_t offset = data.size() - 22; offset >= search_start; offset--) {
+        if (read_zip_u32(data, offset) == 0x06054b50 && offset + 22 + read_zip_u16(data, offset + 20) == data.size()) {
+            eocd = offset;
+            break;
+        }
+    }
+    if (eocd < 0) {
+        r_error = "Plugin package has an invalid ZIP directory.";
+        return false;
+    }
+
+    const uint16_t entry_count = read_zip_u16(data, eocd + 10);
+    const uint32_t directory_size = read_zip_u32(data, eocd + 12);
+    const uint32_t directory_offset = read_zip_u32(data, eocd + 16);
+    if (entry_count == 0xffff || directory_size == 0xffffffff || directory_offset == 0xffffffff ||
+            int64_t(directory_offset) + int64_t(directory_size) > eocd) {
+        r_error = "Plugin package uses an unsupported or invalid ZIP directory.";
+        return false;
+    }
+
+    int64_t offset = directory_offset;
+    for (uint32_t index = 0; index < entry_count; index++) {
+        if (offset + 46 > data.size() || read_zip_u32(data, offset) != 0x02014b50) {
+            r_error = "Plugin package has an invalid ZIP entry.";
+            return false;
+        }
+        const uint16_t name_length = read_zip_u16(data, offset + 28);
+        const uint16_t extra_length = read_zip_u16(data, offset + 30);
+        const uint16_t comment_length = read_zip_u16(data, offset + 32);
+        const int64_t next_offset = offset + 46 + name_length + extra_length + comment_length;
+        if (name_length == 0 || next_offset > data.size()) {
+            r_error = "Plugin package has an invalid ZIP entry name.";
+            return false;
+        }
+        for (uint16_t name_index = 0; name_index < name_length; name_index++) {
+            if (data[offset + 46 + name_index] == '\\') {
+                r_error = "Plugin package contains a backslash path.";
+                return false;
+            }
+        }
+        offset = next_offset;
+    }
+    if (offset != int64_t(directory_offset) + int64_t(directory_size)) {
+        r_error = "Plugin package ZIP directory size is inconsistent.";
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -112,6 +204,8 @@ void UpdateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("check_for_updates", "local_version"), &UpdateManager::check_for_updates);
     ClassDB::bind_method(D_METHOD("download_update"), &UpdateManager::download_update);
     ClassDB::bind_method(D_METHOD("cancel_download"), &UpdateManager::cancel_download);
+    ClassDB::bind_method(D_METHOD("select_local_package", "path", "local_version"), &UpdateManager::select_local_package);
+    ClassDB::bind_method(D_METHOD("clear_pending_update"), &UpdateManager::clear_pending_update);
     ClassDB::bind_method(D_METHOD("restart_editor_for_update"), &UpdateManager::restart_editor_for_update);
     ClassDB::bind_method(D_METHOD("get_local_version"), &UpdateManager::get_local_version);
     ClassDB::bind_method(D_METHOD("get_remote_version_info"), &UpdateManager::get_remote_version_info);
@@ -268,6 +362,146 @@ void UpdateManager::_on_download_completed(int result, int response_code, const 
     emit_signal("download_finished", true);
 }
 
+bool UpdateManager::validate_update_package(const String &p_path, String &r_version, String &r_error) const {
+    r_version = String();
+    r_error = String();
+    if (!p_path.to_lower().ends_with(".zip") || !FileAccess::file_exists(p_path)) {
+        r_error = "Select a plugin ZIP file.";
+        return false;
+    }
+    if (!validate_raw_zip_paths(p_path, r_error)) {
+        return false;
+    }
+
+    Ref<ZIPReader> zip;
+    zip.instantiate();
+    if (zip->open(p_path) != OK) {
+        r_error = "Plugin package cannot be opened as ZIP.";
+        return false;
+    }
+
+    const String prefix = "addons/godot-minigame/";
+    const String native_prefix = "bin/" + platform_native_directory() + "/";
+    const String native_extension = platform_native_extension();
+    const PackedStringArray entries = zip->get_files();
+    HashSet<String> seen;
+    String plugin_config_text;
+    bool has_descriptor = false;
+    bool has_helper = false;
+    bool has_native = false;
+
+    for (int i = 0; i < entries.size(); i++) {
+        const String archive_path = entries[i];
+        const bool is_directory = archive_path.ends_with("/");
+        const String canonical_path = is_directory ? archive_path.trim_suffix("/") : archive_path;
+        if (archive_path.contains("\\") || canonical_path.is_empty() || canonical_path.is_absolute_path() ||
+                canonical_path.contains(":") || !safe_relative_path(canonical_path) ||
+                (canonical_path == prefix.trim_suffix("/") && !is_directory) ||
+                (canonical_path != prefix.trim_suffix("/") && !archive_path.begins_with(prefix))) {
+            zip->close();
+            r_error = "Plugin package contains a path outside addons/godot-minigame: " + archive_path;
+            return false;
+        }
+        const String path_key = canonical_path.to_lower();
+        if (seen.has(path_key)) {
+            zip->close();
+            r_error = "Plugin package contains a duplicate path: " + archive_path;
+            return false;
+        }
+        seen.insert(path_key);
+        if (is_directory) {
+            continue;
+        }
+
+        const String relative = archive_path.substr(prefix.length());
+        if (relative == "plugin.cfg") {
+            plugin_config_text = zip->read_file(entries[i]).get_string_from_utf8();
+        } else if (relative == "godot-minigame.gdextension") {
+            has_descriptor = true;
+        } else if (relative == "update_helper.gd") {
+            has_helper = true;
+        } else if (!native_extension.is_empty() && relative.begins_with(native_prefix) && relative.get_extension().to_lower() == native_extension) {
+            has_native = true;
+        }
+    }
+    zip->close();
+
+    Ref<ConfigFile> config;
+    config.instantiate();
+    if (plugin_config_text.is_empty() || config->parse(plugin_config_text) != OK) {
+        r_error = "Plugin package is missing a valid plugin.cfg.";
+        return false;
+    }
+    r_version = String(config->get_value("plugin", "version", "")).strip_edges();
+    if (!valid_plugin_version(r_version)) {
+        r_error = "Plugin package version must use semantic versioning.";
+        return false;
+    }
+    if (!has_descriptor || !has_helper || !has_native) {
+        r_error = "Plugin package is missing the extension descriptor, update helper, or current-platform native library.";
+        return false;
+    }
+    return true;
+}
+
+Dictionary UpdateManager::select_local_package(const String &p_path, const String &p_local_version) {
+    Dictionary result;
+    result["success"] = false;
+
+    const String source_path = p_path.simplify_path();
+    String version;
+    String error;
+    if (!validate_update_package(source_path, version, error)) {
+        result["error"] = error;
+        return result;
+    }
+
+    clear_pending_update();
+    const String source_sha256_before = FileAccess::get_sha256(source_path).to_lower();
+    const String incoming_path = get_update_cache_root().path_join("local-package.incoming.zip");
+    DirAccess::remove_absolute(incoming_path);
+    if (source_sha256_before.length() != 64 || DirAccess::copy_absolute(source_path, incoming_path) != OK) {
+        DirAccess::remove_absolute(incoming_path);
+        result["error"] = "Cannot copy the plugin package into the editor update cache.";
+        return result;
+    }
+    const String source_sha256_after = FileAccess::get_sha256(source_path).to_lower();
+    const String cached_sha256 = FileAccess::get_sha256(incoming_path).to_lower();
+    String cached_version;
+    if (source_sha256_before != source_sha256_after || source_sha256_before != cached_sha256 ||
+            !validate_update_package(incoming_path, cached_version, error) || cached_version != version) {
+        DirAccess::remove_absolute(incoming_path);
+        result["error"] = error.is_empty() ? String("Plugin package changed while it was being copied.") : error;
+        return result;
+    }
+
+    const String local_root = get_update_cache_root().path_join("local").path_join(version);
+    remove_tree(local_root);
+    DirAccess::make_dir_recursive_absolute(local_root);
+    download_file_path = local_root.path_join("package.zip");
+    if (DirAccess::rename_absolute(incoming_path, download_file_path) != OK) {
+        DirAccess::remove_absolute(incoming_path);
+        download_file_path = String();
+        result["error"] = "Cannot finalize the cached plugin package.";
+        return result;
+    }
+
+    local_version = p_local_version.strip_edges();
+    expected_download_sha256 = cached_sha256;
+    remote_version_info.clear();
+    remote_version_info["channel"] = "local";
+    remote_version_info["version"] = version;
+    remote_version_info["filename"] = source_path.get_file();
+    remote_version_info["sha256"] = cached_sha256;
+    set_state(STATE_DOWNLOADED);
+
+    result["success"] = true;
+    result["version"] = version;
+    result["filename"] = source_path.get_file();
+    result["sha256"] = cached_sha256;
+    return result;
+}
+
 String UpdateManager::get_update_cache_root() const {
     EditorInterface *editor = EditorInterface::get_singleton();
     String root;
@@ -290,6 +524,13 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
         r_error = "Update version is invalid.";
         return false;
     }
+    String verified_version;
+    if (!validate_update_package(download_file_path, verified_version, r_error) || verified_version != version) {
+        if (r_error.is_empty()) {
+            r_error = "Update package version does not match the selected update.";
+        }
+        return false;
+    }
 
     Ref<ZIPReader> zip;
     zip.instantiate();
@@ -308,9 +549,10 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
     bool has_descriptor = false;
     bool has_helper = false;
     bool has_native = false;
-    const String native_platform = OS::get_singleton()->get_name().to_lower() == "macos" ? String("macos") : OS::get_singleton()->get_name().to_lower();
+    const String native_platform = platform_native_directory();
+    const String native_extension = platform_native_extension();
     for (int i = 0; i < entries.size(); i++) {
-        const String archive_path = String(entries[i]).replace("\\", "/");
+        const String archive_path = entries[i];
         if (!archive_path.begins_with(prefix)) {
             zip->close();
             r_error = "Update package contains files outside the plugin directory.";
@@ -341,7 +583,7 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
             has_descriptor = true;
         } else if (relative == "update_helper.gd") {
             has_helper = true;
-        } else if (relative.begins_with("bin/" + native_platform + "/")) {
+        } else if (!native_extension.is_empty() && relative.begins_with("bin/" + native_platform + "/") && relative.get_extension().to_lower() == native_extension) {
             has_native = true;
         }
     }
@@ -468,6 +710,29 @@ void UpdateManager::cancel_download() {
         downloader->cancel_request();
         set_state(STATE_UPDATE_AVAILABLE);
     }
+}
+
+void UpdateManager::clear_pending_update() {
+    if (current_state == STATE_INSTALLING) {
+        return;
+    }
+    if (current_state == STATE_CHECKING && version_checker) {
+        version_checker->cancel_request();
+    }
+    if (current_state == STATE_DOWNLOADING && downloader) {
+        downloader->cancel_request();
+    }
+    const String cache_root = get_update_cache_root().simplify_path().trim_suffix("/");
+    const String cached_path = download_file_path.simplify_path();
+    if (!cached_path.is_empty() && cached_path.begins_with(cache_root + String("/")) && FileAccess::file_exists(cached_path)) {
+        DirAccess::remove_absolute(cached_path);
+    }
+    remove_tree(cache_root.path_join("local"));
+    DirAccess::remove_absolute(cache_root.path_join("local-package.incoming.zip"));
+    download_file_path = String();
+    expected_download_sha256 = String();
+    remote_version_info.clear();
+    set_state(STATE_IDLE);
 }
 
 void UpdateManager::set_state(UpdateState state) {

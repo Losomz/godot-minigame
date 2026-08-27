@@ -46,6 +46,7 @@ private:
 	godot::String resolve_update_manifest_url() const;
 	godot::String resolve_update_asset_url(const godot::Dictionary &platform_data) const;
 	godot::String resolve_platform_asset_name(const godot::Dictionary &platform_data) const;
+	bool validate_update_package(const godot::String &p_path, godot::String &r_version, godot::String &r_error) const;
 
 	godot::String get_update_cache_root() const;
 	void load_last_install_result();
@@ -63,6 +64,8 @@ public:
 	void check_for_updates(const godot::String &p_local_version);
 	void download_update();
 	void cancel_download();
+	godot::Dictionary select_local_package(const godot::String &p_path, const godot::String &p_local_version);
+	void clear_pending_update();
 	bool prepare_update_and_restart(godot::String &r_error);
 	void restart_editor_for_update();
 

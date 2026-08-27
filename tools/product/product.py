@@ -445,10 +445,11 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         raise ProductError(f"No plugin files found under {addon_path}")
 
     native_path = args.native_dir.resolve()
+    descriptor_text = (addon_path / "godot-minigame.gdextension").read_text(encoding="utf-8")
     native_files = [
         (path, relative)
         for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
-        if path.suffix.lower() in NATIVE_SUFFIXES
+        if path.suffix.lower() in NATIVE_SUFFIXES and relative.name in descriptor_text
     ]
     if args.require_binaries and not native_files:
         raise ProductError(f"Plugin package requires native binaries under {native_path}")

@@ -84,6 +84,46 @@ class ProductToolTests(unittest.TestCase):
         self.assertIn("DirAccess.rename_absolute(backup_path, addon_path)", helper_source)
         self.assertIn('PackedStringArray(["--editor", "--path", project_path])', helper_source)
 
+    def test_local_plugin_package_channel_is_strict_and_version_agnostic(self):
+        update_source = (ROOT / "plugin/src/core/update_manager.cpp").read_text(encoding="utf-8")
+        settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        select_local = update_source.split("Dictionary UpdateManager::select_local_package", 1)[1].split(
+            "String UpdateManager::get_update_cache_root", 1
+        )[0]
+
+        self.assertIn('archive_path.contains("\\\\")', update_source)
+        self.assertIn("canonical_path.is_absolute_path()", update_source)
+        self.assertIn('parts[i] == ".."', update_source)
+        self.assertIn("seen.has(path_key)", update_source)
+        self.assertIn('relative == "plugin.cfg"', update_source)
+        self.assertIn('relative == "godot-minigame.gdextension"', update_source)
+        self.assertIn('relative == "update_helper.gd"', update_source)
+        self.assertIn("platform_native_extension()", update_source)
+        self.assertIn("source_sha256_before", select_local)
+        self.assertIn("source_sha256_after", select_local)
+        self.assertIn("cached_sha256", select_local)
+        self.assertIn('remote_version_info["channel"] = "local"', select_local)
+        self.assertIn("set_state(STATE_DOWNLOADED)", select_local)
+        self.assertNotIn("is_newer_than", select_local)
+        self.assertIn("remote.is_newer_than(local)", update_source)
+        self.assertIn("clear_pending_update()", settings_source)
+
+    def test_local_plugin_channel_persists_only_the_channel(self):
+        settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        self.assertIn('godot_minigame/plugin_update/channel', settings_source)
+        self.assertIn('String("local") : String("remote")', settings_source)
+        self.assertIn("EditorFileDialog::FILE_MODE_OPEN_FILE", settings_source)
+        self.assertIn('add_filter("*.zip"', settings_source)
+        self.assertIn('String::utf8("远端稳定版")', settings_source)
+        self.assertIn('String::utf8("本地插件包")', settings_source)
+        self.assertIn('String::utf8("升级")', settings_source)
+        self.assertIn('String::utf8("同版本覆盖")', settings_source)
+        self.assertIn('String::utf8("降级")', settings_source)
+        persisted = settings_source.split("void SettingsPanel::save_plugin_update_channel", 1)[1].split(
+            "void SettingsPanel::refresh_plugin_update_channel", 1
+        )[0]
+        self.assertNotIn("path", persisted.lower())
+
     def test_settings_panel_layout_is_scrollable_and_responsive(self):
         settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
         dock_source = (ROOT / "plugin/src/editor/toolkit_dock.cpp").read_text(encoding="utf-8")
@@ -165,6 +205,7 @@ class ProductToolTests(unittest.TestCase):
             native = output / "native"
             libraries = {
                 "windows/godot-minigame.windows.x86_64.dll": b"windows",
+                "windows/godot-minigame.windows.editor.x86_64.dll": b"stale",
                 "linux/libgodot-minigame.linux.x86_64.so": b"linux",
                 "macos/libgodot-minigame.macos.dylib": b"macos",
             }
@@ -195,6 +236,7 @@ class ProductToolTests(unittest.TestCase):
                 f"addons/godot-minigame/bin/macos/libgodot-minigame.macos.{version}.dylib",
             }
             self.assertTrue(expected.issubset(names))
+            self.assertFalse(any("windows.editor.x86_64" in name for name in names))
             self.assertNotIn("godot-minigame.windows.x86_64.dll\"", descriptor)
             self.assertIn(f"godot-minigame.windows.x86_64.{version}.dll", descriptor)
             self.assertIn(f"libgodot-minigame.linux.x86_64.{version}.so", descriptor)

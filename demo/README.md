@@ -8,4 +8,6 @@ From the repository root, prepare a Windows debug build with:
 pwsh tools/dev/build_demo.ps1
 ```
 
+To test plugin replacement without publishing a Release, run `python tools/product/product.py package-plugin`, then select `dist/plugin/godot-minigame-plugin-<version>.zip` from the plugin settings' `本地插件包` channel. Local packages may upgrade, overwrite the same version, or downgrade after explicit confirmation.
+
 Then open `demo/project.godot` in Godot. Re-run the script after changing plugin code.

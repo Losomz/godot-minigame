@@ -10,6 +10,7 @@
 #include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/classes/option_button.hpp>
 #include <godot_cpp/classes/confirmation_dialog.hpp>
+#include <godot_cpp/classes/editor_file_dialog.hpp>
 #include <godot_cpp/core/class_db.hpp>
 
 namespace toolkit {
@@ -22,8 +23,15 @@ private:
 	godot::ScrollContainer *scroll_container = nullptr;
 	godot::VBoxContainer *main_vbox = nullptr;
 	godot::Label *plugin_update_label = nullptr;
+	godot::OptionButton *plugin_update_channel_selector = nullptr;
+	godot::VBoxContainer *remote_update_controls = nullptr;
+	godot::VBoxContainer *local_update_controls = nullptr;
 	godot::Button *check_plugin_update_button = nullptr;
 	godot::Button *download_plugin_update_button = nullptr;
+	godot::Button *select_local_plugin_button = nullptr;
+	godot::Button *install_local_plugin_button = nullptr;
+	godot::Label *local_plugin_package_label = nullptr;
+	godot::EditorFileDialog *local_plugin_file_dialog = nullptr;
 	godot::Label *distribution_provider_title_label = nullptr;
 	godot::OptionButton *distribution_provider_selector = nullptr;
 	godot::Label *owner_label = nullptr;
@@ -52,6 +60,10 @@ private:
 	void refresh_template_cache_info();
 	void _on_check_plugin_update_pressed();
 	void _on_download_plugin_update_pressed();
+	void _on_plugin_update_channel_selected(int index);
+	void _on_select_local_plugin_pressed();
+	void _on_local_plugin_file_selected(const godot::String &path);
+	void _on_install_local_plugin_pressed();
 	void _on_plugin_update_state_changed(int state);
 	void _on_plugin_update_available(const godot::Dictionary &version_info);
 	void _on_plugin_update_download_finished(bool success);
@@ -73,6 +85,10 @@ private:
 	void _on_confirm_clear_templates();
 	void _on_template_download_progress(const godot::String &filename, float progress);
 	void _on_template_cache_download_finished(const godot::String &filename, bool success);
+	void load_plugin_update_channel();
+	void save_plugin_update_channel() const;
+	void refresh_plugin_update_channel();
+	godot::String get_installed_plugin_version() const;
 
 protected:
 	static void _bind_methods();

@@ -126,7 +126,7 @@ if env["embed_resources"]:
 
 # .dev doesn't inhibit compatibility, so we don't need to key it.
 # .universal just means "compatible with all relevant arches" so we don't need to key it.
-suffix = env['suffix'].replace(".dev", "").replace(".universal", "").replace(".template_debug", "").replace(".template_release", "")
+suffix = env['suffix'].replace(".dev", "").replace(".universal", "").replace(".editor", "").replace(".template_debug", "").replace(".template_release", "")
 
 lib_filename = "{}{}{}{}".format(env.subst('$SHLIBPREFIX'), libname, suffix, env.subst('$SHLIBSUFFIX'))
 

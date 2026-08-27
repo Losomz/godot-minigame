@@ -58,6 +58,24 @@ pwsh tools/dev/build_demo.ps1
 
 脚本从 `plugin/addon/` 和 `dist/plugin/native/` 组装 demo 插件。随后打开 `demo/project.godot`。
 
+### 本地插件包
+
+插件设置中的“插件更新”提供两个独立渠道：
+
+- `远端稳定版`：检查并安装正式 Release，只在远端版本更高时提示更新。
+- `本地插件包`：选择已下载的标准插件 ZIP，校验通过后可直接替换当前插件，不限制升级、同版本覆盖或降级。
+
+普通用户遇到问题需要安装指定构建时，下载对应的 Release ZIP，在插件设置中选择“本地插件包”，选择 ZIP 后点击“安装并重启”。本地文件只会复制到 Godot 编辑器的全局更新缓存，源文件不会被修改；切换渠道会清理待安装副本。
+
+开发者生成当前版本的本地测试包：
+
+```powershell
+pwsh tools/dev/build_demo.ps1
+python tools/product/product.py package-plugin
+```
+
+然后选择 `dist/plugin/godot-minigame-plugin-<version>.zip`。该流程无需发布 Release，也无需修改版本号或启动本地 HTTP 服务。正式 CI、Release 和远端稳定版渠道保持原有流程。
+
 ## 适配层
 
 `develop/main` 以 Godot 4.5 适配为公共基线，入口位于 `adapter/`，配套 Skill 位于 `.agent/skills/godot-wechat-minigame-adapter/`。

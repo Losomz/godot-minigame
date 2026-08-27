@@ -1,7 +1,10 @@
 #include "editor/settings_panel.h"
 #include "core/update_manager.h"
+#include "core/types.h"
 
 #include <godot_cpp/classes/config_file.hpp>
+#include <godot_cpp/classes/editor_interface.hpp>
+#include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/grid_container.hpp>
 #include <godot_cpp/classes/h_separator.hpp>
@@ -11,6 +14,12 @@ using namespace godot;
 
 namespace toolkit {
 namespace editor {
+
+namespace {
+
+constexpr const char *PLUGIN_UPDATE_CHANNEL_SETTING = "godot_minigame/plugin_update/channel";
+
+} // namespace
 
 SettingsPanel::SettingsPanel() {
 	set_name("Settings");
@@ -30,6 +39,10 @@ void SettingsPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("refresh_template_cache_info"), &SettingsPanel::refresh_template_cache_info);
 	ClassDB::bind_method(D_METHOD("_on_check_plugin_update_pressed"), &SettingsPanel::_on_check_plugin_update_pressed);
 	ClassDB::bind_method(D_METHOD("_on_download_plugin_update_pressed"), &SettingsPanel::_on_download_plugin_update_pressed);
+	ClassDB::bind_method(D_METHOD("_on_plugin_update_channel_selected", "index"), &SettingsPanel::_on_plugin_update_channel_selected);
+	ClassDB::bind_method(D_METHOD("_on_select_local_plugin_pressed"), &SettingsPanel::_on_select_local_plugin_pressed);
+	ClassDB::bind_method(D_METHOD("_on_local_plugin_file_selected", "path"), &SettingsPanel::_on_local_plugin_file_selected);
+	ClassDB::bind_method(D_METHOD("_on_install_local_plugin_pressed"), &SettingsPanel::_on_install_local_plugin_pressed);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_state_changed", "state"), &SettingsPanel::_on_plugin_update_state_changed);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_available", "version_info"), &SettingsPanel::_on_plugin_update_available);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_download_finished", "success"), &SettingsPanel::_on_plugin_update_download_finished);
@@ -55,6 +68,8 @@ void SettingsPanel::_bind_methods() {
 
 void SettingsPanel::_ready() {
 	create_interface();
+	load_plugin_update_channel();
+	refresh_plugin_update_channel();
 
 	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
 		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
@@ -89,7 +104,6 @@ void SettingsPanel::_ready() {
 			plugin_update_label->set_text(install_message);
 		}
 	}
-
 	call_deferred("refresh_distribution_info");
 	call_deferred("refresh_template_cache_info");
 }
@@ -285,14 +299,35 @@ void SettingsPanel::create_interface() {
 	add_section_separator();
 	add_section_title(String::utf8("插件更新"));
 
+	GridContainer *plugin_update_channel_form = memnew(GridContainer);
+	plugin_update_channel_form->set_columns(2);
+	plugin_update_channel_form->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(plugin_update_channel_form);
+
+	Label *plugin_update_channel_label = memnew(Label);
+	plugin_update_channel_label->set_text(String::utf8("更新渠道"));
+	configure_field_label(plugin_update_channel_label);
+	plugin_update_channel_form->add_child(plugin_update_channel_label);
+
+	plugin_update_channel_selector = memnew(OptionButton);
+	plugin_update_channel_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	plugin_update_channel_selector->add_item(String::utf8("远端稳定版"));
+	plugin_update_channel_selector->add_item(String::utf8("本地插件包"));
+	plugin_update_channel_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_plugin_update_channel_selected));
+	plugin_update_channel_form->add_child(plugin_update_channel_selector);
+
 	plugin_update_label = memnew(Label);
 	plugin_update_label->set_text(String::utf8("插件更新：尚未检查"));
 	configure_status_label(plugin_update_label);
 	main_vbox->add_child(plugin_update_label);
 
+	remote_update_controls = memnew(VBoxContainer);
+	remote_update_controls->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(remote_update_controls);
+
 	HFlowContainer *plugin_update_actions = memnew(HFlowContainer);
 	plugin_update_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(plugin_update_actions);
+	remote_update_controls->add_child(plugin_update_actions);
 
 	check_plugin_update_button = memnew(Button);
 	check_plugin_update_button->set_text(String::utf8("检查插件更新"));
@@ -305,6 +340,30 @@ void SettingsPanel::create_interface() {
 	download_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_download_plugin_update_pressed));
 	plugin_update_actions->add_child(download_plugin_update_button);
 
+	local_update_controls = memnew(VBoxContainer);
+	local_update_controls->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(local_update_controls);
+
+	local_plugin_package_label = memnew(Label);
+	local_plugin_package_label->set_text(String::utf8("尚未选择插件 ZIP"));
+	configure_status_label(local_plugin_package_label);
+	local_update_controls->add_child(local_plugin_package_label);
+
+	HFlowContainer *local_plugin_actions = memnew(HFlowContainer);
+	local_plugin_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	local_update_controls->add_child(local_plugin_actions);
+
+	select_local_plugin_button = memnew(Button);
+	select_local_plugin_button->set_text(String::utf8("选择插件 ZIP"));
+	select_local_plugin_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_select_local_plugin_pressed));
+	local_plugin_actions->add_child(select_local_plugin_button);
+
+	install_local_plugin_button = memnew(Button);
+	install_local_plugin_button->set_text(String::utf8("安装并重启"));
+	install_local_plugin_button->set_disabled(true);
+	install_local_plugin_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_install_local_plugin_pressed));
+	local_plugin_actions->add_child(install_local_plugin_button);
+
 	action_status_label = memnew(Label);
 	action_status_label->set_text(String::utf8("配置已就绪"));
 	configure_status_label(action_status_label);
@@ -316,6 +375,14 @@ void SettingsPanel::create_interface() {
 	update_restart_dialog->get_ok_button()->set_text(String::utf8("安装并重启"));
 	update_restart_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_update_restart));
 	add_child(update_restart_dialog);
+
+	local_plugin_file_dialog = memnew(EditorFileDialog);
+	local_plugin_file_dialog->set_title(String::utf8("选择本地插件包"));
+	local_plugin_file_dialog->set_access(EditorFileDialog::ACCESS_FILESYSTEM);
+	local_plugin_file_dialog->set_file_mode(EditorFileDialog::FILE_MODE_OPEN_FILE);
+	local_plugin_file_dialog->add_filter("*.zip", String::utf8("Godot Minigame 插件包"));
+	local_plugin_file_dialog->connect("file_selected", callable_mp(this, &SettingsPanel::_on_local_plugin_file_selected));
+	add_child(local_plugin_file_dialog);
 
 	clear_templates_dialog = memnew(ConfirmationDialog);
 	clear_templates_dialog->set_title(String::utf8("清空全局模板缓存"));
@@ -331,12 +398,7 @@ void SettingsPanel::_on_check_plugin_update_pressed() {
 		_on_plugin_update_error("Plugin update manager is unavailable.");
 		return;
 	}
-	Ref<ConfigFile> config;
-	config.instantiate();
-	String version = "0.0.0";
-	if (config->load("res://addons/godot-minigame/plugin.cfg") == OK) {
-		version = String(config->get_value("plugin", "version", version)).strip_edges();
-	}
+	const String version = get_installed_plugin_version();
 	plugin_update_label->set_text(String::utf8("插件更新：正在检查，当前版本 ") + version);
 	check_plugin_update_button->set_disabled(true);
 	download_plugin_update_button->set_disabled(true);
@@ -351,6 +413,8 @@ void SettingsPanel::_on_download_plugin_update_pressed() {
 	}
 	if (update_manager->get_current_state() == UpdateManager::STATE_DOWNLOADED) {
 		if (update_restart_dialog) {
+			update_restart_dialog->set_title(String::utf8("安装插件更新"));
+			update_restart_dialog->set_text(String::utf8("将保存当前场景和项目设置，关闭 Godot，安装已下载的插件更新，然后重新打开当前项目。是否继续？"));
 			update_restart_dialog->popup_centered();
 		}
 		return;
@@ -359,21 +423,84 @@ void SettingsPanel::_on_download_plugin_update_pressed() {
 	update_manager->download_update();
 }
 
+void SettingsPanel::_on_plugin_update_channel_selected(int index) {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (update_manager) {
+		update_manager->clear_pending_update();
+	}
+	if (plugin_update_channel_selector) {
+		plugin_update_channel_selector->select(index == 1 ? 1 : 0);
+	}
+	if (local_plugin_package_label) {
+		local_plugin_package_label->set_text(String::utf8("尚未选择插件 ZIP"));
+	}
+	if (plugin_update_label) {
+		plugin_update_label->set_text(index == 1 ? String::utf8("本地插件包：请选择标准插件 ZIP") : String::utf8("插件更新：尚未检查"));
+	}
+	save_plugin_update_channel();
+	refresh_plugin_update_channel();
+}
+
+void SettingsPanel::_on_select_local_plugin_pressed() {
+	if (local_plugin_file_dialog) {
+		local_plugin_file_dialog->popup_file_dialog();
+	}
+}
+
+void SettingsPanel::_on_local_plugin_file_selected(const String &path) {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (!update_manager) {
+		_on_plugin_update_error("Plugin update manager is unavailable.");
+		return;
+	}
+	const Dictionary result = update_manager->select_local_package(path, get_installed_plugin_version());
+	if (!bool(result.get("success", false))) {
+		_on_plugin_update_error(String(result.get("error", "Invalid local plugin package.")));
+		refresh_plugin_update_channel();
+		return;
+	}
+	const String filename = String(result.get("filename", path.get_file()));
+	const String version = String(result.get("version", ""));
+	local_plugin_package_label->set_text(filename + String::utf8("，版本 ") + version);
+	plugin_update_label->set_text(String::utf8("本地插件包已校验并缓存，等待安装"));
+	refresh_plugin_update_channel();
+}
+
+void SettingsPanel::_on_install_local_plugin_pressed() {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (!update_manager || update_manager->get_current_state() != UpdateManager::STATE_DOWNLOADED) {
+		return;
+	}
+	const String current_version = get_installed_plugin_version();
+	const String target_version = String(update_manager->get_remote_version_info().get("version", ""));
+	const VersionInfo current = VersionInfo::from_string(current_version);
+	const VersionInfo target = VersionInfo::from_string(target_version);
+	String operation = String::utf8("同版本覆盖");
+	if (target.is_newer_than(current)) {
+		operation = String::utf8("升级");
+	} else if (current.is_newer_than(target)) {
+		operation = String::utf8("降级");
+	}
+	update_restart_dialog->set_title(String::utf8("安装本地插件包"));
+	update_restart_dialog->set_text(
+			String::utf8("当前版本：") + current_version + "\n" +
+			String::utf8("目标版本：") + target_version + "\n" +
+			String::utf8("操作类型：") + operation + "\n\n" +
+			String::utf8("将关闭 Godot、替换插件并重新打开当前项目。是否继续？"));
+	update_restart_dialog->popup_centered();
+}
+
 void SettingsPanel::_on_plugin_update_state_changed(int state) {
-	if (check_plugin_update_button) {
-		check_plugin_update_button->set_disabled(state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING || state == UpdateManager::STATE_DOWNLOADED || state == UpdateManager::STATE_INSTALLING);
-	}
-	if (download_plugin_update_button) {
-		download_plugin_update_button->set_text(state == UpdateManager::STATE_DOWNLOADED ? String::utf8("安装并重启") : String::utf8("下载插件更新"));
-		download_plugin_update_button->set_disabled(state != UpdateManager::STATE_UPDATE_AVAILABLE && state != UpdateManager::STATE_DOWNLOADED);
-	}
+	refresh_plugin_update_channel();
 	if (plugin_update_label) {
 		if (state == UpdateManager::STATE_UP_TO_DATE) {
 			plugin_update_label->set_text(String::utf8("插件更新：当前已是最新版本"));
 		} else if (state == UpdateManager::STATE_DOWNLOADING) {
 			plugin_update_label->set_text(String::utf8("插件更新：正在下载"));
 		} else if (state == UpdateManager::STATE_DOWNLOADED) {
-			plugin_update_label->set_text(String::utf8("插件更新已下载，等待确认安装"));
+			UpdateManager *update_manager = UpdateManager::get_singleton();
+			const bool is_local = update_manager && String(update_manager->get_remote_version_info().get("channel", "")) == "local";
+			plugin_update_label->set_text(is_local ? String::utf8("本地插件包已校验并缓存，等待安装") : String::utf8("插件更新已下载，等待确认安装"));
 		} else if (state == UpdateManager::STATE_INSTALLING) {
 			plugin_update_label->set_text(String::utf8("正在启动安装程序并重启 Godot..."));
 		}
@@ -405,6 +532,9 @@ void SettingsPanel::_on_confirm_update_restart() {
 	plugin_update_label->set_text(String::utf8("正在准备安装并重启 Godot..."));
 	check_plugin_update_button->set_disabled(true);
 	download_plugin_update_button->set_disabled(true);
+	plugin_update_channel_selector->set_disabled(true);
+	select_local_plugin_button->set_disabled(true);
+	install_local_plugin_button->set_disabled(true);
 	update_manager->restart_editor_for_update();
 }
 
@@ -413,7 +543,78 @@ void SettingsPanel::_on_plugin_update_error(const String &message) {
 		plugin_update_label->set_text(String::utf8("插件更新失败：") + message);
 	}
 	if (check_plugin_update_button) {
-		check_plugin_update_button->set_disabled(false);
+		refresh_plugin_update_channel();
+	}
+}
+
+String SettingsPanel::get_installed_plugin_version() const {
+	Ref<ConfigFile> config;
+	config.instantiate();
+	String version = "0.0.0";
+	if (config->load("res://addons/godot-minigame/plugin.cfg") == OK) {
+		version = String(config->get_value("plugin", "version", version)).strip_edges();
+	}
+	return version;
+}
+
+void SettingsPanel::load_plugin_update_channel() {
+	int channel = 0;
+	EditorInterface *editor = EditorInterface::get_singleton();
+	if (editor) {
+		Ref<EditorSettings> settings = editor->get_editor_settings();
+		if (settings.is_valid() && settings->has_setting(PLUGIN_UPDATE_CHANNEL_SETTING) &&
+				String(settings->get_setting(PLUGIN_UPDATE_CHANNEL_SETTING)) == "local") {
+			channel = 1;
+		}
+	}
+	if (plugin_update_channel_selector) {
+		plugin_update_channel_selector->select(channel);
+	}
+	if (plugin_update_label && channel == 1) {
+		plugin_update_label->set_text(String::utf8("本地插件包：请选择标准插件 ZIP"));
+	}
+}
+
+void SettingsPanel::save_plugin_update_channel() const {
+	EditorInterface *editor = EditorInterface::get_singleton();
+	if (!editor || !plugin_update_channel_selector) {
+		return;
+	}
+	Ref<EditorSettings> settings = editor->get_editor_settings();
+	if (settings.is_valid()) {
+		settings->set_setting(PLUGIN_UPDATE_CHANNEL_SETTING, plugin_update_channel_selector->get_selected() == 1 ? String("local") : String("remote"));
+	}
+}
+
+void SettingsPanel::refresh_plugin_update_channel() {
+	if (!plugin_update_channel_selector) {
+		return;
+	}
+	const bool local_channel = plugin_update_channel_selector->get_selected() == 1;
+	if (remote_update_controls) {
+		remote_update_controls->set_visible(!local_channel);
+	}
+	if (local_update_controls) {
+		local_update_controls->set_visible(local_channel);
+	}
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	const int state = update_manager ? int(update_manager->get_current_state()) : int(UpdateManager::STATE_ERROR);
+	const bool busy = state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING || state == UpdateManager::STATE_INSTALLING;
+	const bool local_ready = state == UpdateManager::STATE_DOWNLOADED && update_manager &&
+			String(update_manager->get_remote_version_info().get("channel", "")) == "local";
+	plugin_update_channel_selector->set_disabled(busy);
+	if (check_plugin_update_button) {
+		check_plugin_update_button->set_disabled(local_channel || busy || state == UpdateManager::STATE_DOWNLOADED);
+	}
+	if (download_plugin_update_button) {
+		download_plugin_update_button->set_text(state == UpdateManager::STATE_DOWNLOADED ? String::utf8("安装并重启") : String::utf8("下载插件更新"));
+		download_plugin_update_button->set_disabled(local_channel || (state != UpdateManager::STATE_UPDATE_AVAILABLE && state != UpdateManager::STATE_DOWNLOADED));
+	}
+	if (select_local_plugin_button) {
+		select_local_plugin_button->set_disabled(!local_channel || busy);
+	}
+	if (install_local_plugin_button) {
+		install_local_plugin_button->set_disabled(!local_channel || !local_ready || busy);
 	}
 }
 
