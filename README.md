@@ -4,6 +4,8 @@
 
 插件与模板是独立发布物：插件使用 `plugin-v*` Release，模板使用 `<godot>-<variant>-r*` Release（如 `4.5.2-glx-2d-r1`）。插件更新不依赖仓库全局 `latest`，模板也不会触发插件升级。
 
+本分支维护 experimental Godot 4.6 适配。维护入口见 `.agent/skills/godot-wechat-minigame-adapter/`，版本锁定、模块边界和应用方式见 [`adapter/README.md`](adapter/README.md)。本分支尚未登记生产模板 build contract。
+
 ## 分支结构
 
 - `upstream-sync`：`citizenll/godot-minigame:main` 的只读同步线。
@@ -112,6 +114,9 @@ python tools/product/product.py render-versions --check
 - `catalog/`：已验证发布物目录
 - `resources/`：插件嵌入资源和模板索引
 - `src/templates/`：插件运行时模板目录与缓存管理实现
+- `adapter/`：Godot 4.6 版本锁定的补丁、源码覆盖、脚本和测试
+- `.agent/skills/`：4.6 适配维护的薄入口 Skill
+- `godot/`：官方 Godot 4.6 源码 submodule，gitlink 锁定 manifest 基线
 - `tools/product/`：验证、Promote 和插件打包工具
 - `.github/workflows/`：产品、插件和适配自动化
 - `dist/plugin/`、`dist/template/`：未跟踪的插件和模板临时产物出口
