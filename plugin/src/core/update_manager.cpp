@@ -451,7 +451,7 @@ bool UpdateManager::is_properly_configured() const {
 
 String UpdateManager::resolve_update_manifest_url() const {
     const String override_url = OS::get_singleton()->get_environment("GODOT_MINIGAME_PLUGIN_UPDATE_URL").strip_edges();
-    return override_url.is_empty() ? String("https://raw.githubusercontent.com/Losomz/godot-minigame/main/catalog/plugin-stable.json") : override_url;
+    return override_url.is_empty() ? String("https://raw.githubusercontent.com/Losomz/godot-minigame/main/plugin/catalog/plugin-stable.json") : override_url;
 }
 
 String UpdateManager::resolve_update_asset_url(const Dictionary &platform_data) const {

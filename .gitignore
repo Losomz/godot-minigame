@@ -16,15 +16,14 @@
 /bin/
 /demo/bin/
 /demo/addons/godot-minigame/
-/addons/godot-minigame/*.gd.uid
 /release-assets/
 /.ci-emsdk/
 /.sconsign.dblite
-/godot-cpp/bin/
-/godot-cpp/gen/
+/plugin/thirdparty/godot-cpp/bin/
+/plugin/thirdparty/godot-cpp/gen/
 
 # Generated files
-/src/gen/
+/plugin/src/gen/
 *.gen.cpp
 *.gen.h
 
@@ -56,11 +55,11 @@ Thumbs.db
 demo/.godot/
 demo/export_presets.cfg
 demo/**/*.tpz
-resources/**/*.tpz
+plugin/resources/**/*.tpz
 demo/minigame/
 demo/test_remote_minigame/
 demo/w2/
 GITHUB_SECRETS.md
 latest.json
-/tools/obfuscation/node_modules/
+/adapter/tools/obfuscation/node_modules/
 .zcode/

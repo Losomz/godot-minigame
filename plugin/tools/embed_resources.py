@@ -2,6 +2,13 @@
 import os
 import sys
 
+
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def resource_path(source):
+    return os.path.relpath(source, PLUGIN_ROOT).replace('\\', '/')
+
 def embed_resources(sources, target):
     with open(target, 'w') as f:
         f.write('#include "resources/embedded_resources.h"\n\n')
@@ -14,7 +21,7 @@ def embed_resources(sources, target):
                 continue
                 
             # Get relative path and create variable name
-            rel_path = os.path.relpath(source).replace('\\', '/')
+            rel_path = resource_path(source)
             var_name = rel_path.replace('/', '_').replace('\\', '_').replace('.', '_')
             
             # Read file data
@@ -40,7 +47,7 @@ def embed_resources(sources, target):
             if not os.path.exists(source):
                 continue
                 
-            rel_path = os.path.relpath(source).replace('\\', '/')
+            rel_path = resource_path(source)
             var_name = rel_path.replace('/', '_').replace('\\', '_').replace('.', '_')
             f.write(f'    {{"{rel_path.replace(chr(92), "/")}", embedded_{var_name}_data, embedded_{var_name}_size}},\n')
         

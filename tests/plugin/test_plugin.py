@@ -19,9 +19,9 @@ class ProductToolTests(unittest.TestCase):
         product.validate_repository(ROOT)
 
     def test_versions_projection_matches_embedded_fallback(self):
-        catalog = product.load_json(ROOT / "catalog/templates.json")
+        catalog = product.load_json(ROOT / "plugin/catalog/templates.json")
         rendered = product.render_versions(catalog)
-        current = (ROOT / "resources/versions.yaml").read_text(encoding="utf-8").replace("\r\n", "\n")
+        current = (ROOT / "plugin/resources/versions.yaml").read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertEqual(rendered, current)
 
     def test_invalid_semver_is_rejected(self):
@@ -29,9 +29,9 @@ class ProductToolTests(unittest.TestCase):
             product.parse_semver("1.2", "test version")
 
     def test_product_has_two_release_catalogs(self):
-        plugin = product.load_json(ROOT / "product/plugin.json")
-        adapters = product.load_json(ROOT / "product/adapters.json")
-        self.assertEqual(plugin["update_catalog"], "catalog/plugin-stable.json")
+        plugin = product.load_json(ROOT / "plugin/plugin.json")
+        adapters = product.load_json(ROOT / "adapter/adapters.json")
+        self.assertEqual(plugin["update_catalog"], "plugin/catalog/plugin-stable.json")
         self.assertTrue(adapters["adapters"])
         for adapter in adapters["adapters"]:
             self.assertNotIn(adapter["branch"], {"main", "develop", "upstream-sync"})
@@ -44,8 +44,8 @@ class ProductToolTests(unittest.TestCase):
         self.assertNotIn("build", experimental)
 
     def test_staged_plugin_version_may_lead_published_stable_catalog(self):
-        plugin = product.load_json(ROOT / "product/plugin.json")
-        stable = product.load_json(ROOT / "catalog/plugin-stable.json")
+        plugin = product.load_json(ROOT / "plugin/plugin.json")
+        stable = product.load_json(ROOT / "plugin/catalog/plugin-stable.json")
         self.assertGreaterEqual(
             product.parse_semver(plugin["version"], "plugin"),
             product.parse_semver(stable["version"], "stable"),
@@ -53,9 +53,9 @@ class ProductToolTests(unittest.TestCase):
         self.assertEqual(stable["tag"], f"plugin-v{stable['version']}")
 
     def test_runtime_catalog_and_global_template_selection_contracts_are_present(self):
-        source = (ROOT / "src/templates/template_manager.cpp").read_text(encoding="utf-8")
-        export_source = (ROOT / "src/editor/wechat_export_platform.cpp").read_text(encoding="utf-8")
-        settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "plugin/src/templates/template_manager.cpp").read_text(encoding="utf-8")
+        export_source = (ROOT / "plugin/src/editor/wechat_export_platform.cpp").read_text(encoding="utf-8")
+        settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
         self.assertIn('status != "stable"', source)
         self.assertIn('minimum_plugin', source)
         self.assertIn('FileAccess::get_sha256', source)
@@ -70,10 +70,10 @@ class ProductToolTests(unittest.TestCase):
         self.assertIn('clear_all_template_cache', settings_source)
 
     def test_plugin_update_requires_confirmation_and_relaunches_project(self):
-        update_source = (ROOT / "src/core/update_manager.cpp").read_text(encoding="utf-8")
-        update_header = (ROOT / "include/core/update_manager.h").read_text(encoding="utf-8")
-        settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
-        helper_source = (ROOT / "addons/godot-minigame/update_helper.gd").read_text(encoding="utf-8")
+        update_source = (ROOT / "plugin/src/core/update_manager.cpp").read_text(encoding="utf-8")
+        update_header = (ROOT / "plugin/include/core/update_manager.h").read_text(encoding="utf-8")
+        settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        helper_source = (ROOT / "plugin/addon/update_helper.gd").read_text(encoding="utf-8")
         self.assertIn("STATE_INSTALLING", update_header)
         self.assertIn("set_state(STATE_DOWNLOADED)", update_source)
         self.assertNotIn('call_deferred("install_downloaded_update")', update_source)
@@ -85,8 +85,8 @@ class ProductToolTests(unittest.TestCase):
         self.assertIn('PackedStringArray(["--editor", "--path", project_path])', helper_source)
 
     def test_settings_panel_layout_is_scrollable_and_responsive(self):
-        settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
-        dock_source = (ROOT / "src/editor/toolkit_dock.cpp").read_text(encoding="utf-8")
+        settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        dock_source = (ROOT / "plugin/src/editor/toolkit_dock.cpp").read_text(encoding="utf-8")
         self.assertIn("ScrollContainer::SCROLL_MODE_DISABLED", settings_source)
         self.assertIn("ScrollContainer::SCROLL_MODE_AUTO", settings_source)
         self.assertGreaterEqual(settings_source.count("HFlowContainer"), 4)
@@ -137,7 +137,7 @@ class ProductToolTests(unittest.TestCase):
             self.assertIn("tag: 4.5.2-test-r2", versions_path.read_text(encoding="utf-8"))
 
     def test_plugin_zip_has_installable_addon_prefix(self):
-        version = product.load_json(ROOT / "product/plugin.json")["version"]
+        version = product.load_json(ROOT / "plugin/plugin.json")["version"]
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
             args = argparse.Namespace(
@@ -159,7 +159,7 @@ class ProductToolTests(unittest.TestCase):
             self.assertFalse(any(name.endswith((".lib", ".exp")) for name in names))
 
     def test_plugin_zip_versions_native_libraries_and_descriptor(self):
-        version = product.load_json(ROOT / "product/plugin.json")["version"]
+        version = product.load_json(ROOT / "plugin/plugin.json")["version"]
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
             native = output / "native"
@@ -201,7 +201,7 @@ class ProductToolTests(unittest.TestCase):
             self.assertIn(f"libgodot-minigame.macos.{version}.dylib", descriptor)
 
     def test_plugin_zip_can_bundle_template_once(self):
-        version = product.load_json(ROOT / "product/plugin.json")["version"]
+        version = product.load_json(ROOT / "plugin/plugin.json")["version"]
         with tempfile.TemporaryDirectory() as temporary:
             temporary_path = Path(temporary)
             template = temporary_path / "minigame4.5.2-glx-2d-r1.tpz"

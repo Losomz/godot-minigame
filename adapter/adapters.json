@@ -16,7 +16,7 @@
         "manifest_path": "adapter/patches/manifest.json",
         "godot_commit_field": "wechat_glx_ref",
         "godot_base_field": "base_ref",
-        "build_script": "ci/build_wechat_glx.ps1",
+        "build_script": "adapter/ci/build_wechat_glx.ps1",
         "profile": "adapter/configs/wechat_2d.py",
         "required_paths": [
           ".gitmodules",
@@ -24,8 +24,8 @@
           "adapter/scripts/package_wechat_glx_template.py",
           "adapter/configs/wechat_2d.py",
           "adapter/templates/manifest.json",
-          "ci/build_wechat_glx.ps1",
-          "ci/requirements-build.txt"
+          "adapter/ci/build_wechat_glx.ps1",
+          "adapter/ci/requirements-build.txt"
         ]
       }
     },

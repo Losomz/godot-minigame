@@ -14,13 +14,13 @@ Emscripten、WXMEMFS 和微信运行时接口。
 安装依赖：
 
 ```powershell
-npm install --prefix tools/obfuscation
+npm install --prefix adapter/tools/obfuscation
 ```
 
 生成测试模板：
 
 ```powershell
-node tools/obfuscation/obfuscate_template.js `
+node adapter/tools/obfuscation/obfuscate_template.js `
   adapter/templates/4.5.2 `
   dist/template/4.5.1_2d_obfuscated `
   --seed 451201

@@ -310,7 +310,6 @@ static Error _update_game_subpackages(const String &p_game_json_path, const Arra
 
 static Ref<Texture2D> _load_wechat_logo_fallback() {
     const char *logo_paths[] = {
-        "res://resources/assets/icon.svg",
         "res://addons/godot-minigame/resources/assets/icon.svg",
         nullptr
     };

@@ -629,7 +629,6 @@ Error TemplateManager::load_versions_from_embedded() {
 #endif
 
     const char *catalog_paths[] = {
-        "res://catalog/templates.json",
         "res://addons/godot-minigame/catalog/templates.json",
         nullptr
     };
@@ -1898,21 +1897,21 @@ String TemplateManager::build_versions_url() const {
             if (owner.is_empty() || repo.is_empty()) {
                 return "";
             }
-            return "https://raw.atomgit.com/" + owner + "/" + repo + "/raw/main/catalog/templates.json";
+            return "https://raw.atomgit.com/" + owner + "/" + repo + "/raw/main/plugin/catalog/templates.json";
         case DistributionProvider::GITHUB_RELEASE:
             owner = github_repo_owner.strip_edges();
             repo = github_repo_name.strip_edges();
             if (owner.is_empty() || repo.is_empty()) {
                 return "";
             }
-            return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/main/catalog/templates.json";
+            return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/main/plugin/catalog/templates.json";
         case DistributionProvider::GITEE_RELEASE:
             owner = gitee_repo_owner.strip_edges();
             repo = gitee_repo_name.strip_edges();
             if (owner.is_empty() || repo.is_empty()) {
                 return "";
             }
-            return "https://gitee.com/" + owner + "/" + repo + "/raw/main/catalog/templates.json";
+            return "https://gitee.com/" + owner + "/" + repo + "/raw/main/plugin/catalog/templates.json";
         default:
             return "";
     }
