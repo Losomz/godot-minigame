@@ -12,7 +12,7 @@ on:
           - build
           - promote
       source_ref:
-        description: "构建: product/adapters.json 中登记的适配分支"
+        description: "构建: adapter/adapters.json 中登记的适配分支"
         required: false
         default: "4.5"
         type: string
@@ -113,7 +113,7 @@ jobs:
           from pathlib import Path
 
           source_ref = os.environ["SOURCE_REF"]
-          adapters = json.loads(Path("product/adapters.json").read_text(encoding="utf-8"))["adapters"]
+          adapters = json.loads(Path("adapter/adapters.json").read_text(encoding="utf-8"))["adapters"]
           adapter = next((item for item in adapters if item.get("branch") == source_ref), None)
           if adapter is None:
               raise SystemExit(f"{source_ref!r} is not a registered adapter branch")
@@ -243,23 +243,23 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          git submodule sync -- godot
+          git submodule sync -- adapter/thirdparty/godot
           if ($LASTEXITCODE -ne 0) { throw "git submodule sync failed" }
 
-          git submodule update --init --depth 8 -- godot
+          git submodule update --init --depth 8 -- adapter/thirdparty/godot
           if ($LASTEXITCODE -ne 0) { throw "Godot submodule checkout failed" }
 
-          $head = (git -C godot rev-parse HEAD).Trim()
+          $head = (git -C adapter/thirdparty/godot rev-parse HEAD).Trim()
           if ($head -ne $env:EXPECTED_GODOT_COMMIT) {
               throw "Godot gitlink $head differs from manifest $env:EXPECTED_GODOT_COMMIT"
           }
 
-          git -C godot merge-base --is-ancestor $env:GODOT_BASE HEAD
+          git -C adapter/thirdparty/godot merge-base --is-ancestor $env:GODOT_BASE HEAD
           if ($LASTEXITCODE -ne 0) {
               throw "Godot checkout does not contain the branch manifest base $env:GODOT_BASE"
           }
 
-          $dirty = git -C godot status --porcelain --untracked-files=all
+          $dirty = git -C adapter/thirdparty/godot status --porcelain --untracked-files=all
           if ($dirty) {
               throw "Godot submodule is dirty: $dirty"
           }
@@ -495,7 +495,7 @@ jobs:
           import sys
 
           source_branch, godot_version = sys.argv[1:]
-          with open("product/adapters.json", encoding="utf-8") as handle:
+          with open("adapter/adapters.json", encoding="utf-8") as handle:
               adapters = json.load(handle)["adapters"]
           adapter = next(
               (
@@ -565,6 +565,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add catalog/templates.json resources/versions.yaml
+          git add plugin/catalog/templates.json plugin/resources/versions.yaml
           git commit -m "提升: $RELEASE_TAG"
           git push origin HEAD:main

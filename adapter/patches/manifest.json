@@ -1,0 +1,70 @@
+{
+  "upstream_repo": "https://github.com/godotengine/godot",
+  "base_ref": "6ce3de25aa58466e14ef354703ba8d9791a417da",
+  "base_label": "official 4.5.2-stable (2026-03-18)",
+  "adapter_ref": "e95971c17e4890b24d52824eb1d045f7730f8771",
+  "wechat_glx_ref": "08024e25622283bb678f6da80ff7102b3040771f",
+  "toolchain": {
+    "emscripten": "4.0.10",
+    "brotli": "1.2.0"
+  },
+  "package_adjustments": [
+    "Build helper scripts are fail-fast and report missing required generated-JS anchors.",
+    "Two whitespace-only defects in library_godot_fetch.js are normalized.",
+    "Runtime behavior and engine source otherwise match the committed adapter ref."
+  ],
+  "core_patch_series": [
+    "core/001-build-and-runtime-glue.patch"
+  ],
+  "optional_features": {
+    "export-api": {
+      "description": "Expose EditorExportPreset setters used by the toolkit export plugin.",
+      "copy": [],
+      "patches": [
+        "optional/001-export-preset-api.patch"
+      ]
+    },
+    "branding": {
+      "description": "Change Godot version branding to the WeChat-specific downstream identity.",
+      "copy": [],
+      "patches": [
+        "optional/002-branding.patch"
+      ]
+    },
+    "dev-types": {
+      "description": "Install WeChat Mini Game API typings for JavaScript editor tooling.",
+      "copy": [
+        "optional/platform/web/js/libs/lib.wx.api.d.ts"
+      ],
+      "patches": []
+    },
+    "wechat-glx": {
+      "description": "Install and link the official WeChat EmscriptenGLX library.",
+      "copy": [
+        "optional/platform/web/js/patches/patch_em_gl.js",
+        "optional/platform/web/js/tests/test_wechat_glx_runtime.js"
+      ],
+      "adapter_copy": [
+        {
+          "source": "thirdparty/wechat-glx",
+          "destination": "thirdparty/wechat-glx"
+        }
+      ],
+      "patches": [
+        "optional/003-wechat-glx.patch"
+      ]
+    }
+  },
+  "next_steps": [
+    "Regular build: scons platform=web target=template_release threads=no wasm_simd=no",
+    "GLX build: scons platform=web target=template_release threads=no wasm_simd=no wechat_glx=yes",
+    "Install Brotli CLI, then run: cmd /c compress_wasm.bat",
+    "Load godot-sdk.js and godot-loader.js before the generated godot.js in the Mini Game host."
+  ],
+  "intentionally_excluded": [
+    "audio.worker.js and emscripten_helpers.py worker packaging: no live runtime reference",
+    "library_godot_wx_audio.js: deprecated; active audio code is library_godot_audio.js",
+    "audio-unity.js: exploratory test fixture, not a regression test",
+    "local settings, generated patch snapshots, and historical documentation"
+  ]
+}

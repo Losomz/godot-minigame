@@ -1,4 +1,8 @@
-[submodule "godot-cpp"]
-	path = godot-cpp
+[submodule "plugin/thirdparty/godot-cpp"]
+	path = plugin/thirdparty/godot-cpp
 	url = https://github.com/godotengine/godot-cpp.git
 	branch = 4.4
+[submodule "adapter/thirdparty/godot"]
+	path = adapter/thirdparty/godot
+	url = https://github.com/Losomz/godot.git
+	branch = wechat-4.5

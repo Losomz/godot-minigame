@@ -84,7 +84,7 @@ def version_key(value: str) -> tuple[int, int, int]:
 def render_versions(catalog: dict) -> str:
     entries = catalog.get("templates")
     if not isinstance(entries, list):
-        raise ProductError("catalog/templates.json must contain a templates array")
+        raise ProductError("plugin/catalog/templates.json must contain a templates array")
 
     groups: dict[str, list[dict]] = {}
     for entry in entries:
@@ -113,12 +113,12 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     errors: list[str] = []
     try:
         version = plugin["version"]
-        parse_semver(version, "product/plugin.json version")
+        parse_semver(version, "plugin/plugin.json version")
     except (KeyError, ProductError) as exc:
         return [str(exc)]
 
     if plugin.get("schema_version") != 1:
-        errors.append("product/plugin.json schema_version must be 1")
+        errors.append("plugin/plugin.json schema_version must be 1")
     if plugin.get("tag_prefix") != "plugin-v":
         errors.append("Plugin tag_prefix must be plugin-v")
 
@@ -126,7 +126,7 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     if not addon_path.is_dir():
         errors.append(f"Plugin addon_path does not exist: {addon_path}")
 
-    for cfg in (root / "plugin.cfg", addon_path / "plugin.cfg"):
+    for cfg in (addon_path / "plugin.cfg",):
         try:
             cfg_version = read_plugin_cfg_version(cfg)
             if cfg_version != version:
@@ -135,15 +135,15 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
             errors.append(str(exc))
 
     if update_catalog.get("schema_version") != 1:
-        errors.append("catalog/plugin-stable.json schema_version must be 1")
+        errors.append("plugin/catalog/plugin-stable.json schema_version must be 1")
     stable_version = str(update_catalog.get("version", ""))
     try:
-        stable_version_key = parse_semver(stable_version, "catalog/plugin-stable.json version")
+        stable_version_key = parse_semver(stable_version, "plugin/catalog/plugin-stable.json version")
     except ProductError as exc:
         errors.append(str(exc))
         stable_version_key = None
-    if stable_version_key is not None and stable_version_key > parse_semver(version, "product/plugin.json version"):
-        errors.append("Plugin stable catalog version cannot be newer than product/plugin.json")
+    if stable_version_key is not None and stable_version_key > parse_semver(version, "plugin/plugin.json version"):
+        errors.append("Plugin stable catalog version cannot be newer than plugin/plugin.json")
 
     published = update_catalog.get("published")
     if not isinstance(published, bool):
@@ -169,7 +169,7 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     elif update_catalog.get("tag") or update_catalog.get("platforms"):
         errors.append("Unpublished plugin catalog must not expose a tag or platform assets")
 
-    runtime_source = root / "src/templates/template_manager.cpp"
+    runtime_source = root / "plugin/src/templates/template_manager.cpp"
     try:
         runtime_text = runtime_source.read_text(encoding="utf-8")
     except OSError as exc:
@@ -177,7 +177,7 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     else:
         runtime_match = re.search(r'TOOLKIT_PLUGIN_VERSION\s*=\s*"([^"]+)"', runtime_text)
         if not runtime_match or runtime_match.group(1) != version:
-            errors.append("Template runtime plugin version must match product/plugin.json")
+            errors.append("Template runtime plugin version must match plugin/plugin.json")
 
     return errors
 
@@ -185,10 +185,10 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
 def validate_adapters(root: Path, adapters: dict) -> list[str]:
     errors: list[str] = []
     if adapters.get("schema_version") != 1:
-        errors.append("product/adapters.json schema_version must be 1")
+        errors.append("adapter/adapters.json schema_version must be 1")
     entries = adapters.get("adapters")
     if not isinstance(entries, list) or not entries:
-        return errors + ["product/adapters.json must contain at least one adapter"]
+        return errors + ["adapter/adapters.json must contain at least one adapter"]
 
     ids: set[str] = set()
     branches: set[str] = set()
@@ -248,10 +248,10 @@ def validate_adapters(root: Path, adapters: dict) -> list[str]:
 def validate_templates(catalog: dict, adapters: dict) -> list[str]:
     errors: list[str] = []
     if catalog.get("schema_version") != 1:
-        errors.append("catalog/templates.json schema_version must be 1")
+        errors.append("plugin/catalog/templates.json schema_version must be 1")
     entries = catalog.get("templates")
     if not isinstance(entries, list) or not entries:
-        return errors + ["catalog/templates.json must contain templates"]
+        return errors + ["plugin/catalog/templates.json must contain templates"]
 
     seen: set[tuple[str, str]] = set()
     registered_sources = {
@@ -299,10 +299,10 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
 
 
 def validate_repository(root: Path) -> None:
-    plugin = load_json(root / "product/plugin.json")
-    adapters = load_json(root / "product/adapters.json")
-    update_catalog = load_json(root / "catalog/plugin-stable.json")
-    template_catalog = load_json(root / "catalog/templates.json")
+    plugin = load_json(root / "plugin/plugin.json")
+    adapters = load_json(root / "adapter/adapters.json")
+    update_catalog = load_json(root / "plugin/catalog/plugin-stable.json")
+    template_catalog = load_json(root / "plugin/catalog/templates.json")
 
     errors = []
     errors.extend(validate_plugin(root, plugin, update_catalog))
@@ -310,14 +310,14 @@ def validate_repository(root: Path) -> None:
     errors.extend(validate_templates(template_catalog, adapters))
 
     expected_versions = render_versions(template_catalog)
-    versions_path = root / "resources/versions.yaml"
+    versions_path = root / "plugin/resources/versions.yaml"
     try:
         current_versions = versions_path.read_text(encoding="utf-8")
     except OSError as exc:
         errors.append(f"Cannot read {versions_path}: {exc}")
     else:
         if current_versions.replace("\r\n", "\n") != expected_versions:
-            errors.append("resources/versions.yaml is stale; run render-versions")
+            errors.append("plugin/resources/versions.yaml is stale; run render-versions")
 
     if errors:
         raise ProductError("Product validation failed:\n- " + "\n- ".join(errors))
@@ -436,7 +436,7 @@ def rewrite_release_gdextension(descriptor: Path, native_renames: dict[str, str]
 
 
 def command_package_plugin(args: argparse.Namespace) -> None:
-    plugin = load_json(args.root / "product/plugin.json")
+    plugin = load_json(args.root / "plugin/plugin.json")
     validate_repository(args.root)
     version = plugin["version"]
     addon_path = args.root / plugin["addon_path"]
@@ -463,7 +463,7 @@ def command_package_plugin(args: argparse.Namespace) -> None:
     bundled_templates: list[tuple[Path, Path]] = []
     seen_template_names: set[str] = set()
     addon_archive_paths = {relative.as_posix() for _, relative in source_files}
-    template_catalog = load_json(args.root / "catalog/templates.json")
+    template_catalog = load_json(args.root / "plugin/catalog/templates.json")
     catalog_template_names = {
         str(entry.get("file", ""))
         for entry in template_catalog.get("templates", [])
@@ -474,7 +474,9 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         if not template_path.is_file() or template_path.suffix.lower() != ".tpz":
             raise ProductError(f"Bundled template must be an existing .tpz file: {template}")
         if template_path.name not in catalog_template_names:
-            raise ProductError(f"Bundled template is not registered in catalog/templates.json: {template_path.name}")
+            raise ProductError(
+                f"Bundled template is not registered in plugin/catalog/templates.json: {template_path.name}"
+            )
         if template_path.name in seen_template_names:
             raise ProductError(f"Bundled template filename is duplicated: {template_path.name}")
         bundled_relative = Path("resources/templates") / template_path.name
@@ -533,15 +535,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate = subparsers.add_parser("validate", help="validate all product contracts")
     validate.set_defaults(func=command_validate)
 
-    render = subparsers.add_parser("render-versions", help="render resources/versions.yaml from the catalog")
-    render.add_argument("--catalog", type=Path, default=ROOT / "catalog/templates.json")
-    render.add_argument("--output", type=Path, default=ROOT / "resources/versions.yaml")
+    render = subparsers.add_parser("render-versions", help="render plugin/resources/versions.yaml from the catalog")
+    render.add_argument("--catalog", type=Path, default=ROOT / "plugin/catalog/templates.json")
+    render.add_argument("--output", type=Path, default=ROOT / "plugin/resources/versions.yaml")
     render.add_argument("--check", action="store_true")
     render.set_defaults(func=command_render_versions)
 
     promote = subparsers.add_parser("promote-template", help="promote a verified template into the product catalog")
-    promote.add_argument("--catalog", type=Path, default=ROOT / "catalog/templates.json")
-    promote.add_argument("--versions", type=Path, default=ROOT / "resources/versions.yaml")
+    promote.add_argument("--catalog", type=Path, default=ROOT / "plugin/catalog/templates.json")
+    promote.add_argument("--versions", type=Path, default=ROOT / "plugin/resources/versions.yaml")
     promote.add_argument("--godot-major", required=True)
     promote.add_argument("--godot-version", required=True)
     promote.add_argument("--tag", required=True)

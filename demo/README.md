@@ -1,6 +1,6 @@
 # Plugin test project
 
-This project loads the canonical addon from `../../addons/godot-minigame` through a local directory junction. The junction and native binaries are ignored by Git.
+This project loads a generated addon under `demo/addons/godot-minigame`. The directory is assembled from `plugin/addon` and the native library in `dist/plugin/native`, and is ignored by Git.
 
 From the repository root, prepare a Windows debug build with:
 
@@ -8,4 +8,4 @@ From the repository root, prepare a Windows debug build with:
 pwsh tools/dev/build_demo.ps1
 ```
 
-Then open `demo/project.godot` in Godot. Re-run the script after changing native plugin code.
+Then open `demo/project.godot` in Godot. Re-run the script after changing plugin code.

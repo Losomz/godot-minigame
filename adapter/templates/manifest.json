@@ -1,0 +1,8 @@
+{
+  "4.5.2": {
+    "dir": "adapter/templates/4.5.2",
+    "engine": "auto-build",
+    "default_profile": "2d",
+    "artifact_prefix": "minigame4.5.2"
+  }
+}

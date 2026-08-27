@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "adapters": [
+    {
+      "id": "wechat-godot-4.5",
+      "branch": "4.5",
+      "godot_version": "4.5.2",
+      "status": "stable",
+      "adapter_tag_prefix": "adapter-4.5.2-r",
+      "template_tag_prefix": "4.5.2-glx-2d-r",
+      "build": {
+        "workflow": "wechat-template.yml",
+        "runner": "windows-2022",
+        "production": true,
+        "supports_ad": true,
+        "manifest_path": "adapter/patches/manifest.json",
+        "godot_commit_field": "wechat_glx_ref",
+        "godot_base_field": "base_ref",
+        "build_script": "adapter/ci/build_wechat_glx.ps1",
+        "profile": "adapter/configs/wechat_2d.py",
+        "required_paths": [
+          ".gitmodules",
+          "adapter/patches/manifest.json",
+          "adapter/scripts/package_wechat_glx_template.py",
+          "adapter/configs/wechat_2d.py",
+          "adapter/templates/manifest.json",
+          "adapter/ci/build_wechat_glx.ps1",
+          "adapter/ci/requirements-build.txt"
+        ]
+      }
+    },
+    {
+      "id": "wechat-godot-4.6",
+      "branch": "4.6",
+      "godot_version": "4.6.2",
+      "status": "experimental"
+    }
+  ]
+}

@@ -1,0 +1,198 @@
+diff --git a/drivers/gles3/storage/utilities.cpp b/drivers/gles3/storage/utilities.cpp
+index b096a8a7f3..b258e5ddee 100644
+--- a/drivers/gles3/storage/utilities.cpp
++++ b/drivers/gles3/storage/utilities.cpp
+@@ -49,7 +49,9 @@ Utilities::Utilities() {
+ 	frame = 0;
+ 	for (int i = 0; i < FRAME_COUNT; i++) {
+ 		frames[i].index = 0;
++#ifndef WECHAT_GLX_EXPERIMENTAL
+ 		glGenQueries(max_timestamp_query_elements, frames[i].queries);
++#endif
+ 
+ 		frames[i].timestamp_names.resize(max_timestamp_query_elements);
+ 		frames[i].timestamp_cpu_values.resize(max_timestamp_query_elements);
+@@ -64,9 +66,11 @@ Utilities::Utilities() {
+ 
+ Utilities::~Utilities() {
+ 	singleton = nullptr;
++#ifndef WECHAT_GLX_EXPERIMENTAL
+ 	for (int i = 0; i < FRAME_COUNT; i++) {
+ 		glDeleteQueries(max_timestamp_query_elements, frames[i].queries);
+ 	}
++#endif
+ 
+ 	if (texture_mem_cache) {
+ 		uint32_t leaked_data_size = 0;
+@@ -324,11 +328,13 @@ void Utilities::capture_timestamps_begin() {
+ void Utilities::capture_timestamp(const String &p_name) {
+ 	ERR_FAIL_COND(frames[frame].timestamp_count >= max_timestamp_query_elements);
+ 
++#ifndef WECHAT_GLX_EXPERIMENTAL
+ #ifdef GL_API_ENABLED
+ 	if (RasterizerGLES3::is_gles_over_gl()) {
+ 		glQueryCounter(frames[frame].queries[frames[frame].timestamp_count], GL_TIMESTAMP);
+ 	}
+ #endif // GL_API_ENABLED
++#endif
+ 
+ 	frames[frame].timestamp_names[frames[frame].timestamp_count] = p_name;
+ 	frames[frame].timestamp_cpu_values[frames[frame].timestamp_count] = OS::get_singleton()->get_ticks_usec();
+@@ -338,6 +344,7 @@ void Utilities::capture_timestamp(const String &p_name) {
+ void Utilities::_capture_timestamps_begin() {
+ 	// frame is incremented at the end of the frame so this gives us the queries for frame - 2. By then they should be ready.
+ 	if (frames[frame].timestamp_count) {
++#ifndef WECHAT_GLX_EXPERIMENTAL
+ #ifdef GL_API_ENABLED
+ 		if (RasterizerGLES3::is_gles_over_gl()) {
+ 			for (uint32_t i = 0; i < frames[frame].timestamp_count; i++) {
+@@ -347,6 +354,7 @@ void Utilities::_capture_timestamps_begin() {
+ 			}
+ 		}
+ #endif // GL_API_ENABLED
++#endif
+ 		SWAP(frames[frame].timestamp_names, frames[frame].timestamp_result_names);
+ 		SWAP(frames[frame].timestamp_cpu_values, frames[frame].timestamp_cpu_result_values);
+ 	}
+diff --git a/platform/web/detect.py b/platform/web/detect.py
+index 49dc2c50f5..7993a035b9 100644
+--- a/platform/web/detect.py
++++ b/platform/web/detect.py
+@@ -48,6 +48,17 @@ def get_opts():
+         BoolVariable("use_asan", "Use Emscripten address sanitizer (ASAN)", False),
+         BoolVariable("use_lsan", "Use Emscripten leak sanitizer (LSAN)", False),
+         BoolVariable("use_safe_heap", "Use Emscripten SAFE_HEAP sanitizer", False),
++        BoolVariable(
++            "wechat_glx",
++            "Link WeChat EmscriptenGLX native rendering support",
++            False,
++        ),
++        BoolVariable(
++            "wechat_glx_exceptions",
++            "Keep C++ exceptions enabled for WeChat GLX (vendor libemscriptenglx.a throws internally). "
++            "Disable to save ~1.14 MiB Brotli WASM at the cost of aborting if the GLX library throws.",
++            True,
++        ),
+         # eval() can be a security concern, so it can be disabled.
+         BoolVariable("javascript_eval", "Enable JavaScript eval interface", True),
+         BoolVariable(
+@@ -59,7 +70,11 @@ def get_opts():
+             "Use Emscripten PROXY_TO_PTHREAD option to run the main application code to a separate thread",
+             False,
+         ),
+-        BoolVariable("wasm_simd", "Use WebAssembly SIMD to improve CPU performance", True),
++        BoolVariable(
++            "wasm_simd",
++            "Use WebAssembly SIMD to improve CPU performance (may break older iOS WebKit in WeChat Mini Game)",
++            False,
++        ),
+     ]
+ 
+ 
+@@ -121,6 +136,34 @@ def configure(env: "SConsEnvironment"):
+     env["EXPORTED_FUNCTIONS"] = ["_main"]
+     env["EXPORTED_RUNTIME_METHODS"] = []
+ 
++    if env["wechat_glx"]:
++        # The bundled WeChat library is the official Emscripten 4.0.10 build.
++        if cc_semver != (4, 0, 10):
++            print_error(
++                "wechat_glx=yes requires Emscripten 4.0.10 for the bundled libemscriptenglx.a, detected: %s.%s.%s"
++                % cc_semver
++            )
++            sys.exit(255)
++
++        if env["wechat_glx_exceptions"]:
++            if env["disable_exceptions"]:
++                print_warning("wechat_glx=yes with wechat_glx_exceptions=yes requires C++ exception support; forcing disable_exceptions=no.")
++                env["disable_exceptions"] = False
++
++            # The vendor GLX library throws C++ exceptions internally.
++            env.Append(CXXFLAGS=["-fexceptions"])
++            env.Append(LINKFLAGS=["-fexceptions"])
++        env.AppendUnique(CPPDEFINES=["WECHAT_GLX_EXPERIMENTAL"])
++        env.AppendUnique(LIBPATH=["#thirdparty/wechat-glx"], LIBS=["emscriptenglx"])
++        # Godot adds cwrap below; GLX also needs these runtime helpers exported.
++        env["EXPORTED_RUNTIME_METHODS"] += ["ccall", "stringToUTF8", "lengthBytesUTF8"]
++        env.Append(
++            LINKFLAGS=[
++                "-sCHECK_NULL_WRITES=0",
++                "-sERROR_ON_UNDEFINED_SYMBOLS=0",
++            ]
++        )
++
+     # Validate arch.
+     supported_arches = ["wasm32"]
+     validate_arch(env["arch"], get_name(), supported_arches)
+@@ -251,8 +294,9 @@ def configure(env: "SConsEnvironment"):
+         env.AppendUnique(CPPDEFINES=["GLES3_ENABLED"])
+         # This setting just makes WebGL 2 APIs available, it does NOT disable WebGL 1.
+         env.Append(LINKFLAGS=["-sMAX_WEBGL_VERSION=2"])
+-        # Allow use to take control of swapping WebGL buffers.
+-        env.Append(LINKFLAGS=["-sOFFSCREEN_FRAMEBUFFER=1"])
++        # Allow use to take control of swapping WebGL buffers in the regular WebGL path.
++        if not env["wechat_glx"]:
++            env.Append(LINKFLAGS=["-sOFFSCREEN_FRAMEBUFFER=1"])
+         # Disables the use of *glGetProcAddress() which is inefficient.
+         # See https://emscripten.org/docs/tools_reference/settings_reference.html#gl-enable-get-proc-address
+         env.Append(LINKFLAGS=["-sGL_ENABLE_GET_PROC_ADDRESS=0"])
+@@ -295,7 +339,8 @@ def configure(env: "SConsEnvironment"):
+         env.Append(LINKFLAGS=["-fvisibility=hidden"])
+         env.extra_suffix = ".dlink" + env.extra_suffix
+ 
+-    env.Append(LINKFLAGS=["-sWASM_BIGINT"])
++    # WeChat Mini Game: Disable WASM_BIGINT as WeChat doesn't support BigInt
++    # env.Append(LINKFLAGS=["-sWASM_BIGINT"])
+ 
+     # Run the main application in a web worker
+     if env["proxy_to_pthread"]:
+@@ -315,9 +360,10 @@ def configure(env: "SConsEnvironment"):
+     # Wrap the JavaScript support code around a closure named Godot.
+     env.Append(LINKFLAGS=["-sMODULARIZE=1", "-sEXPORT_NAME='Godot'"])
+ 
+-    # Force long jump mode to 'wasm'
+-    env.Append(CCFLAGS=["-sSUPPORT_LONGJMP='wasm'"])
+-    env.Append(LINKFLAGS=["-sSUPPORT_LONGJMP='wasm'"])
++    # GLX uses Emscripten exception glue, which is incompatible with Wasm SjLj.
++    longjmp_mode = "emscripten" if env["wechat_glx"] else "wasm"
++    env.Append(CCFLAGS=[f"-sSUPPORT_LONGJMP='{longjmp_mode}'"])
++    env.Append(LINKFLAGS=[f"-sSUPPORT_LONGJMP='{longjmp_mode}'"])
+ 
+     # Allow increasing memory buffer size during runtime. This is efficient
+     # when using WebAssembly (in comparison to asm.js) and works well for
+diff --git a/platform/web/display_server_web.cpp b/platform/web/display_server_web.cpp
+index 28a0238b45..996c10f3df 100644
+--- a/platform/web/display_server_web.cpp
++++ b/platform/web/display_server_web.cpp
+@@ -1131,7 +1131,11 @@ DisplayServerWeb::DisplayServerWeb(const String &p_rendering_driver, WindowMode
+ 		attributes.alpha = OS::get_singleton()->is_layered_allowed();
+ 		attributes.antialias = false;
+ 		attributes.majorVersion = 2;
++#ifdef WECHAT_GLX_EXPERIMENTAL
++		attributes.explicitSwapControl = false;
++#else
+ 		attributes.explicitSwapControl = true;
++#endif
+ 
+ 		webgl_ctx = emscripten_webgl_create_context(canvas_id, &attributes);
+ 		webgl2_inited = webgl_ctx && emscripten_webgl_make_context_current(webgl_ctx) == EMSCRIPTEN_RESULT_SUCCESS;
+@@ -1184,7 +1188,9 @@ DisplayServerWeb::~DisplayServerWeb() {
+ 	}
+ #ifdef GLES3_ENABLED
+ 	if (webgl_ctx) {
++#ifndef WECHAT_GLX_EXPERIMENTAL
+ 		emscripten_webgl_commit_frame();
++#endif
+ 		emscripten_webgl_destroy_context(webgl_ctx);
+ 	}
+ #endif
+@@ -1502,7 +1508,9 @@ bool DisplayServerWeb::get_swap_cancel_ok() {
+ void DisplayServerWeb::swap_buffers() {
+ #ifdef GLES3_ENABLED
+ 	if (webgl_ctx) {
++#ifndef WECHAT_GLX_EXPERIMENTAL
+ 		emscripten_webgl_commit_frame();
++#endif
+ 	}
+ #endif
+ }

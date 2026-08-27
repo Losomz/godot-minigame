@@ -1,0 +1,46 @@
+{
+    "description": "Godot 4.5.2 微信 GLX 模板。",
+    "setting": {
+        "urlCheck": false,
+        "es6": true,
+        "postcss": true,
+        "minified": true,
+        "newFeature": true,
+        "babelSetting": {
+            "ignore": [],
+            "disablePlugins": [],
+            "outputPath": ""
+        },
+        "coverView": false,
+        "enhance": false,
+        "showShadowRootInWxmlPanel": false,
+        "packNpmRelationList": [],
+        "ignoreUploadUnusedFiles": true,
+        "swc": false,
+        "compileWorklet": false,
+        "uglifyFileName": false,
+        "uploadWithSourceMap": true,
+        "packNpmManually": false,
+        "minifyWXSS": true,
+        "minifyWXML": true,
+        "localPlugins": false,
+        "disableUseStrict": false,
+        "useCompilerPlugins": false,
+        "condition": false,
+        "disableSWC": true
+    },
+    "compileType": "game",
+    "libVersion": "latest",
+    "condition": {},
+    "editorSetting": {
+        "tabIndent": "insertSpaces",
+        "tabSize": 4
+    },
+    "packOptions": {
+        "ignore": [],
+        "include": []
+    },
+    "appid": "wx2171674c7deaf714",
+    "simulatorPluginLibVersion": {},
+    "isGameTourist": false
+}
