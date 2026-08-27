@@ -26,11 +26,9 @@ private:
     godot::PanelContainer *download_panel = nullptr;
     godot::Label *download_status_label = nullptr;
     godot::ProgressBar *download_progress_bar = nullptr;
-    godot::String active_download_filename;
     double export_progress_value = 0.0;
     godot::Array previous_native_audio_subpackages;
     godot::PackedStringArray previous_native_audio_output_paths;
-    int64_t observed_catalog_revision = -1;
 
 protected:
 	static void _bind_methods();
@@ -39,7 +37,6 @@ public:
     // Virtual methods from EditorExportPlatformExtension
 	virtual godot::PackedStringArray _get_preset_features(const godot::Ref<godot::EditorExportPreset> &p_preset) const override;
 	virtual godot::TypedArray<godot::Dictionary> _get_export_options() const override;
-	virtual bool _should_update_export_options() override;
 	virtual godot::String _get_name() const override;
 	virtual godot::String _get_os_name() const override;
 	virtual godot::Ref<godot::Texture2D> _get_logo() const override;
@@ -62,12 +59,10 @@ public:
     godot::Error _prepare_native_audio_runtime(const godot::Ref<godot::EditorExportPreset> &p_preset, const godot::String &p_path);
     godot::Error _finalize_native_audio_runtime(const godot::String &p_path, bool p_plugin_exported);
     godot::Error _merge_native_audio_subpackages(const godot::String &p_path);
-    void _show_download_progress_dialog(const godot::String &p_filename);
+    void _show_export_progress_dialog();
     void _hide_download_progress_dialog();
     void _set_export_progress(double p_progress, const godot::String &p_text = "");
     void _simulate_export_progress(double p_from, double p_to, int p_duration_ms, const godot::String &p_text = "");
-    void _on_template_download_progress(const godot::String &p_filename, double p_progress);
-    void _on_template_download_finished(const godot::String &p_filename, bool p_success);
 
 	WeChatExportPlatform();
 	~WeChatExportPlatform();

@@ -8,11 +8,8 @@
 #include <godot_cpp/classes/engine.hpp>
 
 // Include our classes
-#include "core/toolkit_core.h"
 #include "core/update_manager.h"
 #include "editor/toolkit_dock.h"
-#include "editor/minigame_panel.h"
-#include "editor/taptap_panel.h"
 #include "editor/settings_panel.h"
 #include "editor/wechat_export_platform.h"
 #include "yaml/yaml.h"
@@ -22,13 +19,11 @@
 using namespace godot;
 
 // Using namespace declarations to reduce verbosity
-using namespace toolkit::core;
 using namespace toolkit::editor;
 using namespace toolkit::templates;
 
 // Pointers to our singletons
 static toolkit::templates::TemplateManager* template_manager_singleton = nullptr;
-static toolkit::core::GodotMinigameCore* godot_minigame_core_singleton = nullptr;
 static toolkit::UpdateManager* update_manager_singleton = nullptr;
 
 void initialize_gdextension_types(ModuleInitializationLevel p_level)
@@ -62,16 +57,9 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 			}
 
 			// Register editor-specific classes
-			ClassDB::register_class<GodotMinigameCore>();
 			ClassDB::register_class<GodotMinigameDock>();
-			ClassDB::register_class<MinigamePanel>();
-			ClassDB::register_class<TapTapPanel>();
 			ClassDB::register_class<SettingsPanel>();
 			ClassDB::register_class<WeChatExportPlatform>();
-
-			// Initialize and register the main plugin singleton
-			godot_minigame_core_singleton = memnew(GodotMinigameCore);
-			Engine::get_singleton()->register_singleton("GodotMinigame", godot_minigame_core_singleton);
 
 			TOOLKIT_LOG("Godot Minigame: Plugin initialized for Godot 4.4");
 			break;
@@ -86,13 +74,6 @@ void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
 		case MODULE_INITIALIZATION_LEVEL_EDITOR: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				break;
-			}
-
-			if (Engine::get_singleton()->has_singleton("GodotMinigame")) {
-				Engine::get_singleton()->unregister_singleton("GodotMinigame");
-			}
-			if (godot_minigame_core_singleton) {
-				godot_minigame_core_singleton = nullptr;
 			}
 
 			TOOLKIT_LOG("Godot Minigame: Plugin terminated");

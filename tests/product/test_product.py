@@ -46,27 +46,37 @@ class ProductToolTests(unittest.TestCase):
         )
         self.assertEqual(stable["tag"], f"plugin-v{stable['version']}")
 
-    def test_runtime_catalog_contract_and_legacy_preset_mapping_are_present(self):
+    def test_runtime_catalog_and_global_template_selection_contracts_are_present(self):
         source = (ROOT / "src/templates/template_manager.cpp").read_text(encoding="utf-8")
         export_source = (ROOT / "src/editor/wechat_export_platform.cpp").read_text(encoding="utf-8")
+        settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
         self.assertIn('status != "stable"', source)
         self.assertIn('minimum_plugin', source)
-        self.assertIn('sha256', source)
-        self.assertIn('templates-v1.json', source)
-        self.assertIn('legacy_template_source == String::utf8("仅插件内模板")', export_source)
-        self.assertIn('legacy_template_source == String::utf8("自动")', export_source)
+        self.assertIn('FileAccess::get_sha256', source)
+        self.assertIn('catalog/templates.json', source)
+        self.assertNotIn('parse_versions_yaml', source)
+        self.assertIn('get_active_template_info()', export_source)
+        self.assertIn('resolve_active_template_path()', export_source)
+        self.assertNotIn('模板/模板版本', export_source)
+        self.assertNotIn('模板/模板来源', export_source)
+        self.assertIn('set_active_catalog_template', settings_source)
+        self.assertIn('remove_active_template_cache', settings_source)
+        self.assertIn('clear_all_template_cache', settings_source)
 
-    def test_automatic_update_install_contract_is_present(self):
+    def test_plugin_update_requires_confirmation_and_relaunches_project(self):
         update_source = (ROOT / "src/core/update_manager.cpp").read_text(encoding="utf-8")
         update_header = (ROOT / "include/core/update_manager.h").read_text(encoding="utf-8")
         settings_source = (ROOT / "src/editor/settings_panel.cpp").read_text(encoding="utf-8")
+        helper_source = (ROOT / "addons/godot-minigame/update_helper.gd").read_text(encoding="utf-8")
         self.assertIn("STATE_INSTALLING", update_header)
-        self.assertIn('call_deferred("install_downloaded_update")', update_source)
-        self.assertIn("package_plugin_config->parse", update_source)
-        self.assertIn("package_extension_config->parse", update_source)
-        self.assertIn("Rollback was incomplete", update_source)
-        self.assertIn("restart_editor(true)", update_source)
-        self.assertIn("正在安装并重启 Godot", settings_source)
+        self.assertIn("set_state(STATE_DOWNLOADED)", update_source)
+        self.assertNotIn('call_deferred("install_downloaded_update")', update_source)
+        self.assertIn("restart_editor_for_update()", settings_source)
+        self.assertIn("安装并重启", settings_source)
+        self.assertIn("OS.is_process_running(parent_pid)", helper_source)
+        self.assertIn("DirAccess.rename_absolute(addon_path, backup_path)", helper_source)
+        self.assertIn("DirAccess.rename_absolute(backup_path, addon_path)", helper_source)
+        self.assertIn('PackedStringArray(["--editor", "--path", project_path])', helper_source)
 
     def test_promote_template_updates_catalog_and_projection(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -110,6 +120,7 @@ class ProductToolTests(unittest.TestCase):
             self.assertIn("tag: 4.5.2-test-r2", versions_path.read_text(encoding="utf-8"))
 
     def test_plugin_zip_has_installable_addon_prefix(self):
+        version = product.load_json(ROOT / "product/plugin.json")["version"]
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
             args = argparse.Namespace(
@@ -121,15 +132,17 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[],
             )
             product.command_package_plugin(args)
-            archive = output / "godot-minigame-plugin-1.0.6.zip"
+            archive = output / f"godot-minigame-plugin-{version}.zip"
             self.assertTrue(archive.is_file())
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
             self.assertIn("addons/godot-minigame/plugin.cfg", names)
+            self.assertIn("addons/godot-minigame/update_helper.gd", names)
             self.assertTrue(all(name.startswith("addons/godot-minigame/") for name in names))
             self.assertFalse(any(name.endswith((".lib", ".exp")) for name in names))
 
     def test_plugin_zip_versions_native_libraries_and_descriptor(self):
+        version = product.load_json(ROOT / "product/plugin.json")["version"]
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
             native = output / "native"
@@ -152,7 +165,7 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[],
             )
             product.command_package_plugin(args)
-            archive = output / "package" / "godot-minigame-plugin-1.0.6.zip"
+            archive = output / "package" / f"godot-minigame-plugin-{version}.zip"
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
                 descriptor = package.read(
@@ -160,17 +173,18 @@ class ProductToolTests(unittest.TestCase):
                 ).decode("utf-8")
 
             expected = {
-                "addons/godot-minigame/bin/windows/godot-minigame.windows.x86_64.1.0.6.dll",
-                "addons/godot-minigame/bin/linux/libgodot-minigame.linux.x86_64.1.0.6.so",
-                "addons/godot-minigame/bin/macos/libgodot-minigame.macos.1.0.6.dylib",
+                f"addons/godot-minigame/bin/windows/godot-minigame.windows.x86_64.{version}.dll",
+                f"addons/godot-minigame/bin/linux/libgodot-minigame.linux.x86_64.{version}.so",
+                f"addons/godot-minigame/bin/macos/libgodot-minigame.macos.{version}.dylib",
             }
             self.assertTrue(expected.issubset(names))
             self.assertNotIn("godot-minigame.windows.x86_64.dll\"", descriptor)
-            self.assertIn("godot-minigame.windows.x86_64.1.0.6.dll", descriptor)
-            self.assertIn("libgodot-minigame.linux.x86_64.1.0.6.so", descriptor)
-            self.assertIn("libgodot-minigame.macos.1.0.6.dylib", descriptor)
+            self.assertIn(f"godot-minigame.windows.x86_64.{version}.dll", descriptor)
+            self.assertIn(f"libgodot-minigame.linux.x86_64.{version}.so", descriptor)
+            self.assertIn(f"libgodot-minigame.macos.{version}.dylib", descriptor)
 
     def test_plugin_zip_can_bundle_template_once(self):
+        version = product.load_json(ROOT / "product/plugin.json")["version"]
         with tempfile.TemporaryDirectory() as temporary:
             temporary_path = Path(temporary)
             template = temporary_path / "minigame4.5.2-glx-2d-r1.tpz"
@@ -185,7 +199,7 @@ class ProductToolTests(unittest.TestCase):
                 bundle_template=[template],
             )
             product.command_package_plugin(args)
-            archive = output / "godot-minigame-plugin-1.0.6.zip"
+            archive = output / f"godot-minigame-plugin-{version}.zip"
             with zipfile.ZipFile(archive) as package:
                 names = package.namelist()
                 bundled = "addons/godot-minigame/resources/templates/minigame4.5.2-glx-2d-r1.tpz"

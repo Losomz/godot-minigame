@@ -9,8 +9,6 @@ namespace toolkit {
 namespace editor {
 
 // 前置声明
-class MinigamePanel;
-class TapTapPanel;
 class SettingsPanel;
 
 // 主插件停靠面板
@@ -21,8 +19,6 @@ private:
     godot::TabContainer* tab_container = nullptr;
 
     // 四个功能面板
-    MinigamePanel* minigame_panel = nullptr;
-    TapTapPanel* taptap_panel = nullptr;
     SettingsPanel* settings_panel = nullptr;
 
 protected:
@@ -41,8 +37,6 @@ public:
     void refresh_all_panels();
 
     // Access to sub-panels
-    MinigamePanel* get_minigame_panel() const { return minigame_panel; }
-    TapTapPanel* get_taptap_panel() const { return taptap_panel; }
     SettingsPanel* get_settings_panel() const { return settings_panel; }
 };
 

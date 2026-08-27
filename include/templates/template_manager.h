@@ -2,8 +2,6 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/http_request.hpp>
-#include <godot_cpp/classes/http_client.hpp>
-#include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/classes/thread.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -55,8 +53,6 @@ private:
     Dictionary catalog_cache;
     Array available_versions;
     bool versions_loaded = false;
-    bool initialization_complete = false;
-    bool remote_refresh_started = false;
     bool refresh_in_flight = false;
     int64_t catalog_revision = 0;
 
@@ -77,6 +73,13 @@ public:
     Array get_available_versions() const;
     Dictionary get_versions_data() const;
     int64_t get_catalog_revision() const;
+
+    // Single editor-global template selection used by every project export.
+    Array get_template_choices() const;
+    Dictionary get_active_template_info() const;
+    Error set_active_catalog_template(const String& version);
+    Error set_active_custom_template(const String& url);
+    String resolve_active_template_path() const;
 
     // Version selection with nearest match
     String get_best_version_for_editor() const;
@@ -104,17 +107,12 @@ public:
     Array get_missing_templates() const;
     String check_editor_template_status() const;
 
-    // Download management
-    Error download_template(const String& filename, const String& target_path = "");
-    Error download_template_sync(const String& filename, const String& target_path = ""); // Synchronous download for testing
-    Error download_template_from_url_sync(const String& filename, const String& download_url, const String& target_path);
-    Error download_template_async(const String& filename, const String& target_path = "");
+    // Download status
     bool is_downloading(const String& filename) const;
     float get_download_progress(const String& filename) const;
 
-    // Editor-side prefetch (manual trigger, runs on a worker thread)
-    String get_prefetch_target_filename() const;
-    Error prefetch_current_template_async();
+    // Editor-side template download (manual trigger, runs on a worker thread)
+    Error download_active_template_async(bool force_replace = false);
     bool is_prefetch_active() const;
     String get_download_status_text(const String& filename) const;
 
@@ -128,8 +126,8 @@ public:
     Error extract_embedded_template(const String& filename, const String& output_path);
 
     // Cache management
-    void clear_cache();
-    Error purge_distribution_cache();
+    Error remove_active_template_cache();
+    Error clear_all_template_cache();
     Error refresh_versions();
     Error initialize_template_system();
 
@@ -159,20 +157,16 @@ private:
     Thread* prefetch_thread = nullptr;
     bool prefetch_running = false;
     String prefetch_pinned_filename;
+    String prefetch_custom_url;
+    bool prefetch_force_replace = false;
 
-    // HTTP download infrastructure (no longer needed)
-    // HTTPClient *http_client = nullptr;
-    // Timer *polling_timer = nullptr;
-    // String current_download_url;
-    // String current_download_filename;
-    // String current_download_file_path;
-    // int64_t download_total_bytes = 0;
-    // int64_t download_received_bytes = 0;
-    // bool is_downloading_with_progress = false;
+    String active_template_kind = "catalog";
+    String active_template_version;
+    String active_custom_url;
 
-    Error parse_versions_yaml(const String& yaml_content);
     Error parse_templates_catalog(const String& json_content);
-    Error download_template_url_sync(const String& filename, const String& download_url, const String& output_path, bool verify_catalog_digest);
+    Error download_template_sync(const String& filename, const String& target_path);
+    Error download_template_url_sync(const String& filename, const String& download_url, const String& output_path);
     TemplateVersion parse_version_entry(const String& godot_major, const String& version, const String& filename);
     String build_versions_url() const;
     String build_release_download_url(DistributionProvider provider, const String& owner, const String& repo, const String& release_tag, const String& filename) const;
@@ -190,15 +184,6 @@ private:
 
     void update_download_state(const String& filename, const String& state, float progress = 0.0f, const String& note = "");
 
-    // HTTP download methods (no longer needed)
-    // void initialize_http_components();
-    // void cleanup_http_components();
-    // Error start_progress_download(const String& url, const String& filename, const String& file_path);
-    // void poll_progress_download();
-    // void finish_progress_download(bool success, const String& error = "");
-    void update_polling();
-
-    // New helper methods
     bool is_template_available_anywhere(const String& filename) const;
     Error save_versions_to_local_cache();
     Error http_get_sync_follow_redirects(const String& url, PackedByteArray& r_body, int& r_response_code, Dictionary* r_response_headers = nullptr, const std::function<void(int64_t downloaded, int64_t total)>& progress_callback = {}) const;
@@ -209,11 +194,19 @@ private:
     String get_latest_version_for_minor_line(const String& target_version, const String& major_version) const;
     int compare_version_numbers(const String& version1, const String& version2) const;
     Array parse_version_components(const String& version) const;
+    String get_global_template_cache_root() const;
     String get_distribution_cache_root_dir() const;
     Array build_available_versions_from_cache() const;
+    String get_editor_version_line() const;
+    String get_active_template_filename() const;
+    String get_custom_template_cache_path(const String& url) const;
+    bool validate_template_archive(const String& path) const;
+    Error publish_download_atomically(const String& temporary_path, const String& output_path) const;
+    void load_active_template_selection();
+    void persist_active_template_selection() const;
+    void ensure_default_active_template();
 
     // Signal handlers
-    void _on_template_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& filename, const String& output_path);
     void _on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& request_url);
 
     // Prefetch worker entry (runs off the main thread)

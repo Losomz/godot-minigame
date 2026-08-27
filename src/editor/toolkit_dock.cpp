@@ -1,7 +1,6 @@
 #include "editor/toolkit_dock.h"
-#include "editor/minigame_panel.h"
-#include "editor/taptap_panel.h"
 #include "editor/settings_panel.h"
+#include "templates/template_manager.h"
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/classes/style_box_empty.hpp>
 #include <godot_cpp/classes/engine.hpp>
@@ -40,12 +39,8 @@ namespace toolkit
         {
             TOOLKIT_LOG("GodotMinigameDock: Ready");
             
-            // Ensure template system is initialized even if MinigamePanel is hidden
-            if (Engine::get_singleton()->has_singleton("GodotMinigame")) {
-                Object* toolkit_core = Engine::get_singleton()->get_singleton("GodotMinigame");
-                if (toolkit_core && toolkit_core->has_method("initialize_template_system")) {
-                    toolkit_core->call("initialize_template_system");
-                }
+            if (templates::TemplateManager::get_singleton()) {
+                templates::TemplateManager::get_singleton()->initialize_template_system();
             }
 
             create_panels();
@@ -72,18 +67,6 @@ namespace toolkit
             tab_container->set_tabs_rearrange_group(-1); // 禁用拖拽重排序
             add_child(tab_container);
 
-            /*
-            // Create minigame panel (小游戏)
-            minigame_panel = memnew(MinigamePanel);
-            minigame_panel->set_name(String::utf8("小游戏"));
-            tab_container->add_child(minigame_panel);
-
-            // Create TapTap panel
-            taptap_panel = memnew(TapTapPanel);
-            taptap_panel->set_name("TapTap");
-            tab_container->add_child(taptap_panel);
-            */
-
             // Create settings panel (设置)
             settings_panel = memnew(SettingsPanel);
             settings_panel->set_name(String::utf8("设置"));
@@ -95,17 +78,6 @@ namespace toolkit
         void GodotMinigameDock::update_panels()
         {
             // Update all panels with current data
-            if (minigame_panel)
-            {
-                // Update minigame panel if needed
-                minigame_panel->update_button_state();
-            }
-
-            if (taptap_panel)
-            {
-                // Update TapTap panel if needed
-            }
-
             if (settings_panel)
             {
                 // Update settings panel if needed

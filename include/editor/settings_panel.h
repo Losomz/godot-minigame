@@ -9,6 +9,7 @@
 #include <godot_cpp/classes/v_box_container.hpp>
 #include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/classes/option_button.hpp>
+#include <godot_cpp/classes/confirmation_dialog.hpp>
 #include <godot_cpp/core/class_db.hpp>
 
 namespace toolkit {
@@ -40,8 +41,16 @@ private:
 	godot::Label *action_status_label = nullptr;
 	godot::HBoxContainer *template_cache_row = nullptr;
 	godot::Label *template_cache_label = nullptr;
+	godot::OptionButton *template_version_selector = nullptr;
+	godot::LineEdit *custom_template_url_input = nullptr;
+	godot::Button *use_custom_template_button = nullptr;
 	godot::Button *prefetch_template_button = nullptr;
+	godot::Button *replace_template_button = nullptr;
+	godot::Button *remove_template_button = nullptr;
+	godot::Button *clear_templates_button = nullptr;
 	godot::ProgressBar *template_cache_progress = nullptr;
+	godot::ConfirmationDialog *update_restart_dialog = nullptr;
+	godot::ConfirmationDialog *clear_templates_dialog = nullptr;
 
 	void refresh_distribution_info();
 	void refresh_template_cache_info();
@@ -50,7 +59,7 @@ private:
 	void _on_plugin_update_state_changed(int state);
 	void _on_plugin_update_available(const godot::Dictionary &version_info);
 	void _on_plugin_update_download_finished(bool success);
-	void _on_plugin_update_installation_finished(bool success, const godot::String &message);
+	void _on_confirm_update_restart();
 	void _on_plugin_update_error(const godot::String &message);
 	void _on_distribution_provider_selected(int index);
 	void _on_save_distribution_config_pressed();
@@ -58,7 +67,14 @@ private:
 	void _on_refresh_versions_pressed();
 	void _on_versions_loaded();
 	void _on_versions_refresh_failed(int error_code);
+	void _on_active_template_changed(const godot::Dictionary &template_info);
+	void _on_template_version_selected(int index);
+	void _on_use_custom_template_pressed();
 	void _on_prefetch_template_pressed();
+	void _on_replace_template_pressed();
+	void _on_remove_template_pressed();
+	void _on_clear_templates_pressed();
+	void _on_confirm_clear_templates();
 	void _on_template_download_progress(const godot::String &filename, float progress);
 	void _on_template_cache_download_finished(const godot::String &filename, bool success);
 

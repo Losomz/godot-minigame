@@ -1,5 +1,4 @@
 #include "templates/template_manager.h"
-#include "yaml/yaml.h"
 #include "network/download_manager.h"
 #include "filesystem/user_data_path.h"
 #include "core/logging.h"
@@ -15,6 +14,7 @@
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/zip_reader.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
+#include <godot_cpp/classes/editor_paths.hpp>
 #include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/main_loop.hpp>
 #include <godot_cpp/classes/tls_options.hpp>
@@ -36,19 +36,8 @@ namespace templates {
 static bool _parse_http_url(const String &url, String &host, int &port, String &path, bool &use_tls);
 
 namespace {
-constexpr const char *TOOLKIT_EDITOR_METADATA_SECTION = "godot_minigame";
-constexpr const char *TOOLKIT_EDITOR_METADATA_SECTION_LEGACY = "toolkit_addons";
-constexpr const char *TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER = "distribution_provider";
-constexpr const char *TOOLKIT_EDITOR_METADATA_GITHUB_OWNER = "github_owner";
-constexpr const char *TOOLKIT_EDITOR_METADATA_GITHUB_REPO = "github_repo";
-constexpr const char *TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG = "github_release_tag";
-constexpr const char *TOOLKIT_EDITOR_METADATA_GITEE_OWNER = "gitee_owner";
-constexpr const char *TOOLKIT_EDITOR_METADATA_GITEE_REPO = "gitee_repo";
-constexpr const char *TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG = "gitee_release_tag";
-constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER = "atomgit_owner";
-constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO = "atomgit_repo";
-constexpr const char *TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG = "atomgit_release_tag";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.7";
+constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
+constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.8";
 
 String _sanitize_cache_component(const String &value) {
     String sanitized = value.strip_edges().to_lower();
@@ -162,18 +151,6 @@ Error _remove_directory_recursive_absolute(const String &dir_path) {
     return DirAccess::remove_absolute(dir_path);
 }
 
-String _strip_wrapping_quotes(const String &value) {
-    String stripped = value.strip_edges();
-    if (stripped.length() >= 2) {
-        bool double_quoted = stripped.begins_with("\"") && stripped.ends_with("\"");
-        bool single_quoted = stripped.begins_with("'") && stripped.ends_with("'");
-        if (double_quoted || single_quoted) {
-            return stripped.substr(1, stripped.length() - 2);
-        }
-    }
-    return stripped;
-}
-
 String _get_env_trimmed(const char *name) {
     return OS::get_singleton()->get_environment(String::utf8(name)).strip_edges();
 }
@@ -267,7 +244,6 @@ TemplateManager::TemplateManager() {
     if (singleton == nullptr) {
         singleton = this;
     }
-    load_download_states();
 }
 
 TemplateManager::~TemplateManager() {
@@ -284,14 +260,17 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_versions_from_local_cache"), &TemplateManager::load_versions_from_local_cache);
     ClassDB::bind_method(D_METHOD("get_available_versions"), &TemplateManager::get_available_versions);
     ClassDB::bind_method(D_METHOD("get_catalog_revision"), &TemplateManager::get_catalog_revision);
+    ClassDB::bind_method(D_METHOD("get_template_choices"), &TemplateManager::get_template_choices);
+    ClassDB::bind_method(D_METHOD("get_active_template_info"), &TemplateManager::get_active_template_info);
+    ClassDB::bind_method(D_METHOD("set_active_catalog_template", "version"), &TemplateManager::set_active_catalog_template);
+    ClassDB::bind_method(D_METHOD("set_active_custom_template", "url"), &TemplateManager::set_active_custom_template);
+    ClassDB::bind_method(D_METHOD("resolve_active_template_path"), &TemplateManager::resolve_active_template_path);
     ClassDB::bind_method(D_METHOD("get_best_version_for_editor"), &TemplateManager::get_best_version_for_editor);
     ClassDB::bind_method(
             D_METHOD("resolve_template_filename_for_version", "target_version", "major_version"),
             &TemplateManager::resolve_template_filename_for_version,
             DEFVAL(""));
-    ClassDB::bind_method(D_METHOD("download_template", "filename", "target_path"), &TemplateManager::download_template, DEFVAL(""));
-    ClassDB::bind_method(D_METHOD("get_prefetch_target_filename"), &TemplateManager::get_prefetch_target_filename);
-    ClassDB::bind_method(D_METHOD("prefetch_current_template_async"), &TemplateManager::prefetch_current_template_async);
+    ClassDB::bind_method(D_METHOD("download_active_template_async", "force_replace"), &TemplateManager::download_active_template_async, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("is_prefetch_active"), &TemplateManager::is_prefetch_active);
     ClassDB::bind_method(D_METHOD("get_download_status_text", "filename"), &TemplateManager::get_download_status_text);
     ClassDB::bind_method(D_METHOD("extract_template", "template_path", "output_path"), &TemplateManager::extract_template);
@@ -317,12 +296,8 @@ void TemplateManager::_bind_methods() {
             &TemplateManager::get_best_available_template_for_version,
             DEFVAL(""));
     ClassDB::bind_method(D_METHOD("get_nearest_compatible_version", "target_version", "major_version"), &TemplateManager::get_nearest_compatible_version);
-    ClassDB::bind_method(D_METHOD("get_download_cache_path", "filename"), &TemplateManager::get_download_cache_path);
-    ClassDB::bind_method(D_METHOD("download_template_sync", "filename", "target_path"), &TemplateManager::download_template_sync, DEFVAL(""));
-    ClassDB::bind_method(D_METHOD("download_template_from_url_sync", "filename", "download_url", "target_path"), &TemplateManager::download_template_from_url_sync);
-    ClassDB::bind_method(D_METHOD("clear_cache"), &TemplateManager::clear_cache);
-    ClassDB::bind_method(D_METHOD("purge_distribution_cache"), &TemplateManager::purge_distribution_cache);
-    ClassDB::bind_method(D_METHOD("update_polling"), &TemplateManager::update_polling);
+    ClassDB::bind_method(D_METHOD("remove_active_template_cache"), &TemplateManager::remove_active_template_cache);
+    ClassDB::bind_method(D_METHOD("clear_all_template_cache"), &TemplateManager::clear_all_template_cache);
     ClassDB::bind_method(D_METHOD("set_distribution_provider", "provider"), &TemplateManager::set_distribution_provider);
     ClassDB::bind_method(D_METHOD("get_distribution_provider"), &TemplateManager::get_distribution_provider);
     ClassDB::bind_method(D_METHOD("reset_distribution_preferences"), &TemplateManager::reset_distribution_preferences);
@@ -353,13 +328,14 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_download_timeout", "timeout_seconds"), &TemplateManager::set_download_timeout);
     ClassDB::bind_method(D_METHOD("get_download_timeout"), &TemplateManager::get_download_timeout);
 
-    ClassDB::bind_method(D_METHOD("_on_template_download_completed"), &TemplateManager::_on_template_download_completed);
     ClassDB::bind_method(D_METHOD("_on_versions_download_completed"), &TemplateManager::_on_versions_download_completed);
 
     ADD_SIGNAL(MethodInfo("versions_loaded"));
     ADD_SIGNAL(MethodInfo("versions_refresh_failed", PropertyInfo(Variant::INT, "error_code")));
     ADD_SIGNAL(MethodInfo("template_download_finished", PropertyInfo(Variant::STRING, "filename"), PropertyInfo(Variant::BOOL, "success")));
     ADD_SIGNAL(MethodInfo("template_download_progress", PropertyInfo(Variant::STRING, "filename"), PropertyInfo(Variant::FLOAT, "progress")));
+    ADD_SIGNAL(MethodInfo("active_template_changed", PropertyInfo(Variant::DICTIONARY, "template_info")));
+    ADD_SIGNAL(MethodInfo("template_inventory_changed"));
 }
 
 TemplateManager* TemplateManager::get_singleton() {
@@ -643,7 +619,6 @@ Error TemplateManager::load_versions_from_local_cache() {
 
 Error TemplateManager::load_versions_from_embedded() {
 #ifdef EMBED_RESOURCES
-    // The JSON catalog is authoritative; YAML remains a compatibility fallback.
     for (int i = 0; toolkit::resources::embedded_resources[i].path != nullptr; i++) {
         const auto& resource = toolkit::resources::embedded_resources[i];
         if (String(resource.path) == "catalog/templates.json") {
@@ -658,6 +633,7 @@ Error TemplateManager::load_versions_from_embedded() {
         "res://addons/godot-minigame/catalog/templates.json",
         nullptr
     };
+
     for (int i = 0; catalog_paths[i] != nullptr; i++) {
         Ref<FileAccess> file = FileAccess::open(String::utf8(catalog_paths[i]), FileAccess::READ);
         if (file.is_valid()) {
@@ -670,199 +646,8 @@ Error TemplateManager::load_versions_from_embedded() {
         }
     }
 
-    // Legacy development builds may only contain the generated YAML projection.
-    const char *versions_paths[] = {
-        "res://resources/versions.yaml",
-        "res://addons/godot-minigame/resources/versions.yaml",
-        "res://versions.yaml",
-        nullptr
-    };
-
-    for (int i = 0; versions_paths[i] != nullptr; i++) {
-        Ref<FileAccess> file = FileAccess::open(String::utf8(versions_paths[i]), FileAccess::READ);
-        if (file.is_valid()) {
-            String yaml_content = file->get_as_text();
-            file->close();
-            return parse_versions_yaml(yaml_content);
-        }
-    }
-
-    TOOLKIT_LOG_RICH("[color=yellow]Warning: versions.yaml not found, using builtin fallback[/color]");
-    const String fallback_yaml =
-            "godot4:\n"
-            "  4.4.0: minigame4.4.0.1.tpz\n"
-            "  4.3.0: minigame4.3.0.3.tpz\n";
-    return parse_versions_yaml(fallback_yaml);
-}
-
-Error TemplateManager::parse_versions_yaml(const String& yaml_content) {
-    TOOLKIT_LOG("TemplateManager: Parsing YAML content: ", yaml_content);
-
-    Dictionary parsed;
-    String current_major;
-    String current_version;
-    Dictionary current_version_entry;
-    PackedStringArray lines = yaml_content.split("\n", false);
-
-    auto flush_pending_version = [&]() {
-        if (current_major.is_empty() || current_version.is_empty()) {
-            current_version = "";
-            current_version_entry.clear();
-            return;
-        }
-
-        Dictionary versions = parsed[current_major];
-        if (current_version_entry.has("file") || current_version_entry.has("filename")) {
-            versions[current_version] = current_version_entry.duplicate(true);
-            parsed[current_major] = versions;
-        }
-        current_version = "";
-        current_version_entry.clear();
-    };
-
-    for (int i = 0; i < lines.size(); i++) {
-        String raw_line = lines[i];
-        String trimmed = raw_line.strip_edges();
-
-        if (trimmed.is_empty() || trimmed.begins_with("#")) {
-            continue;
-        }
-
-        int indent = 0;
-        while (indent < raw_line.length() && raw_line[indent] == ' ') {
-            indent++;
-        }
-
-        if (indent == 0 && trimmed.ends_with(":")) {
-            flush_pending_version();
-            current_major = _strip_wrapping_quotes(trimmed.substr(0, trimmed.length() - 1));
-            if (!parsed.has(current_major)) {
-                parsed[current_major] = Dictionary();
-            }
-            continue;
-        }
-
-        if (current_major.is_empty()) {
-            continue;
-        }
-
-        int separator_pos = trimmed.find(":");
-        if (separator_pos <= 0) {
-            continue;
-        }
-
-        if (indent <= 2) {
-            flush_pending_version();
-
-            String version_key = _strip_wrapping_quotes(trimmed.substr(0, separator_pos));
-            String value_text = _strip_wrapping_quotes(trimmed.substr(separator_pos + 1));
-            if (version_key.is_empty()) {
-                continue;
-            }
-
-            Dictionary versions = parsed[current_major];
-            if (value_text.is_empty()) {
-                current_version = version_key;
-                current_version_entry.clear();
-            } else {
-                versions[version_key] = value_text;
-                parsed[current_major] = versions;
-            }
-            continue;
-        }
-
-        if (current_version.is_empty()) {
-            continue;
-        }
-
-        String child_key = _strip_wrapping_quotes(trimmed.substr(0, separator_pos));
-        String child_value = _strip_wrapping_quotes(trimmed.substr(separator_pos + 1));
-        if (child_key.is_empty() || child_value.is_empty()) {
-            continue;
-        }
-
-        current_version_entry[child_key] = child_value;
-    }
-
-    flush_pending_version();
-
-    if (parsed.is_empty()) {
-        TOOLKIT_LOG_RICH("[color=red]Error: Invalid versions.yaml format[/color]");
-        return ERR_PARSE_ERROR;
-    }
-
-    TOOLKIT_LOG("TemplateManager: Parsed YAML: ", parsed);
-
-    versions_cache = parsed;
-    catalog_cache.clear();
-    available_versions.clear();
-
-    // Build available versions list
-    Dictionary dict = parsed;
-    Array godot_majors = dict.keys();
-
-    TOOLKIT_LOG("TemplateManager: Major versions found: ", godot_majors);
-
-    for (int i = 0; i < godot_majors.size(); i++) {
-        String major = godot_majors[i];
-        Variant versions_variant = dict[major];
-        TOOLKIT_LOG("TemplateManager: Processing major '", major, "', versions data: ", versions_variant, " (type: ", versions_variant.get_type(), ")");
-
-        if (versions_variant.get_type() != Variant::DICTIONARY) {
-            TOOLKIT_LOG("TemplateManager: Warning - versions data for '", major, "' is not a dictionary, skipping");
-            continue;
-        }
-
-        Dictionary versions = versions_variant;
-        Array version_keys = versions.keys();
-
-        TOOLKIT_LOG("TemplateManager: Version keys for '", major, "': ", version_keys);
-
-        for (int j = 0; j < version_keys.size(); j++) {
-            Variant version_key = version_keys[j];
-            String version = version_key;
-
-            // Handle both numeric and string keys from YAML parsing
-            Variant filename_variant;
-            if (versions.has(version_key)) {
-                filename_variant = versions[version_key];
-            } else {
-                // Try the string version if numeric key doesn't work
-                filename_variant = versions[version];
-            }
-
-            Dictionary normalized_entry = normalize_template_entry(filename_variant, "");
-            String filename = String(normalized_entry.get("filename", ""));
-
-            TOOLKIT_LOG("TemplateManager: Processing version '", version, "' -> '", filename, "' (key: ", version_key, " type: ", version_key.get_type(), ", value: ", filename_variant, " type: ", filename_variant.get_type(), ")");
-
-            if (filename.is_empty() || filename == "<null>") {
-                TOOLKIT_LOG("TemplateManager: Skipping invalid filename for version ", version);
-                continue;
-            }
-
-            TemplateVersion template_ver;
-            template_ver.godot_major = major;
-            template_ver.version = version;
-            template_ver.filename = String(normalized_entry.get("filename", ""));
-            template_ver.release_tag = String(normalized_entry.get("release_tag", ""));
-            template_ver.is_embedded = is_template_embedded(template_ver.filename);
-
-            Dictionary version_info;
-            version_info["godot_major"] = major;
-            version_info["version"] = version;
-            version_info["filename"] = template_ver.filename;
-            version_info["release_tag"] = template_ver.release_tag;
-            version_info["is_embedded"] = template_ver.is_embedded;
-
-            available_versions.append(version_info);
-        }
-    }
-
-    versions_loaded = true;
-    catalog_revision++;
-    TOOLKIT_LOG("TemplateManager: Loaded ", available_versions.size(), " template versions");
-    return OK;
+    TOOLKIT_LOG_RICH("[color=yellow]Warning: catalog/templates.json not found[/color]");
+    return ERR_FILE_NOT_FOUND;
 }
 
 Error TemplateManager::parse_templates_catalog(const String& json_content) {
@@ -941,7 +726,6 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
     accepted_catalog["schema_version"] = 1;
     accepted_catalog["templates"] = accepted_templates;
 
-    // Commit only after the complete payload has passed validation.
     versions_cache = parsed_versions;
     available_versions = parsed_available;
     catalog_cache = accepted_catalog;
@@ -970,6 +754,127 @@ int64_t TemplateManager::get_catalog_revision() const {
     return catalog_revision;
 }
 
+String TemplateManager::get_editor_version_line() const {
+    PackedStringArray parts = get_current_godot_version().split(".");
+    if (parts.size() < 2) {
+        return get_current_godot_version();
+    }
+    return String(parts[0]) + "." + String(parts[1]);
+}
+
+Array TemplateManager::get_template_choices() const {
+    Array choices;
+    const String editor_line = get_editor_version_line();
+    const String editor_major = get_godot_major_version();
+    for (int i = 0; i < available_versions.size(); i++) {
+        Dictionary info = available_versions[i];
+        const String version = String(info.get("version", ""));
+        if (String(info.get("godot_major", "")) != editor_major || !version.begins_with(editor_line + String("."))) {
+            continue;
+        }
+        Dictionary choice = info.duplicate(true);
+        const String filename = String(choice.get("filename", ""));
+        choice["id"] = "catalog:" + editor_major + ":" + version;
+        choice["kind"] = "catalog";
+        choice["cached"] = is_template_downloaded(filename);
+        choice["bundled"] = is_template_bundled(filename) || is_template_embedded(filename);
+        choices.append(choice);
+    }
+    return choices;
+}
+
+String TemplateManager::get_custom_template_cache_path(const String &url) const {
+    const String filename = url.get_slice("?", 0).get_file();
+    return get_global_template_cache_root().path_join("custom").path_join(url.md5_text() + "-" + filename);
+}
+
+String TemplateManager::get_active_template_filename() const {
+    if (active_template_kind == "custom") {
+        return active_custom_url.is_empty() ? String() : get_custom_template_cache_path(active_custom_url).get_file();
+    }
+    for (int i = 0; i < available_versions.size(); i++) {
+        Dictionary info = available_versions[i];
+        if (String(info.get("version", "")) == active_template_version &&
+                String(info.get("godot_major", "")) == get_godot_major_version()) {
+            return String(info.get("filename", ""));
+        }
+    }
+    return "";
+}
+
+Dictionary TemplateManager::get_active_template_info() const {
+    Dictionary info;
+    info["kind"] = active_template_kind;
+    info["version"] = active_template_version;
+    info["url"] = active_custom_url;
+    const String filename = get_active_template_filename();
+    info["filename"] = filename;
+    if (active_template_kind == "custom") {
+        const String path = active_custom_url.is_empty() ? String() : get_custom_template_cache_path(active_custom_url);
+        info["cached"] = !path.is_empty() && FileAccess::file_exists(path);
+        info["bundled"] = false;
+        info["display_name"] = filename.is_empty() ? String::utf8("未选择自定义模板") : filename;
+    } else {
+        info["cached"] = !filename.is_empty() && is_template_downloaded(filename);
+        info["bundled"] = !filename.is_empty() && (is_template_bundled(filename) || is_template_embedded(filename));
+        info["display_name"] = active_template_version.is_empty() ? String::utf8("未选择模板") : "Godot " + active_template_version;
+    }
+    info["available"] = !resolve_active_template_path().is_empty();
+    return info;
+}
+
+Error TemplateManager::set_active_catalog_template(const String &version) {
+    const String normalized = version.strip_edges();
+    Array choices = get_template_choices();
+    bool found = false;
+    for (int i = 0; i < choices.size(); i++) {
+        Dictionary choice = choices[i];
+        if (String(choice.get("version", "")) == normalized) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return ERR_INVALID_PARAMETER;
+    }
+    active_template_kind = "catalog";
+    active_template_version = normalized;
+    active_custom_url = "";
+    persist_active_template_selection();
+    emit_signal("active_template_changed", get_active_template_info());
+    return OK;
+}
+
+Error TemplateManager::set_active_custom_template(const String &url) {
+    const String normalized = url.strip_edges();
+    const String path_without_query = normalized.get_slice("?", 0).to_lower();
+    if ((!normalized.begins_with("https://") && !normalized.begins_with("http://")) || !path_without_query.ends_with(".tpz")) {
+        return ERR_INVALID_PARAMETER;
+    }
+    active_template_kind = "custom";
+    active_custom_url = normalized;
+    active_template_version = "";
+    persist_active_template_selection();
+    emit_signal("active_template_changed", get_active_template_info());
+    return OK;
+}
+
+String TemplateManager::resolve_active_template_path() const {
+    if (active_template_kind == "custom") {
+        if (active_custom_url.is_empty()) {
+            return "";
+        }
+        const String path = get_custom_template_cache_path(active_custom_url);
+        return FileAccess::file_exists(path) && validate_template_archive(path) ? path : String();
+    }
+    const String filename = get_active_template_filename();
+    if (filename.is_empty()) {
+        return "";
+    }
+    const String path = get_template_path(filename);
+    return path.begins_with("remote://") ? String() : path;
+}
+
 Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const String &fallback_release_tag) const {
     Dictionary normalized;
     normalized["filename"] = "";
@@ -984,9 +889,6 @@ Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const
         Dictionary dict_entry = entry;
         normalized["filename"] = String(dict_entry.get("file", dict_entry.get("filename", ""))).strip_edges();
         normalized["release_tag"] = String(dict_entry.get("tag", dict_entry.get("release_tag", fallback_release_tag))).strip_edges();
-        normalized["sha256"] = String(dict_entry.get("sha256", "")).strip_edges().to_lower();
-        normalized["minimum_plugin"] = String(dict_entry.get("minimum_plugin", "")).strip_edges();
-        normalized["status"] = String(dict_entry.get("status", "")).strip_edges();
     }
 
     return normalized;
@@ -1019,10 +921,7 @@ String TemplateManager::find_sha256_for_filename(const String &filename) const {
 
 bool TemplateManager::verify_template_file(const String &filename, const String &path) const {
     String expected = find_sha256_for_filename(filename);
-    if (expected.is_empty()) {
-        return true;
-    }
-    if (!FileAccess::file_exists(path)) {
+    if (expected.is_empty() || !FileAccess::file_exists(path)) {
         return false;
     }
     String actual = FileAccess::get_sha256(path).to_lower();
@@ -1261,7 +1160,7 @@ bool TemplateManager::is_template_downloaded(const String& filename) const {
     if (!FileAccess::file_exists(cache_path)) {
         return false;
     }
-    if (verify_template_file(filename, cache_path)) {
+    if (verify_template_file(filename, cache_path) && validate_template_archive(cache_path)) {
         return true;
     }
     DirAccess::remove_absolute(cache_path);
@@ -1269,7 +1168,11 @@ bool TemplateManager::is_template_downloaded(const String& filename) const {
 }
 
 String TemplateManager::get_template_path(const String& filename) const {
-    // Priority: packaged file -> embedded resource -> cached -> remote.
+    // A verified global download is an explicit user override.
+    String cache_path = get_download_cache_path(filename);
+    if (verify_template_file(filename, cache_path) && validate_template_archive(cache_path)) {
+        return cache_path;
+    }
 
     String bundled_path = get_bundled_template_path(filename);
     if (!bundled_path.is_empty()) {
@@ -1280,12 +1183,6 @@ String TemplateManager::get_template_path(const String& filename) const {
         return "embedded://" + filename;
     }
 
-    // Check downloaded cache
-    String cache_path = get_download_cache_path(filename);
-    if (is_template_downloaded(filename)) {
-        return cache_path;
-    }
-
     // Check if available remotely (but don't download automatically)
     if (is_template_available_remotely(filename)) {
         return "remote://" + filename;  // Indicates needs download
@@ -1294,127 +1191,48 @@ String TemplateManager::get_template_path(const String& filename) const {
     return "";
 }
 
-Error TemplateManager::download_template(const String& filename, const String& target_path) {
-    if (!Engine::get_singleton()->is_editor_hint()) {
-        TOOLKIT_LOG("TemplateManager: download_template skipped outside editor.");
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_UNCONFIGURED;
-    }
-
-    String download_url = build_download_url(filename);
-    if (download_url.is_empty()) {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Download URL is empty for template: ", filename, "[/color]");
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_INVALID_PARAMETER;
-    }
-    String output_path = target_path.is_empty() ? get_download_cache_path(filename) : target_path;
-
-    TOOLKIT_LOG("TemplateManager: Starting async download of '", filename, "' from '", download_url, "' to '", output_path, "'");
-
-    update_download_state(filename, "downloading", 0.0f);
-
-    HTTPRequest* http_request = memnew(HTTPRequest);
-    http_request->set_name("TemplateManager_HTTPRequest");
-
-    EditorInterface *editor = EditorInterface::get_singleton();
-    Node* parent_node = editor ? editor->get_editor_main_screen() : nullptr;
-    if (!parent_node) {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot get editor main screen to add HTTPRequest.[/color]");
-        memdelete(http_request);
-        update_download_state(filename, "failed", 0.0f);
-        return ERR_UNCONFIGURED;
-    }
-    parent_node->add_child(http_request);
-
-    // We will not use set_download_file to avoid race conditions.
-    // Instead, we'll get the body in the completion signal and write it manually.
-
-    // Ensure cache directory exists
-    String cache_dir = output_path.get_base_dir();
-    UserDataPath::create_directory_if_not_exists(cache_dir);
-
-    // Connect completion signal
-    http_request->connect("request_completed", callable_mp(this, &TemplateManager::_on_template_download_completed).bind(filename, output_path));
-
-    // Make the HTTP request
-    Error request_result = http_request->request(download_url);
-
-    if (request_result != OK) {
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to start HTTPRequest: ", request_result, "[/color]");
-        parent_node->remove_child(http_request);
-        memdelete(http_request);
-        update_download_state(filename, "failed", 0.0f);
-        return request_result;
-    }
-
-    TOOLKIT_LOG("TemplateManager: HTTPRequest started successfully, download is in progress...");
-    return OK;
-}
-
 Error TemplateManager::download_template_sync(const String& filename, const String& target_path) {
     String download_url = build_download_url(filename);
     if (download_url.is_empty()) {
         UtilityFunctions::push_warning(String("Template download URL is empty for: ") + filename);
         update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
         return ERR_INVALID_PARAMETER;
     }
     String output_path = target_path.is_empty() ? get_download_cache_path(filename) : target_path;
-    return download_template_url_sync(filename, download_url, output_path, true);
+    return download_template_url_sync(filename, download_url, output_path);
 }
 
-Error TemplateManager::download_template_from_url_sync(const String& filename, const String& download_url, const String& target_path) {
-    String normalized_url = download_url.strip_edges();
-    if (normalized_url.is_empty() || target_path.strip_edges().is_empty()) {
-        UtilityFunctions::push_warning("Custom template URL and output path cannot be empty.");
-        return ERR_INVALID_PARAMETER;
-    }
-    return download_template_url_sync(filename, normalized_url, target_path, false);
-}
-
-Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path, bool verify_catalog_digest) {
+Error TemplateManager::download_template_url_sync(const String& filename, const String& download_url, const String& output_path) {
     if (output_path.is_empty()) {
         UtilityFunctions::push_warning("Template output path is empty.");
         update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
         return ERR_FILE_CANT_WRITE;
     }
 
-    if (FileAccess::file_exists(output_path) && (!verify_catalog_digest || verify_template_file(filename, output_path))) {
+    if (FileAccess::file_exists(output_path)) {
         update_download_state(filename, "completed", 1.0f);
         return OK;
-    }
-    if (FileAccess::file_exists(output_path)) {
-        DirAccess::remove_absolute(output_path);
     }
 
     String cache_dir = output_path.get_base_dir();
     if (cache_dir.is_empty()) {
         UtilityFunctions::push_warning(String("Template cache directory is empty for output path: ") + output_path);
         update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
         return ERR_FILE_CANT_WRITE;
     }
     if (!UserDataPath::create_directory_if_not_exists(cache_dir)) {
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot create cache directory: ", cache_dir, "[/color]");
         UtilityFunctions::push_warning(String("Template cache directory create failed: ") + cache_dir);
         update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
         return ERR_FILE_CANT_WRITE;
     }
     update_download_state(filename, "downloading", 0.0f);
-    emit_signal("template_download_progress", filename, 0.0f);
+    call_deferred("emit_signal", "template_download_progress", filename, 0.0f);
 
-    // 唯一的线程外调用方是预下载工作线程；据此选择直发或 deferred 信号。
-    const bool on_main_thread = !prefetch_running;
     int64_t last_emit_ticks = 0;
     float last_emit_fraction = -1.0f;
     auto emit_progress = [&](float fraction) {
-        if (on_main_thread) {
-            emit_signal("template_download_progress", filename, fraction);
-        } else {
-            call_deferred("emit_signal", "template_download_progress", filename, fraction);
-        }
+        call_deferred("emit_signal", "template_download_progress", filename, fraction);
     };
     auto report_progress = [&](int64_t downloaded, int64_t total) {
         String note;
@@ -1439,14 +1257,6 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
         update_download_state(filename, "downloading", fraction, note);
         emit_progress(fraction);
     };
-    auto emit_finished = [&](bool success) {
-        if (on_main_thread) {
-            emit_signal("template_download_finished", filename, success);
-        } else {
-            call_deferred("emit_signal", "template_download_finished", filename, success);
-        }
-    };
-
     PackedByteArray response_body;
     int response_code = 0;
     Error request_err = ERR_CANT_CONNECT;
@@ -1464,73 +1274,39 @@ Error TemplateManager::download_template_url_sync(const String& filename, const 
     }
     if (request_err != OK) {
         update_download_state(filename, "failed", 0.0f);
-        emit_finished(false);
         return request_err;
     }
 
-    String write_path = verify_catalog_digest ? output_path + String(".download") : output_path;
-    Ref<FileAccess> out = FileAccess::open(write_path, FileAccess::WRITE);
+    Ref<FileAccess> out = FileAccess::open(output_path, FileAccess::WRITE);
     if (out.is_null()) {
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Cannot open output file for write: ", output_path, "[/color]");
         UtilityFunctions::push_warning(String("Template output write failed: ") + output_path);
         update_download_state(filename, "failed", 0.0f);
-        emit_finished(false);
         return ERR_FILE_CANT_WRITE;
     }
 
     out->store_buffer(response_body);
     out->close();
-    if (verify_catalog_digest && !verify_template_file(filename, write_path)) {
-        DirAccess::remove_absolute(write_path);
-        update_download_state(filename, "failed", 0.0f);
-        emit_signal("template_download_finished", filename, false);
-        return ERR_FILE_CORRUPT;
-    }
-    if (verify_catalog_digest) {
-        if (FileAccess::file_exists(output_path)) {
-            DirAccess::remove_absolute(output_path);
-        }
-        Error rename_err = DirAccess::rename_absolute(write_path, output_path);
-        if (rename_err != OK) {
-            DirAccess::remove_absolute(write_path);
-            update_download_state(filename, "failed", 0.0f);
-            emit_signal("template_download_finished", filename, false);
-            return rename_err;
-        }
-    }
     update_download_state(filename, "completed", 1.0f);
     emit_progress(1.0f);
-    emit_finished(true);
     return OK;
 }
 
-Error TemplateManager::download_template_async(const String& filename, const String& target_path) {
-    // Manual-trigger background download: runs the blocking pipeline on a worker
-    // thread so the editor main thread never stalls. Only cache-target downloads
-    // are supported here; a custom target path keeps the legacy blocking path.
-    if (!target_path.is_empty()) {
-        return download_template_sync(filename, target_path);
-    }
+Error TemplateManager::download_active_template_async(bool force_replace) {
     if (is_prefetch_active()) {
         return ERR_BUSY;
     }
     _join_prefetch_thread();
-    prefetch_pinned_filename = filename.strip_edges();
+    prefetch_pinned_filename = active_template_kind == "catalog" ? get_active_template_filename() : String();
+    prefetch_custom_url = active_template_kind == "custom" ? active_custom_url : String();
+    if (prefetch_pinned_filename.is_empty() && prefetch_custom_url.is_empty()) {
+        return ERR_INVALID_PARAMETER;
+    }
+    prefetch_force_replace = force_replace;
     prefetch_running = true;
     prefetch_thread = memnew(Thread);
     prefetch_thread->start(callable_mp(this, &TemplateManager::_prefetch_worker));
     return OK;
-}
-
-String TemplateManager::get_prefetch_target_filename() const {
-    if (!versions_loaded || available_versions.is_empty()) {
-        return "";
-    }
-    return get_best_version_for_editor();
-}
-
-Error TemplateManager::prefetch_current_template_async() {
-    return download_template_async("", "");
 }
 
 bool TemplateManager::is_prefetch_active() const {
@@ -1550,15 +1326,45 @@ void TemplateManager::_join_prefetch_thread() {
 
 void TemplateManager::_prefetch_worker() {
     String filename = prefetch_pinned_filename;
+    String custom_url = prefetch_custom_url;
+    const bool force_replace = prefetch_force_replace;
     prefetch_pinned_filename = String();
+    prefetch_custom_url = String();
+    prefetch_force_replace = false;
+
+    if (!custom_url.is_empty()) {
+        filename = get_custom_template_cache_path(custom_url).get_file();
+        const String output_path = get_custom_template_cache_path(custom_url);
+        const String temporary_path = output_path + String(".replacement");
+        DirAccess::make_dir_recursive_absolute(output_path.get_base_dir());
+        DirAccess::remove_absolute(temporary_path);
+        if (!force_replace && FileAccess::file_exists(output_path) && validate_template_archive(output_path)) {
+            update_download_state(filename, "completed", 1.0f);
+            call_deferred("emit_signal", "template_download_finished", filename, true);
+            prefetch_running = false;
+            return;
+        }
+        Error custom_err = download_template_url_sync(filename, custom_url, temporary_path);
+        if (custom_err == OK && validate_template_archive(temporary_path)) {
+            custom_err = publish_download_atomically(temporary_path, output_path);
+        } else if (custom_err == OK) {
+            custom_err = ERR_FILE_CORRUPT;
+        }
+        if (custom_err != OK) {
+            DirAccess::remove_absolute(temporary_path);
+            update_download_state(filename, "failed", 0.0f);
+            call_deferred("emit_signal", "template_download_finished", filename, false);
+        } else {
+            update_download_state(filename, "completed", 1.0f);
+            call_deferred("emit_signal", "template_inventory_changed");
+            call_deferred("emit_signal", "template_download_finished", filename, true);
+        }
+        prefetch_running = false;
+        return;
+    }
 
     if (filename.is_empty()) {
-        filename = get_prefetch_target_filename();
-    }
-    if (filename.is_empty()) {
-        // Worker thread is the one place allowed to refresh the remote index.
-        load_versions_from_remote_sync();
-        filename = get_prefetch_target_filename();
+        filename = get_active_template_filename();
     }
     if (filename.is_empty()) {
         update_download_state("__prefetch__", "failed", 0.0f,
@@ -1568,14 +1374,16 @@ void TemplateManager::_prefetch_worker() {
         return;
     }
 
-    if (is_template_bundled(filename) || is_template_embedded(filename)) {
+    if (!force_replace && (is_template_bundled(filename) || is_template_embedded(filename))) {
         update_download_state(filename, "completed", 1.0f);
         call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
         call_deferred("emit_signal", "template_download_finished", filename, true);
         prefetch_running = false;
         return;
     }
-    if (is_template_downloaded(filename)) {
+    if (!force_replace && is_template_downloaded(filename) &&
+            verify_template_file(filename, get_download_cache_path(filename)) &&
+            validate_template_archive(get_download_cache_path(filename))) {
         update_download_state(filename, "completed", 1.0f);
         call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
         call_deferred("emit_signal", "template_download_finished", filename, true);
@@ -1583,7 +1391,24 @@ void TemplateManager::_prefetch_worker() {
         return;
     }
 
-    download_template_sync(filename, "");
+    const String output_path = get_download_cache_path(filename);
+    const String temporary_path = output_path + String(".replacement");
+    DirAccess::remove_absolute(temporary_path);
+    Error download_err = download_template_sync(filename, temporary_path);
+    if (download_err == OK && verify_template_file(filename, temporary_path) && validate_template_archive(temporary_path)) {
+        download_err = publish_download_atomically(temporary_path, output_path);
+    } else if (download_err == OK) {
+        download_err = ERR_FILE_CORRUPT;
+    }
+    if (download_err != OK) {
+        DirAccess::remove_absolute(temporary_path);
+        update_download_state(filename, "failed", 0.0f);
+        call_deferred("emit_signal", "template_download_finished", filename, false);
+    } else {
+        update_download_state(filename, "completed", 1.0f);
+        call_deferred("emit_signal", "template_inventory_changed");
+        call_deferred("emit_signal", "template_download_finished", filename, true);
+    }
     prefetch_running = false;
 }
 
@@ -1858,18 +1683,44 @@ Error TemplateManager::extract_embedded_template(const String& filename, const S
     return ERR_FILE_NOT_FOUND;
 }
 
-void TemplateManager::clear_cache() {
-    versions_cache.clear();
-    catalog_cache.clear();
-    available_versions.clear();
-    download_states.clear();
-    versions_loaded = false;
+Error TemplateManager::remove_active_template_cache() {
+    if (is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    String path;
+    if (active_template_kind == "custom") {
+        path = active_custom_url.is_empty() ? String() : get_custom_template_cache_path(active_custom_url);
+    } else {
+        const String filename = get_active_template_filename();
+        path = filename.is_empty() ? String() : get_download_cache_path(filename);
+    }
+    if (path.is_empty()) {
+        return ERR_INVALID_PARAMETER;
+    }
+    Error err = FileAccess::file_exists(path) ? DirAccess::remove_absolute(path) : OK;
+    if (err == OK) {
+        download_states.erase(path.get_file());
+        save_download_states();
+        emit_signal("template_inventory_changed");
+        emit_signal("active_template_changed", get_active_template_info());
+    }
+    return err;
 }
 
-Error TemplateManager::purge_distribution_cache() {
-    String cache_root = get_distribution_cache_root_dir();
-    clear_cache();
-    return _remove_directory_recursive_absolute(cache_root);
+Error TemplateManager::clear_all_template_cache() {
+    if (is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    const String root = get_global_template_cache_root();
+    Error err = _remove_directory_recursive_absolute(root);
+    if (err != OK) {
+        return err;
+    }
+    DirAccess::make_dir_recursive_absolute(root);
+    download_states.clear();
+    emit_signal("template_inventory_changed");
+    emit_signal("active_template_changed", get_active_template_info());
+    return OK;
 }
 
 Error TemplateManager::refresh_versions() {
@@ -2023,7 +1874,7 @@ String TemplateManager::get_update_manifest_url() const {
 }
 
 String TemplateManager::get_distribution_asset_url(const String& asset_name) const {
-    if (asset_name == "versions.yaml" || asset_name == "catalog/templates.json" || asset_name == "templates.json") {
+    if (asset_name == "catalog/templates.json") {
         return build_versions_url();
     }
     return build_download_url(asset_name);
@@ -2136,7 +1987,7 @@ String TemplateManager::get_download_cache_path(const String& filename) const {
 }
 
 String TemplateManager::get_local_versions_cache_path() const {
-    return get_distribution_cache_root_dir().path_join("templates-v1.json");
+    return get_distribution_cache_root_dir().path_join("templates.json");
 }
 
 String TemplateManager::get_download_state_cache_path() const {
@@ -2504,9 +2355,6 @@ Array TemplateManager::build_available_versions_from_cache() const {
 }
 
 Error TemplateManager::initialize_template_system() {
-    if (initialization_complete) {
-        return versions_loaded ? OK : ERR_UNCONFIGURED;
-    }
     TOOLKIT_LOG("TemplateManager: Initializing template system...");
     load_distribution_preferences();
 
@@ -2524,22 +2372,126 @@ Error TemplateManager::initialize_template_system() {
         }
     }
 
-    initialization_complete = true;
-
-    // Refresh once in the background. Failure leaves the cache/embedded catalog intact.
-    if (!remote_refresh_started && Engine::get_singleton()->is_editor_hint()) {
-        remote_refresh_started = true;
-        Error refresh_err = load_versions_from_remote();
-        if (refresh_err != OK && refresh_err != ERR_BUSY) {
-            TOOLKIT_LOG("TemplateManager: Startup catalog refresh could not be started: ", refresh_err);
-        }
-    }
+    ensure_default_active_template();
 
     // Step 3: Check template status for current editor
     String template_status = check_editor_template_status();
     TOOLKIT_LOG("TemplateManager: Current editor template status: ", template_status);
 
     return OK;
+}
+
+bool TemplateManager::validate_template_archive(const String &path) const {
+    if (!FileAccess::file_exists(path)) {
+        return false;
+    }
+    Ref<ZIPReader> reader;
+    reader.instantiate();
+    if (reader->open(path) != OK) {
+        return false;
+    }
+    PackedStringArray files = reader->get_files();
+    bool has_game_json = false;
+    bool has_engine = false;
+    for (int i = 0; i < files.size(); i++) {
+        const String entry = String(files[i]).replace("\\", "/");
+        if (entry == "game.json" || entry.ends_with("/game.json")) {
+            has_game_json = true;
+        }
+        if (entry.begins_with("engine/") || entry.contains("/engine/")) {
+            has_engine = true;
+        }
+    }
+    reader->close();
+    return has_game_json && has_engine;
+}
+
+Error TemplateManager::publish_download_atomically(const String &temporary_path, const String &output_path) const {
+    const String backup_path = output_path + String(".backup");
+    DirAccess::remove_absolute(backup_path);
+    const bool had_previous = FileAccess::file_exists(output_path);
+    if (had_previous) {
+        Error backup_err = DirAccess::rename_absolute(output_path, backup_path);
+        if (backup_err != OK) {
+            return backup_err;
+        }
+    }
+    Error publish_err = DirAccess::rename_absolute(temporary_path, output_path);
+    if (publish_err != OK) {
+        if (had_previous) {
+            DirAccess::rename_absolute(backup_path, output_path);
+        }
+        return publish_err;
+    }
+    if (had_previous) {
+        DirAccess::remove_absolute(backup_path);
+    }
+    return OK;
+}
+
+void TemplateManager::load_active_template_selection() {
+    EditorInterface *editor_interface = EditorInterface::get_singleton();
+    if (!editor_interface) {
+        return;
+    }
+    Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
+    if (editor_settings.is_null()) {
+        return;
+    }
+    const String prefix = String(EDITOR_SETTING_PREFIX) + "active/" + get_editor_version_line() + "/";
+    if (editor_settings->has_setting(prefix + String("kind"))) {
+        active_template_kind = String(editor_settings->get_setting(prefix + String("kind")));
+    }
+    if (editor_settings->has_setting(prefix + String("version"))) {
+        active_template_version = String(editor_settings->get_setting(prefix + String("version")));
+    }
+    if (editor_settings->has_setting(prefix + String("custom_url"))) {
+        active_custom_url = String(editor_settings->get_setting(prefix + String("custom_url")));
+    }
+}
+
+void TemplateManager::persist_active_template_selection() const {
+    EditorInterface *editor_interface = EditorInterface::get_singleton();
+    if (!editor_interface) {
+        return;
+    }
+    Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
+    if (editor_settings.is_null()) {
+        return;
+    }
+    const String prefix = String(EDITOR_SETTING_PREFIX) + "active/" + get_editor_version_line() + "/";
+    editor_settings->set_setting(prefix + String("kind"), active_template_kind);
+    editor_settings->set_setting(prefix + String("version"), active_template_version);
+    editor_settings->set_setting(prefix + String("custom_url"), active_custom_url);
+}
+
+void TemplateManager::ensure_default_active_template() {
+    if (active_template_kind == "custom" && !active_custom_url.is_empty()) {
+        return;
+    }
+    Array choices = get_template_choices();
+    bool selected_exists = false;
+    for (int i = 0; i < choices.size(); i++) {
+        Dictionary choice = choices[i];
+        if (String(choice.get("version", "")) == active_template_version) {
+            selected_exists = true;
+            break;
+        }
+    }
+    if (selected_exists) {
+        return;
+    }
+    active_template_kind = "catalog";
+    active_template_version = "";
+    active_custom_url = "";
+    for (int i = 0; i < choices.size(); i++) {
+        Dictionary choice = choices[i];
+        const String candidate = String(choice.get("version", ""));
+        if (active_template_version.is_empty() || compare_version_numbers(candidate, active_template_version) > 0) {
+            active_template_version = candidate;
+        }
+    }
+    persist_active_template_selection();
 }
 
 bool TemplateManager::apply_distribution_provider(const String& provider, bool persist_selection, bool refresh_version_cache) {
@@ -2587,135 +2539,21 @@ void TemplateManager::load_distribution_preferences() {
         return;
     }
 
-    String github_owner_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
-            String("")));
-    if (github_owner_value.is_empty()) {
-        github_owner_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
-                github_repo_owner));
-    }
-    github_repo_owner = github_owner_value.strip_edges();
+    auto read_setting = [&](const String &name, const String &fallback) -> String {
+        const String key = String(EDITOR_SETTING_PREFIX) + name;
+        return editor_settings->has_setting(key) ? String(editor_settings->get_setting(key)).strip_edges() : fallback;
+    };
 
-    String github_repo_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
-            String("")));
-    if (github_repo_value.is_empty()) {
-        github_repo_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
-                github_repo_name));
-    }
-    github_repo_name = github_repo_value.strip_edges();
-
-    String github_tag_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
-            String("")));
-    if (github_tag_value.is_empty()) {
-        github_tag_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
-                github_release_tag));
-    }
-    github_release_tag = github_tag_value.strip_edges();
-    if (github_release_tag.is_empty()) {
-        github_release_tag = "latest";
-    }
-
-    String gitee_owner_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
-            String("")));
-    if (gitee_owner_value.is_empty()) {
-        gitee_owner_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
-                gitee_repo_owner));
-    }
-    gitee_repo_owner = gitee_owner_value.strip_edges();
-
-    String gitee_repo_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITEE_REPO,
-            String("")));
-    if (gitee_repo_value.is_empty()) {
-        gitee_repo_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_GITEE_REPO,
-                gitee_repo_name));
-    }
-    gitee_repo_name = gitee_repo_value.strip_edges();
-
-    String gitee_tag_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
-            String("")));
-    if (gitee_tag_value.is_empty()) {
-        gitee_tag_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
-                gitee_release_tag));
-    }
-    gitee_release_tag = gitee_tag_value.strip_edges();
-    if (gitee_release_tag.is_empty()) {
-        gitee_release_tag = "latest";
-    }
-
-    String atomgit_owner_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER,
-            String("")));
-    if (atomgit_owner_value.is_empty()) {
-        atomgit_owner_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER,
-                atomgit_repo_owner));
-    }
-    atomgit_repo_owner = atomgit_owner_value.strip_edges();
-
-    String atomgit_repo_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO,
-            String("")));
-    if (atomgit_repo_value.is_empty()) {
-        atomgit_repo_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO,
-                atomgit_repo_name));
-    }
-    atomgit_repo_name = atomgit_repo_value.strip_edges();
-
-    String atomgit_tag_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
-            String("")));
-    if (atomgit_tag_value.is_empty()) {
-        atomgit_tag_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
-                atomgit_release_tag));
-    }
-    atomgit_release_tag = atomgit_tag_value.strip_edges();
-    if (atomgit_release_tag.is_empty()) {
-        atomgit_release_tag = "latest";
-    }
-
-    String provider_value = String(editor_settings->get_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
-            String("")));
-    if (provider_value.is_empty()) {
-        provider_value = String(editor_settings->get_project_metadata(
-                TOOLKIT_EDITOR_METADATA_SECTION_LEGACY,
-                TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
-                String("github")));
-    }
-    String provider = provider_value;
-    apply_distribution_provider(provider, false, false);
+    github_repo_owner = read_setting("github_owner", github_repo_owner);
+    github_repo_name = read_setting("github_repo", github_repo_name);
+    github_release_tag = read_setting("github_release_tag", github_release_tag);
+    gitee_repo_owner = read_setting("gitee_owner", gitee_repo_owner);
+    gitee_repo_name = read_setting("gitee_repo", gitee_repo_name);
+    gitee_release_tag = read_setting("gitee_release_tag", gitee_release_tag);
+    atomgit_repo_owner = read_setting("atomgit_owner", atomgit_repo_owner);
+    atomgit_repo_name = read_setting("atomgit_repo", atomgit_repo_name);
+    atomgit_release_tag = read_setting("atomgit_release_tag", atomgit_release_tag);
+    apply_distribution_provider(read_setting("distribution_provider", "github"), false, false);
 
     // Allow headless tests and CI to inject release source config without
     // mutating editor settings in the user's global profile.
@@ -2765,6 +2603,7 @@ void TemplateManager::load_distribution_preferences() {
 
     download_states.clear();
     load_download_states();
+    load_active_template_selection();
 }
 
 void TemplateManager::persist_distribution_preferences() const {
@@ -2782,46 +2621,16 @@ void TemplateManager::persist_distribution_preferences() const {
         return;
     }
 
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
-            get_distribution_provider());
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
-            github_repo_owner);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
-            github_repo_name);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
-            github_release_tag);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
-            gitee_repo_owner);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITEE_REPO,
-            gitee_repo_name);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
-            gitee_release_tag);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER,
-            atomgit_repo_owner);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO,
-            atomgit_repo_name);
-    editor_settings->set_project_metadata(
-            TOOLKIT_EDITOR_METADATA_SECTION,
-            TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
-            atomgit_release_tag);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "distribution_provider", get_distribution_provider());
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "github_owner", github_repo_owner);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "github_repo", github_repo_name);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "github_release_tag", github_release_tag);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "gitee_owner", gitee_repo_owner);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "gitee_repo", gitee_repo_name);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "gitee_release_tag", gitee_release_tag);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "atomgit_owner", atomgit_repo_owner);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "atomgit_repo", atomgit_repo_name);
+    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "atomgit_release_tag", atomgit_release_tag);
 }
 
 void TemplateManager::reset_distribution_preferences() {
@@ -2836,36 +2645,7 @@ void TemplateManager::reset_distribution_preferences() {
     atomgit_repo_name = "godot-minigame";
     atomgit_release_tag = "latest";
 
-    if (Engine::get_singleton()->is_editor_hint()) {
-        EditorInterface *editor_interface = EditorInterface::get_singleton();
-        if (editor_interface) {
-            Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
-            if (editor_settings.is_valid()) {
-                static const char *metadata_keys[] = {
-                    TOOLKIT_EDITOR_METADATA_DISTRIBUTION_PROVIDER,
-                    TOOLKIT_EDITOR_METADATA_GITHUB_OWNER,
-                    TOOLKIT_EDITOR_METADATA_GITHUB_REPO,
-                    TOOLKIT_EDITOR_METADATA_GITHUB_RELEASE_TAG,
-                    TOOLKIT_EDITOR_METADATA_GITEE_OWNER,
-                    TOOLKIT_EDITOR_METADATA_GITEE_REPO,
-                    TOOLKIT_EDITOR_METADATA_GITEE_RELEASE_TAG,
-                    TOOLKIT_EDITOR_METADATA_ATOMGIT_OWNER,
-                    TOOLKIT_EDITOR_METADATA_ATOMGIT_REPO,
-                    TOOLKIT_EDITOR_METADATA_ATOMGIT_RELEASE_TAG,
-                    nullptr,
-                };
-                // The legacy section is cleared too so pre-fork installs stop
-                // resurrecting the upstream mirror configuration.
-                for (int s = 0; s < 2; s++) {
-                    const char *section = (s == 0) ? TOOLKIT_EDITOR_METADATA_SECTION : TOOLKIT_EDITOR_METADATA_SECTION_LEGACY;
-                    for (int k = 0; metadata_keys[k] != nullptr; k++) {
-                        editor_settings->set_project_metadata(section, metadata_keys[k], Variant());
-                    }
-                }
-            }
-        }
-    }
-
+    persist_distribution_preferences();
     reload_active_distribution_cache(false);
     TOOLKIT_LOG("TemplateManager: Distribution preferences reset to defaults");
 }
@@ -2875,7 +2655,6 @@ void TemplateManager::reload_active_distribution_cache(bool load_remote_versions
     load_download_states();
 
     versions_cache.clear();
-    catalog_cache.clear();
     available_versions.clear();
     versions_loaded = false;
 
@@ -2888,8 +2667,20 @@ void TemplateManager::reload_active_distribution_cache(bool load_remote_versions
     }
 }
 
+String TemplateManager::get_global_template_cache_root() const {
+    EditorInterface *editor_interface = EditorInterface::get_singleton();
+    if (editor_interface && editor_interface->get_editor_paths()) {
+        String root = editor_interface->get_editor_paths()->get_cache_dir().path_join("godot-minigame/templates");
+        DirAccess::make_dir_recursive_absolute(root);
+        return root;
+    }
+    String root = OS::get_singleton()->get_cache_dir().path_join("godot-minigame/templates");
+    DirAccess::make_dir_recursive_absolute(root);
+    return root;
+}
+
 String TemplateManager::get_distribution_cache_root_dir() const {
-    String templates_dir = ProjectSettings::get_singleton()->globalize_path("user://toolkit/templates");
+    String templates_dir = get_global_template_cache_root();
     String owner;
     String repo;
     String release_tag;
@@ -2994,53 +2785,6 @@ String TemplateManager::check_editor_template_status() const {
     return "no_compatible_version";
 }
 
-// Removed the old HTTPClient infrastructure
-
-void TemplateManager::_on_template_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& filename, const String& output_path) {
-    TOOLKIT_LOG("TemplateManager: Download completed for '", filename, "'. Result: ", p_result, ", Response Code: ", p_response_code);
-
-    // The HTTPRequest node will free itself after the signal is emitted.
-    // We can find it by name and queue_free it.
-    // The HTTPRequest node is a child of the editor main screen, it will be freed automatically.
-
-    if (p_result == HTTPRequest::RESULT_SUCCESS && p_response_code == 200) {
-        String temporary_path = output_path + String(".download");
-        Ref<FileAccess> file = FileAccess::open(temporary_path, FileAccess::WRITE);
-        if (file.is_valid()) {
-            file->store_buffer(p_body);
-            file->close();
-
-            if (!verify_template_file(filename, temporary_path)) {
-                DirAccess::remove_absolute(temporary_path);
-                update_download_state(filename, "failed", 0.0f);
-                emit_signal("template_download_finished", filename, false);
-                return;
-            }
-            if (FileAccess::file_exists(output_path)) {
-                DirAccess::remove_absolute(output_path);
-            }
-            Error rename_err = DirAccess::rename_absolute(temporary_path, output_path);
-            if (rename_err != OK) {
-                DirAccess::remove_absolute(temporary_path);
-                update_download_state(filename, "failed", 0.0f);
-                emit_signal("template_download_finished", filename, false);
-                return;
-            }
-            update_download_state(filename, "completed", 1.0f);
-            TOOLKIT_LOG_RICH("[color=green]TemplateManager: Downloaded file written successfully to: ", output_path, "[/color]");
-            emit_signal("template_download_finished", filename, true);
-        } else {
-            update_download_state(filename, "failed", 0.0f);
-            TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to open file for writing: ", output_path, "[/color]");
-            emit_signal("template_download_finished", filename, false);
-        }
-    } else {
-        update_download_state(filename, "failed", 0.0f);
-        TOOLKIT_LOG_RICH("[color=red]TemplateManager: Download failed for '", filename, "'[/color]");
-        emit_signal("template_download_finished", filename, false);
-    }
-}
-
 void TemplateManager::_on_versions_download_completed(int p_result, int p_response_code, const PackedStringArray& p_headers, const PackedByteArray& p_body, const String& request_url) {
     refresh_in_flight = false;
     TOOLKIT_LOG("TemplateManager: templates catalog download completed. Result: ", p_result, ", Response Code: ", p_response_code);
@@ -3062,7 +2806,9 @@ void TemplateManager::_on_versions_download_completed(int p_result, int p_respon
         if (parse_err == OK) {
             TOOLKIT_LOG("TemplateManager: Successfully parsed remote templates catalog");
             save_versions_to_local_cache();
+            ensure_default_active_template();
             emit_signal("versions_loaded");
+            emit_signal("template_inventory_changed");
         } else {
             TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to parse remote templates catalog; retaining current catalog.[/color]");
             emit_signal("versions_refresh_failed", parse_err);
@@ -3071,10 +2817,6 @@ void TemplateManager::_on_versions_download_completed(int p_result, int p_respon
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to download templates catalog; retaining current catalog.[/color]");
         emit_signal("versions_refresh_failed", ERR_CANT_CONNECT);
     }
-}
-
-void TemplateManager::update_polling() {
-    // This method is kept for potential future use but is not used for downloads anymore.
 }
 
 } // namespace templates

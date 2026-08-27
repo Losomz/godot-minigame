@@ -2,7 +2,6 @@
 #define UPDATE_MANAGER_H
 
 #include <godot_cpp/classes/http_request.hpp>
-#include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/core/object.hpp>
 
 namespace toolkit {
@@ -27,28 +26,19 @@ private:
 	godot::HTTPRequest *version_checker;
 	godot::HTTPRequest *downloader;
 
-	// HTTPClient for progress tracking downloads is no longer used
-	godot::HTTPClient *http_client;
-	godot::Timer *polling_timer;
-
 	// Track HTTP nodes for proper cleanup
 	godot::Array active_http_nodes;
-	godot::String download_url;
 	godot::String download_file_path;
 	godot::String expected_download_sha256;
-	int64_t download_total_bytes;
-	int64_t download_received_bytes;
-	bool is_downloading_with_progress;
+	godot::String last_install_message;
 
 	godot::String local_version;
 	godot::Dictionary remote_version_info;
 	UpdateState current_state = STATE_IDLE;
-	bool stale_native_cleanup_attempted = false;
 
 	void _on_version_check_completed(int p_result, int p_response_code, const godot::PackedStringArray &p_headers, const godot::PackedByteArray &p_body);
 	void _on_download_completed(int p_result, int p_response_code, const godot::PackedStringArray &p_headers, const godot::PackedByteArray &p_body);
 	void set_state(UpdateState p_state);
-	void cleanup_stale_native_libraries();
 
 	// HTTP nodes lifecycle management
 	void track_http_node(godot::Node* node);
@@ -57,14 +47,8 @@ private:
 	godot::String resolve_update_asset_url(const godot::Dictionary &platform_data) const;
 	godot::String resolve_platform_asset_name(const godot::Dictionary &platform_data) const;
 
-	// HTTPClient-based download methods are no longer needed
-	// void start_progress_download(const godot::String& url, const godot::String& file_path);
-	// void poll_progress_download();
-	// void finish_progress_download(bool success, const godot::String& error = "");
-
-public:
-	// This method is kept for potential future use but is not used for downloads anymore.
-	void update_polling();
+	godot::String get_update_cache_root() const;
+	void load_last_install_result();
 
 protected:
 	static void _bind_methods();
@@ -79,14 +63,14 @@ public:
 	void check_for_updates(const godot::String &p_local_version);
 	void download_update();
 	void cancel_download();
-	bool perform_update(godot::String &r_error);
-	void install_downloaded_update();
+	bool prepare_update_and_restart(godot::String &r_error);
 	void restart_editor_for_update();
 
 	bool is_properly_configured() const;
 	godot::String get_download_file_path() const;
 	godot::String get_local_version() const;
 	godot::Dictionary get_remote_version_info() const;
+	godot::String get_last_install_message() const;
 
 	UpdateState get_current_state() const;
 
