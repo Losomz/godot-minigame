@@ -31,6 +31,9 @@ private:
 	godot::String download_file_path;
 	godot::String expected_download_sha256;
 	godot::String last_install_message;
+	godot::String update_channel = "remote";
+	godot::String last_local_package_path;
+	bool plugin_state_loaded = false;
 
 	godot::String local_version;
 	godot::Dictionary remote_version_info;
@@ -49,6 +52,8 @@ private:
 	bool validate_update_package(const godot::String &p_path, godot::String &r_version, godot::String &r_error) const;
 
 	godot::String get_update_cache_root() const;
+	void load_plugin_state();
+	void persist_plugin_state() const;
 	void load_last_install_result();
 
 protected:
@@ -65,6 +70,9 @@ public:
 	void download_update();
 	void cancel_download();
 	godot::Dictionary select_local_package(const godot::String &p_path, const godot::String &p_local_version);
+	void set_update_channel(const godot::String &p_channel);
+	godot::String get_update_channel() const;
+	godot::String get_last_local_package_path() const;
 	void clear_pending_update();
 	bool prepare_update_and_restart(godot::String &r_error);
 	void restart_editor_for_update();

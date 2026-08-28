@@ -79,6 +79,7 @@ public:
     Dictionary get_active_template_info() const;
     Error set_active_catalog_template(const String& version);
     Error set_active_custom_template(const String& source);
+    String get_last_local_template_path() const;
     String resolve_active_template_path() const;
 
     // Version selection with nearest match
@@ -164,6 +165,7 @@ private:
     String active_template_kind = "catalog";
     String active_template_version;
     String active_custom_url;
+    String last_local_template_path;
 
     Error parse_templates_catalog(const String& json_content);
     TemplateVersion parse_version_entry(const String& godot_major, const String& version, const String& filename);

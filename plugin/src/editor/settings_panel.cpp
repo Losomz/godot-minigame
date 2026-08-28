@@ -3,9 +3,9 @@
 #include "core/types.h"
 
 #include <godot_cpp/classes/config_file.hpp>
-#include <godot_cpp/classes/editor_interface.hpp>
-#include <godot_cpp/classes/editor_settings.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/grid_container.hpp>
 #include <godot_cpp/classes/h_separator.hpp>
 #include <godot_cpp/classes/text_server.hpp>
@@ -17,7 +17,20 @@ namespace editor {
 
 namespace {
 
-constexpr const char *PLUGIN_UPDATE_CHANNEL_SETTING = "godot_minigame/plugin_update/channel";
+void restore_file_dialog_path(EditorFileDialog *p_dialog, const String &p_path) {
+	if (!p_dialog || p_path.is_empty()) {
+		return;
+	}
+	const String normalized = p_path.simplify_path();
+	if (FileAccess::file_exists(normalized)) {
+		p_dialog->set_current_path(normalized);
+		return;
+	}
+	const String directory = normalized.get_base_dir();
+	if (DirAccess::dir_exists_absolute(directory)) {
+		p_dialog->set_current_dir(directory);
+	}
+}
 
 } // namespace
 
@@ -70,6 +83,10 @@ void SettingsPanel::_bind_methods() {
 
 void SettingsPanel::_ready() {
 	create_interface();
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (update_manager) {
+		update_manager->initialize();
+	}
 	load_plugin_update_channel();
 	refresh_plugin_update_channel();
 
@@ -94,9 +111,7 @@ void SettingsPanel::_ready() {
 			template_manager->connect("template_inventory_changed", callable_mp(this, &SettingsPanel::refresh_template_cache_info));
 		}
 	}
-	UpdateManager *update_manager = UpdateManager::get_singleton();
 	if (update_manager) {
-		update_manager->initialize();
 		update_manager->connect("update_state_changed", callable_mp(this, &SettingsPanel::_on_plugin_update_state_changed));
 		update_manager->connect("update_available", callable_mp(this, &SettingsPanel::_on_plugin_update_available));
 		update_manager->connect("download_finished", callable_mp(this, &SettingsPanel::_on_plugin_update_download_finished));
@@ -459,6 +474,10 @@ void SettingsPanel::_on_plugin_update_channel_selected(int index) {
 
 void SettingsPanel::_on_select_local_plugin_pressed() {
 	if (local_plugin_file_dialog) {
+		UpdateManager *update_manager = UpdateManager::get_singleton();
+		if (update_manager) {
+			restore_file_dialog_path(local_plugin_file_dialog, update_manager->get_last_local_package_path());
+		}
 		local_plugin_file_dialog->popup_file_dialog();
 	}
 }
@@ -575,13 +594,9 @@ String SettingsPanel::get_installed_plugin_version() const {
 
 void SettingsPanel::load_plugin_update_channel() {
 	int channel = 0;
-	EditorInterface *editor = EditorInterface::get_singleton();
-	if (editor) {
-		Ref<EditorSettings> settings = editor->get_editor_settings();
-		if (settings.is_valid() && settings->has_setting(PLUGIN_UPDATE_CHANNEL_SETTING) &&
-				String(settings->get_setting(PLUGIN_UPDATE_CHANNEL_SETTING)) == "local") {
-			channel = 1;
-		}
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (update_manager && update_manager->get_update_channel() == "local") {
+		channel = 1;
 	}
 	if (plugin_update_channel_selector) {
 		plugin_update_channel_selector->select(channel);
@@ -592,14 +607,11 @@ void SettingsPanel::load_plugin_update_channel() {
 }
 
 void SettingsPanel::save_plugin_update_channel() const {
-	EditorInterface *editor = EditorInterface::get_singleton();
-	if (!editor || !plugin_update_channel_selector) {
+	UpdateManager *update_manager = UpdateManager::get_singleton();
+	if (!update_manager || !plugin_update_channel_selector) {
 		return;
 	}
-	Ref<EditorSettings> settings = editor->get_editor_settings();
-	if (settings.is_valid()) {
-		settings->set_setting(PLUGIN_UPDATE_CHANNEL_SETTING, plugin_update_channel_selector->get_selected() == 1 ? String("local") : String("remote"));
-	}
+	update_manager->set_update_channel(plugin_update_channel_selector->get_selected() == 1 ? String("local") : String("remote"));
 }
 
 void SettingsPanel::refresh_plugin_update_channel() {
@@ -812,6 +824,12 @@ void SettingsPanel::_on_use_custom_template_pressed() {
 
 void SettingsPanel::_on_select_local_template_pressed() {
 	if (local_template_file_dialog) {
+		if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+			Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
+			if (template_manager && template_manager->has_method("get_last_local_template_path")) {
+				restore_file_dialog_path(local_template_file_dialog, template_manager->call("get_last_local_template_path"));
+			}
+		}
 		local_template_file_dialog->popup_file_dialog();
 	}
 }

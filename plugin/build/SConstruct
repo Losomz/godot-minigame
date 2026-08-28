@@ -135,4 +135,15 @@ library = env.SharedLibrary(
     source=sources,
 )
 
-Default(library)
+waiter_platform = "macos" if platform == "macos" else platform
+waiter_arch = "" if platform == "macos" else ".{}".format(arch)
+waiter_extension = ".exe" if platform == "windows" else ""
+waiter_filename = "godot-minigame-update-waiter.{}{}{}".format(waiter_platform, waiter_arch, waiter_extension)
+waiter_env = env.Clone()
+waiter_env.Replace(LIBS=[], LIBPATH=[])
+waiter = waiter_env.Program(
+    os.path.join(REPO_ROOT, "dist", "plugin", "native", env["platform"], waiter_filename),
+    source=[os.path.join(PLUGIN_ROOT, "updater", "update_waiter.cpp")],
+)
+
+Default([library, waiter])

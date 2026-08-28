@@ -1,11 +1,12 @@
 #include "core/update_manager.h"
 #include "core/logging.h"
+#include "core/plugin_state_store.h"
 #include "core/types.h"
 
 #include <godot_cpp/classes/config_file.hpp>
 #include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
-#include <godot_cpp/classes/editor_paths.hpp>
+#include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
@@ -23,7 +24,11 @@
 using namespace godot;
 
 namespace toolkit {
+
 namespace {
+
+constexpr const char *PLUGIN_UPDATE_STATE_SECTION = "plugin_update";
+constexpr const char *LEGACY_PLUGIN_UPDATE_CHANNEL_SETTING = "godot_minigame/plugin_update/channel";
 
 Error remove_tree(const String &path) {
     if (!DirAccess::dir_exists_absolute(path)) {
@@ -100,6 +105,17 @@ String platform_native_extension() {
         return "dylib";
     }
     return platform == "linux" ? String("so") : String();
+}
+
+String platform_update_waiter_filename() {
+    const String platform = platform_native_directory();
+    if (platform == "windows") {
+        return "godot-minigame-update-waiter.windows." + Engine::get_singleton()->get_architecture_name() + ".exe";
+    }
+    if (platform == "linux") {
+        return "godot-minigame-update-waiter.linux." + Engine::get_singleton()->get_architecture_name();
+    }
+    return platform == "macos" ? String("godot-minigame-update-waiter.macos") : String();
 }
 
 bool valid_plugin_version(const String &version) {
@@ -205,6 +221,9 @@ void UpdateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("download_update"), &UpdateManager::download_update);
     ClassDB::bind_method(D_METHOD("cancel_download"), &UpdateManager::cancel_download);
     ClassDB::bind_method(D_METHOD("select_local_package", "path", "local_version"), &UpdateManager::select_local_package);
+    ClassDB::bind_method(D_METHOD("set_update_channel", "channel"), &UpdateManager::set_update_channel);
+    ClassDB::bind_method(D_METHOD("get_update_channel"), &UpdateManager::get_update_channel);
+    ClassDB::bind_method(D_METHOD("get_last_local_package_path"), &UpdateManager::get_last_local_package_path);
     ClassDB::bind_method(D_METHOD("clear_pending_update"), &UpdateManager::clear_pending_update);
     ClassDB::bind_method(D_METHOD("restart_editor_for_update"), &UpdateManager::restart_editor_for_update);
     ClassDB::bind_method(D_METHOD("get_local_version"), &UpdateManager::get_local_version);
@@ -231,6 +250,7 @@ void UpdateManager::_bind_methods() {
 }
 
 void UpdateManager::initialize() {
+    load_plugin_state();
     load_last_install_result();
     if (version_checker && version_checker->get_parent()) {
         return;
@@ -449,6 +469,10 @@ Dictionary UpdateManager::select_local_package(const String &p_path, const Strin
     result["success"] = false;
 
     const String source_path = p_path.simplify_path();
+    if (source_path.is_absolute_path()) {
+        last_local_package_path = source_path;
+        persist_plugin_state();
+    }
     String version;
     String error;
     if (!validate_update_package(source_path, version, error)) {
@@ -503,15 +527,56 @@ Dictionary UpdateManager::select_local_package(const String &p_path, const Strin
 }
 
 String UpdateManager::get_update_cache_root() const {
-    EditorInterface *editor = EditorInterface::get_singleton();
-    String root;
-    if (editor && editor->get_editor_paths()) {
-        root = editor->get_editor_paths()->get_cache_dir().path_join("godot-minigame/updates");
-    } else {
-        root = OS::get_singleton()->get_cache_dir().path_join("godot-minigame/updates");
-    }
+    const String root = PluginStateStore::get_root_dir().path_join("updates");
     DirAccess::make_dir_recursive_absolute(root);
     return root;
+}
+
+void UpdateManager::load_plugin_state() {
+    if (plugin_state_loaded) {
+        return;
+    }
+    plugin_state_loaded = true;
+
+    const bool has_state = PluginStateStore::has_section(PLUGIN_UPDATE_STATE_SECTION);
+    Dictionary state = PluginStateStore::load_section(PLUGIN_UPDATE_STATE_SECTION);
+    if (!has_state) {
+        EditorInterface *editor = EditorInterface::get_singleton();
+        if (editor) {
+            Ref<EditorSettings> settings = editor->get_editor_settings();
+            if (settings.is_valid() && settings->has_setting(LEGACY_PLUGIN_UPDATE_CHANNEL_SETTING)) {
+                update_channel = String(settings->get_setting(LEGACY_PLUGIN_UPDATE_CHANNEL_SETTING)).strip_edges().to_lower();
+            }
+        }
+    } else {
+        update_channel = String(state.get("channel", "remote")).strip_edges().to_lower();
+        last_local_package_path = String(state.get("last_package_path", "")).simplify_path();
+    }
+    if (update_channel != "local") {
+        update_channel = "remote";
+    }
+    persist_plugin_state();
+}
+
+void UpdateManager::persist_plugin_state() const {
+    Dictionary state = PluginStateStore::load_section(PLUGIN_UPDATE_STATE_SECTION);
+    state["channel"] = update_channel;
+    state["last_package_path"] = last_local_package_path;
+    PluginStateStore::save_section(PLUGIN_UPDATE_STATE_SECTION, state);
+}
+
+void UpdateManager::set_update_channel(const String &p_channel) {
+    load_plugin_state();
+    update_channel = p_channel.strip_edges().to_lower() == "local" ? String("local") : String("remote");
+    persist_plugin_state();
+}
+
+String UpdateManager::get_update_channel() const {
+    return update_channel;
+}
+
+String UpdateManager::get_last_local_package_path() const {
+    return last_local_package_path;
 }
 
 bool UpdateManager::prepare_update_and_restart(String &r_error) {
@@ -549,8 +614,10 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
     bool has_descriptor = false;
     bool has_helper = false;
     bool has_native = false;
+    bool has_waiter = false;
     const String native_platform = platform_native_directory();
     const String native_extension = platform_native_extension();
+    const String waiter_relative_path = "bin/" + native_platform + "/" + platform_update_waiter_filename();
     for (int i = 0; i < entries.size(); i++) {
         const String archive_path = entries[i];
         if (!archive_path.begins_with(prefix)) {
@@ -583,6 +650,8 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
             has_descriptor = true;
         } else if (relative == "update_helper.gd") {
             has_helper = true;
+        } else if (relative == waiter_relative_path) {
+            has_waiter = true;
         } else if (!native_extension.is_empty() && relative.begins_with("bin/" + native_platform + "/") && relative.get_extension().to_lower() == native_extension) {
             has_native = true;
         }
@@ -592,7 +661,7 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
     Ref<ConfigFile> config;
     config.instantiate();
     if (config->parse(plugin_config_text) != OK || String(config->get_value("plugin", "version", "")) != version ||
-            !has_descriptor || !has_helper || !has_native) {
+            !has_descriptor || !has_helper || !has_native || !has_waiter) {
         r_error = "Update package does not contain a complete matching plugin.";
         remove_tree(stage_root);
         return false;
@@ -610,16 +679,28 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
     const PackedByteArray helper_data = helper_file->get_buffer(helper_file->get_length());
     helper_file->close();
     const String helper_script = helper_root.path_join("update_helper.gd");
-    if (!write_bytes(helper_script, helper_data) || !write_text(helper_root.path_join("project.godot"), "[application]\nconfig/name=\"Godot Minigame Updater\"\n")) {
+    const String waiter_source = staged_addon.path_join(waiter_relative_path);
+    const String waiter_path = helper_root.path_join(platform_update_waiter_filename());
+    if (!write_bytes(helper_script, helper_data) ||
+            DirAccess::copy_absolute(waiter_source, waiter_path) != OK ||
+            !write_text(helper_root.path_join("project.godot"), "[application]\nconfig/name=\"Godot Minigame Updater\"\n")) {
         r_error = "Cannot create update helper project.";
         return false;
     }
+    if (native_platform != "windows" && FileAccess::set_unix_permissions(waiter_path, 0755) != OK) {
+        r_error = "Cannot make the update waiter executable.";
+        return false;
+    }
+
+    const String install_root = get_update_cache_root().path_join("install").path_join(version);
+    remove_tree(install_root);
+    DirAccess::make_dir_recursive_absolute(install_root);
 
     Dictionary manifest;
-    manifest["parent_pid"] = OS::get_singleton()->get_process_id();
     manifest["project_path"] = ProjectSettings::get_singleton()->globalize_path("res://").trim_suffix("/");
     manifest["addon_path"] = ProjectSettings::get_singleton()->globalize_path("res://addons/godot-minigame").trim_suffix("/");
     manifest["staged_addon_path"] = staged_addon;
+    manifest["install_root"] = install_root;
     manifest["result_path"] = get_update_cache_root().path_join("last-install.json");
     manifest["editor_path"] = OS::get_singleton()->get_executable_path();
     manifest["version"] = version;
@@ -645,18 +726,39 @@ bool UpdateManager::prepare_update_and_restart(String &r_error) {
         r_error = "Editor shutdown interface is unavailable.";
         return false;
     }
-    PackedStringArray args;
-    args.append("--headless");
-    args.append("--path");
-    args.append(helper_root);
-    args.append("--script");
-    args.append(helper_script);
-    args.append("--");
-    args.append(manifest_path);
-    if (OS::get_singleton()->create_process(OS::get_singleton()->get_executable_path(), args, false) <= 0) {
-        r_error = "Update helper process could not be started.";
+    const String ready_path = helper_root.path_join("waiter.ready");
+    DirAccess::remove_absolute(ready_path);
+    PackedStringArray waiter_args;
+    waiter_args.append(String::num_int64(OS::get_singleton()->get_process_id()));
+    waiter_args.append(ready_path);
+    waiter_args.append(OS::get_singleton()->get_executable_path());
+    waiter_args.append(helper_root);
+    waiter_args.append(helper_script);
+    waiter_args.append(manifest_path);
+    waiter_args.append(String(manifest["result_path"]));
+    waiter_args.append(version);
+    const int64_t waiter_pid = OS::get_singleton()->create_process(waiter_path, waiter_args, false);
+    if (waiter_pid <= 0) {
+        r_error = "Update waiter process could not be started.";
         return false;
     }
+    bool waiter_ready = false;
+    for (int attempt = 0; attempt < 100; attempt++) {
+        if (FileAccess::file_exists(ready_path)) {
+            waiter_ready = true;
+            break;
+        }
+        if (!OS::get_singleton()->is_process_running(waiter_pid)) {
+            break;
+        }
+        OS::get_singleton()->delay_usec(50000);
+    }
+    if (!waiter_ready) {
+        OS::get_singleton()->kill(waiter_pid);
+        r_error = "Update waiter could not attach to the editor process.";
+        return false;
+    }
+    DirAccess::remove_absolute(ready_path);
     set_state(STATE_INSTALLING);
     tree->quit();
     return true;

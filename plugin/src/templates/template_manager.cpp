@@ -2,6 +2,7 @@
 #include "network/download_manager.h"
 #include "filesystem/user_data_path.h"
 #include "core/logging.h"
+#include "core/plugin_state_store.h"
 
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
@@ -13,7 +14,6 @@
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/zip_reader.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
-#include <godot_cpp/classes/editor_paths.hpp>
 #include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/main_loop.hpp>
 #include <godot_cpp/classes/tls_options.hpp>
@@ -36,6 +36,8 @@ static bool _parse_http_url(const String &url, String &host, int &port, String &
 
 namespace {
 constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
+constexpr const char *TEMPLATE_STATE_SECTION = "templates";
+constexpr const char *DISTRIBUTION_STATE_SECTION = "distribution";
 constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.9";
 
 String _sanitize_cache_component(const String &value) {
@@ -263,6 +265,7 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_active_template_info"), &TemplateManager::get_active_template_info);
     ClassDB::bind_method(D_METHOD("set_active_catalog_template", "version"), &TemplateManager::set_active_catalog_template);
     ClassDB::bind_method(D_METHOD("set_active_custom_template", "source"), &TemplateManager::set_active_custom_template);
+    ClassDB::bind_method(D_METHOD("get_last_local_template_path"), &TemplateManager::get_last_local_template_path);
     ClassDB::bind_method(D_METHOD("resolve_active_template_path"), &TemplateManager::resolve_active_template_path);
     ClassDB::bind_method(D_METHOD("get_best_version_for_editor"), &TemplateManager::get_best_version_for_editor);
     ClassDB::bind_method(
@@ -858,6 +861,9 @@ Error TemplateManager::set_active_custom_template(const String &source) {
     active_template_kind = "custom";
     active_custom_url = normalized;
     active_template_version = "";
+    if (local) {
+        last_local_template_path = normalized.simplify_path();
+    }
     persist_active_template_selection();
     emit_signal("active_template_changed", get_active_template_info());
     return OK;
@@ -1289,6 +1295,10 @@ Error TemplateManager::download_active_template_async(bool force_replace) {
     update_download_state(filename, "downloading", 0.0f);
     emit_signal("template_download_progress", filename, 0.0f);
     return OK;
+}
+
+String TemplateManager::get_last_local_template_path() const {
+    return last_local_template_path;
 }
 
 bool TemplateManager::is_prefetch_active() const {
@@ -2391,39 +2401,52 @@ Error TemplateManager::publish_download_atomically(const String &temporary_path,
 }
 
 void TemplateManager::load_active_template_selection() {
+    const bool has_state = PluginStateStore::has_section(TEMPLATE_STATE_SECTION);
+    Dictionary template_state = PluginStateStore::load_section(TEMPLATE_STATE_SECTION);
+    if (has_state) {
+        last_local_template_path = String(template_state.get("last_local_path", "")).simplify_path();
+        Dictionary active_by_editor = template_state.get("active_by_editor", Dictionary());
+        Dictionary active = active_by_editor.get(get_editor_version_line(), Dictionary());
+        active_template_kind = String(active.get("kind", active_template_kind)).strip_edges().to_lower();
+        active_template_version = String(active.get("version", active_template_version)).strip_edges();
+        active_custom_url = String(active.get("custom_source", active_custom_url)).strip_edges();
+        if (active_template_kind != "custom") {
+            active_template_kind = "catalog";
+        }
+        return;
+    }
+
     EditorInterface *editor_interface = EditorInterface::get_singleton();
-    if (!editor_interface) {
-        return;
+    Ref<EditorSettings> editor_settings = editor_interface ? editor_interface->get_editor_settings() : Ref<EditorSettings>();
+    if (editor_settings.is_valid()) {
+        const String prefix = String(EDITOR_SETTING_PREFIX) + "active/" + get_editor_version_line() + "/";
+        if (editor_settings->has_setting(prefix + String("kind"))) {
+            active_template_kind = String(editor_settings->get_setting(prefix + String("kind")));
+        }
+        if (editor_settings->has_setting(prefix + String("version"))) {
+            active_template_version = String(editor_settings->get_setting(prefix + String("version")));
+        }
+        if (editor_settings->has_setting(prefix + String("custom_url"))) {
+            active_custom_url = String(editor_settings->get_setting(prefix + String("custom_url")));
+        }
     }
-    Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
-    if (editor_settings.is_null()) {
-        return;
+    if (active_custom_url.is_absolute_path()) {
+        last_local_template_path = active_custom_url.simplify_path();
     }
-    const String prefix = String(EDITOR_SETTING_PREFIX) + "active/" + get_editor_version_line() + "/";
-    if (editor_settings->has_setting(prefix + String("kind"))) {
-        active_template_kind = String(editor_settings->get_setting(prefix + String("kind")));
-    }
-    if (editor_settings->has_setting(prefix + String("version"))) {
-        active_template_version = String(editor_settings->get_setting(prefix + String("version")));
-    }
-    if (editor_settings->has_setting(prefix + String("custom_url"))) {
-        active_custom_url = String(editor_settings->get_setting(prefix + String("custom_url")));
-    }
+    persist_active_template_selection();
 }
 
 void TemplateManager::persist_active_template_selection() const {
-    EditorInterface *editor_interface = EditorInterface::get_singleton();
-    if (!editor_interface) {
-        return;
-    }
-    Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
-    if (editor_settings.is_null()) {
-        return;
-    }
-    const String prefix = String(EDITOR_SETTING_PREFIX) + "active/" + get_editor_version_line() + "/";
-    editor_settings->set_setting(prefix + String("kind"), active_template_kind);
-    editor_settings->set_setting(prefix + String("version"), active_template_version);
-    editor_settings->set_setting(prefix + String("custom_url"), active_custom_url);
+    Dictionary template_state = PluginStateStore::load_section(TEMPLATE_STATE_SECTION);
+    Dictionary active_by_editor = template_state.get("active_by_editor", Dictionary());
+    Dictionary active;
+    active["kind"] = active_template_kind;
+    active["version"] = active_template_version;
+    active["custom_source"] = active_custom_url;
+    active_by_editor[get_editor_version_line()] = active;
+    template_state["last_local_path"] = last_local_template_path;
+    template_state["active_by_editor"] = active_by_editor;
+    PluginStateStore::save_section(TEMPLATE_STATE_SECTION, template_state);
 }
 
 void TemplateManager::ensure_default_active_template() {
@@ -2490,31 +2513,43 @@ void TemplateManager::load_distribution_preferences() {
         return;
     }
 
-    EditorInterface *editor_interface = EditorInterface::get_singleton();
-    if (!editor_interface) {
-        return;
+    const bool has_state = PluginStateStore::has_section(DISTRIBUTION_STATE_SECTION);
+    if (has_state) {
+        Dictionary state = PluginStateStore::load_section(DISTRIBUTION_STATE_SECTION);
+        Dictionary github = state.get("github", Dictionary());
+        Dictionary gitee = state.get("gitee", Dictionary());
+        Dictionary atomgit = state.get("atomgit", Dictionary());
+        github_repo_owner = String(github.get("owner", github_repo_owner)).strip_edges();
+        github_repo_name = String(github.get("repo", github_repo_name)).strip_edges();
+        github_release_tag = String(github.get("release_tag", github_release_tag)).strip_edges();
+        gitee_repo_owner = String(gitee.get("owner", gitee_repo_owner)).strip_edges();
+        gitee_repo_name = String(gitee.get("repo", gitee_repo_name)).strip_edges();
+        gitee_release_tag = String(gitee.get("release_tag", gitee_release_tag)).strip_edges();
+        atomgit_repo_owner = String(atomgit.get("owner", atomgit_repo_owner)).strip_edges();
+        atomgit_repo_name = String(atomgit.get("repo", atomgit_repo_name)).strip_edges();
+        atomgit_release_tag = String(atomgit.get("release_tag", atomgit_release_tag)).strip_edges();
+        apply_distribution_provider(String(state.get("provider", "github")), false, false);
+    } else {
+        EditorInterface *editor_interface = EditorInterface::get_singleton();
+        Ref<EditorSettings> editor_settings = editor_interface ? editor_interface->get_editor_settings() : Ref<EditorSettings>();
+        if (editor_settings.is_valid()) {
+            auto read_setting = [&](const String &name, const String &fallback) -> String {
+                const String key = String(EDITOR_SETTING_PREFIX) + name;
+                return editor_settings->has_setting(key) ? String(editor_settings->get_setting(key)).strip_edges() : fallback;
+            };
+            github_repo_owner = read_setting("github_owner", github_repo_owner);
+            github_repo_name = read_setting("github_repo", github_repo_name);
+            github_release_tag = read_setting("github_release_tag", github_release_tag);
+            gitee_repo_owner = read_setting("gitee_owner", gitee_repo_owner);
+            gitee_repo_name = read_setting("gitee_repo", gitee_repo_name);
+            gitee_release_tag = read_setting("gitee_release_tag", gitee_release_tag);
+            atomgit_repo_owner = read_setting("atomgit_owner", atomgit_repo_owner);
+            atomgit_repo_name = read_setting("atomgit_repo", atomgit_repo_name);
+            atomgit_release_tag = read_setting("atomgit_release_tag", atomgit_release_tag);
+            apply_distribution_provider(read_setting("distribution_provider", "github"), false, false);
+        }
+        persist_distribution_preferences();
     }
-
-    Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
-    if (editor_settings.is_null()) {
-        return;
-    }
-
-    auto read_setting = [&](const String &name, const String &fallback) -> String {
-        const String key = String(EDITOR_SETTING_PREFIX) + name;
-        return editor_settings->has_setting(key) ? String(editor_settings->get_setting(key)).strip_edges() : fallback;
-    };
-
-    github_repo_owner = read_setting("github_owner", github_repo_owner);
-    github_repo_name = read_setting("github_repo", github_repo_name);
-    github_release_tag = read_setting("github_release_tag", github_release_tag);
-    gitee_repo_owner = read_setting("gitee_owner", gitee_repo_owner);
-    gitee_repo_name = read_setting("gitee_repo", gitee_repo_name);
-    gitee_release_tag = read_setting("gitee_release_tag", gitee_release_tag);
-    atomgit_repo_owner = read_setting("atomgit_owner", atomgit_repo_owner);
-    atomgit_repo_name = read_setting("atomgit_repo", atomgit_repo_name);
-    atomgit_release_tag = read_setting("atomgit_release_tag", atomgit_release_tag);
-    apply_distribution_provider(read_setting("distribution_provider", "github"), false, false);
 
     // Allow headless tests and CI to inject release source config without
     // mutating editor settings in the user's global profile.
@@ -2572,26 +2607,25 @@ void TemplateManager::persist_distribution_preferences() const {
         return;
     }
 
-    EditorInterface *editor_interface = EditorInterface::get_singleton();
-    if (!editor_interface) {
-        return;
-    }
+    Dictionary github;
+    github["owner"] = github_repo_owner;
+    github["repo"] = github_repo_name;
+    github["release_tag"] = github_release_tag;
+    Dictionary gitee;
+    gitee["owner"] = gitee_repo_owner;
+    gitee["repo"] = gitee_repo_name;
+    gitee["release_tag"] = gitee_release_tag;
+    Dictionary atomgit;
+    atomgit["owner"] = atomgit_repo_owner;
+    atomgit["repo"] = atomgit_repo_name;
+    atomgit["release_tag"] = atomgit_release_tag;
 
-    Ref<EditorSettings> editor_settings = editor_interface->get_editor_settings();
-    if (editor_settings.is_null()) {
-        return;
-    }
-
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "distribution_provider", get_distribution_provider());
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "github_owner", github_repo_owner);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "github_repo", github_repo_name);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "github_release_tag", github_release_tag);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "gitee_owner", gitee_repo_owner);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "gitee_repo", gitee_repo_name);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "gitee_release_tag", gitee_release_tag);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "atomgit_owner", atomgit_repo_owner);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "atomgit_repo", atomgit_repo_name);
-    editor_settings->set_setting(String(EDITOR_SETTING_PREFIX) + "atomgit_release_tag", atomgit_release_tag);
+    Dictionary state = PluginStateStore::load_section(DISTRIBUTION_STATE_SECTION);
+    state["provider"] = get_distribution_provider();
+    state["github"] = github;
+    state["gitee"] = gitee;
+    state["atomgit"] = atomgit;
+    PluginStateStore::save_section(DISTRIBUTION_STATE_SECTION, state);
 }
 
 void TemplateManager::reset_distribution_preferences() {
@@ -2629,13 +2663,7 @@ void TemplateManager::reload_active_distribution_cache(bool load_remote_versions
 }
 
 String TemplateManager::get_global_template_cache_root() const {
-    EditorInterface *editor_interface = EditorInterface::get_singleton();
-    if (editor_interface && editor_interface->get_editor_paths()) {
-        String root = editor_interface->get_editor_paths()->get_cache_dir().path_join("godot-minigame/templates");
-        DirAccess::make_dir_recursive_absolute(root);
-        return root;
-    }
-    String root = OS::get_singleton()->get_cache_dir().path_join("godot-minigame/templates");
+    const String root = PluginStateStore::get_root_dir().path_join("templates");
     DirAccess::make_dir_recursive_absolute(root);
     return root;
 }

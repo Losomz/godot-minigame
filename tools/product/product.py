@@ -416,6 +416,7 @@ def iter_addon_files(addon_path: Path):
 
 
 NATIVE_SUFFIXES = {".dll", ".so", ".dylib"}
+UPDATE_WAITER_PREFIX = "godot-minigame-update-waiter."
 
 
 def versioned_native_relative(relative: Path, version: str) -> Path:
@@ -451,6 +452,11 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
         if path.suffix.lower() in NATIVE_SUFFIXES and relative.name in descriptor_text
     ]
+    waiter_files = [
+        (path, relative)
+        for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
+        if relative.name.startswith(UPDATE_WAITER_PREFIX)
+    ]
     if args.require_binaries and not native_files:
         raise ProductError(f"Plugin package requires native binaries under {native_path}")
     if args.require_binaries:
@@ -459,6 +465,12 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         if missing_platforms:
             raise ProductError(
                 "Plugin package is missing native binaries for: " + ", ".join(sorted(missing_platforms))
+            )
+        waiter_platforms = {relative.parts[0] for _, relative in waiter_files if relative.parts}
+        missing_waiters = present_platforms - waiter_platforms
+        if missing_waiters:
+            raise ProductError(
+                "Plugin package is missing update waiters for: " + ", ".join(sorted(missing_waiters))
             )
 
     bundled_templates: list[tuple[Path, Path]] = []
@@ -504,6 +516,10 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         native_renames[relative.name] = release_relative.name
+    for source, relative in waiter_files:
+        target = staging_addon / "bin" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     if native_renames:
         rewrite_release_gdextension(staging_addon / "godot-minigame.gdextension", native_renames)
     for source, relative in bundled_templates:
@@ -518,7 +534,8 @@ def command_package_plugin(args: argparse.Namespace) -> None:
             archive_name = Path("addons/godot-minigame") / relative
             info = zipfile.ZipInfo(archive_name.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
+            mode = 0o100755 if relative.name.startswith(UPDATE_WAITER_PREFIX) else 0o100644
+            info.external_attr = mode << 16
             output.writestr(info, source.read_bytes())
 
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
