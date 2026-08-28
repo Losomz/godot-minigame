@@ -15,7 +15,7 @@
 /dist/
 /bin/
 /demo/bin/
-/demo/addons/godot-minigame/
+/demo/addons/
 /release-assets/
 /.ci-emsdk/
 /.sconsign.dblite

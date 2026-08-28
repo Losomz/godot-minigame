@@ -50,13 +50,13 @@ python tools/product/product.py package-plugin
 
 ## 日常调试
 
-`demo/` 是进入 Git 的最小测试项目，但 `demo/addons/godot-minigame/` 是本地生成目录，不保存第二份插件源码。
+`demo/` 是进入 Git 的最小测试项目。下面的脚本只编译原生插件到 `dist/plugin/native/`，不会修改 `demo/addons/`。
 
 ```powershell
 pwsh tools/dev/build_demo.ps1
 ```
 
-脚本从 `plugin/addon/` 和 `dist/plugin/native/` 组装 demo 插件。随后打开 `demo/project.godot`。
+需要在 Demo 中验证时，继续生成本地插件包，再通过插件设置中的“本地插件包”渠道安装。
 
 ### 本地插件包
 
