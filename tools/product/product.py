@@ -13,6 +13,7 @@ import re
 import shutil
 import sys
 import tempfile
+from urllib.parse import urlparse
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -279,6 +280,12 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
         filename = str(entry.get("file", ""))
         if not filename.endswith(".tpz") or Path(filename).name != filename:
             errors.append(f"Template {major}/{version} file must be a .tpz basename")
+        download_url = str(entry.get("download_url", ""))
+        parsed_download_url = urlparse(download_url)
+        if parsed_download_url.scheme not in {"http", "https"} or not parsed_download_url.netloc:
+            errors.append(f"Template {major}/{version} must have an HTTP(S) download_url")
+        elif Path(parsed_download_url.path).name != filename:
+            errors.append(f"Template {major}/{version} download_url must target {filename}")
         status = entry.get("status")
         if status not in {"legacy", "prerelease", "stable", "retired"}:
             errors.append(f"Template {major}/{version} has an invalid status")
@@ -361,6 +368,11 @@ def command_promote_template(args: argparse.Namespace) -> None:
         raise ProductError("Template promotion requires a full lowercase source commit")
     if Path(args.file).name != args.file or not args.file.endswith(".tpz"):
         raise ProductError("Template asset must be a .tpz basename")
+    parsed_download_url = urlparse(args.download_url)
+    if parsed_download_url.scheme not in {"http", "https"} or not parsed_download_url.netloc:
+        raise ProductError("Template download URL must use HTTP(S)")
+    if Path(parsed_download_url.path).name != args.file:
+        raise ProductError("Template download URL must target the promoted TPZ asset")
 
     catalog = load_json(args.catalog)
     entries = catalog.get("templates")
@@ -373,6 +385,7 @@ def command_promote_template(args: argparse.Namespace) -> None:
         "godot_version": args.godot_version,
         "tag": args.tag,
         "file": args.file,
+        "download_url": args.download_url,
         "sha256": args.sha256.lower(),
         "minimum_plugin": args.minimum_plugin,
         "source_branch": args.source_branch,
@@ -566,6 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--godot-version", required=True)
     promote.add_argument("--tag", required=True)
     promote.add_argument("--file", required=True)
+    promote.add_argument("--download-url", required=True)
     promote.add_argument("--sha256", required=True)
     promote.add_argument("--minimum-plugin", required=True)
     promote.add_argument("--source-branch", required=True)

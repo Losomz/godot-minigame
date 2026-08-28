@@ -76,7 +76,7 @@ func _find_temp_libraries(path: String, result: Array[String]) -> int:
 func _wait_for_temp_libraries(addon_path: String) -> Dictionary:
 	var deadline := Time.get_ticks_msec() + 30000
 	var locked_path := ""
-	while true:
+	while Time.get_ticks_msec() <= deadline:
 		var paths: Array[String] = []
 		var scan_error := _find_temp_libraries(addon_path, paths)
 		if scan_error != OK:
@@ -88,9 +88,8 @@ func _wait_for_temp_libraries(addon_path: String) -> Dictionary:
 				locked_path = path
 		if locked_path.is_empty():
 			return {"error": OK, "path": ""}
-		if Time.get_ticks_msec() >= deadline:
-			return {"error": ERR_BUSY, "path": locked_path}
 		await create_timer(0.2).timeout
+	return {"error": ERR_BUSY, "path": locked_path}
 
 
 func _write_result(path: String, success: bool, message: String, version: String) -> void:

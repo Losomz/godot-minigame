@@ -1,5 +1,6 @@
 #include "core/update_manager.h"
 #include "core/logging.h"
+#include "core/network_proxy.h"
 #include "core/plugin_state_store.h"
 #include "core/types.h"
 
@@ -300,6 +301,7 @@ void UpdateManager::check_for_updates(const String &p_local_version) {
     local_version = p_local_version;
     set_state(STATE_CHECKING);
     version_checker->set_timeout(30.0);
+    NetworkProxy::apply(version_checker);
     const Error err = version_checker->request(resolve_update_manifest_url());
     if (err != OK) {
         set_state(STATE_ERROR);
@@ -356,6 +358,7 @@ void UpdateManager::download_update() {
     DirAccess::make_dir_recursive_absolute(download_file_path.get_base_dir());
     downloader->set_download_file(download_file_path);
     downloader->set_timeout(60.0);
+    NetworkProxy::apply(downloader);
     set_state(STATE_DOWNLOADING);
     const Error err = downloader->request(url);
     if (err != OK) {

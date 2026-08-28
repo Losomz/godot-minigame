@@ -700,7 +700,7 @@ Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset>
                 ", editor " + tm->get_current_godot_version());
 
         if (best_template_ref.is_empty()) {
-            UtilityFunctions::push_warning(String::utf8("当前模板尚未缓存或与此 Godot 版本不兼容。请在 Minigame 插件设置中选择并下载模板。"));
+            UtilityFunctions::push_warning(String::utf8("当前模板不存在或已损坏。请在 Minigame 插件设置中重新选择一个本地可用模板。"));
             return ERR_FILE_NOT_FOUND;
         }
         _product_log("Resolved template: " + best_template_ref.get_file());

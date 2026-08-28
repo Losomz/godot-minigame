@@ -551,6 +551,7 @@ jobs:
             --godot-version "$GODOT_VERSION" \
             --tag "$RELEASE_TAG" \
             --file "$TEMPLATE_ASSET" \
+            --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$TEMPLATE_ASSET" \
             --sha256 "$TEMPLATE_SHA256" \
             --minimum-plugin "$MINIMUM_PLUGIN" \
             --source-branch "$SOURCE_BRANCH" \

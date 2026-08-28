@@ -29,6 +29,11 @@ bool write_file(const std::wstring &path, const std::string &content) {
 	return success;
 }
 
+bool file_exists(const std::wstring &path) {
+	const DWORD attributes = GetFileAttributesW(path.c_str());
+	return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 std::wstring quote_argument(const std::wstring &argument) {
 	if (argument.find_first_of(L" \t\"") == std::wstring::npos) {
 		return argument;
@@ -126,7 +131,14 @@ int wmain(int argc, wchar_t **argv) {
 		return 6;
 	}
 	CloseHandle(process.hThread);
+	const DWORD wait_result = WaitForSingleObject(process.hProcess, INFINITE);
+	DWORD exit_code = 1;
+	const bool exit_code_read = GetExitCodeProcess(process.hProcess, &exit_code) != FALSE;
 	CloseHandle(process.hProcess);
+	if (wait_result != WAIT_OBJECT_0 || !exit_code_read || !file_exists(result_path)) {
+		write_failure(result_path, version);
+		return 7;
+	}
 	return 0;
 }
 

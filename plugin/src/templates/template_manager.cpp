@@ -2,6 +2,7 @@
 #include "network/download_manager.h"
 #include "filesystem/user_data_path.h"
 #include "core/logging.h"
+#include "core/network_proxy.h"
 #include "core/plugin_state_store.h"
 
 #include <godot_cpp/classes/engine.hpp>
@@ -37,27 +38,8 @@ static bool _parse_http_url(const String &url, String &host, int &port, String &
 namespace {
 constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
 constexpr const char *TEMPLATE_STATE_SECTION = "templates";
-constexpr const char *DISTRIBUTION_STATE_SECTION = "distribution";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.9";
-
-String _sanitize_cache_component(const String &value) {
-    String sanitized = value.strip_edges().to_lower();
-    const char *invalid_chars[] = {"/", "\\", ":", "*", "?", "\"", "<", ">", "|", " ", nullptr};
-    for (int i = 0; invalid_chars[i] != nullptr; i++) {
-        sanitized = sanitized.replace(invalid_chars[i], "_");
-    }
-
-    while (sanitized.find("__") != -1) {
-        sanitized = sanitized.replace("__", "_");
-    }
-
-    sanitized = sanitized.strip_edges();
-    if (sanitized.is_empty()) {
-        sanitized = "default";
-    }
-
-    return sanitized;
-}
+constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.10";
+constexpr const char *DEFAULT_TEMPLATE_CATALOG_URL = "https://raw.githubusercontent.com/Losomz/godot-minigame/main/plugin/catalog/templates.json";
 
 bool _is_redirect_response_code(int response_code) {
     return response_code == HTTPClient::RESPONSE_MOVED_PERMANENTLY ||
@@ -152,10 +134,6 @@ Error _remove_directory_recursive_absolute(const String &dir_path) {
     return DirAccess::remove_absolute(dir_path);
 }
 
-String _get_env_trimmed(const char *name) {
-    return OS::get_singleton()->get_environment(String::utf8(name)).strip_edges();
-}
-
 bool _is_sha256(const String &value) {
     if (value.length() != 64) {
         return false;
@@ -242,6 +220,7 @@ static String _resolve_absolute_output_path(const String &output_path) {
 }
 
 TemplateManager::TemplateManager() {
+    remote_catalog_url = DEFAULT_TEMPLATE_CATALOG_URL;
     if (singleton == nullptr) {
         singleton = this;
     }
@@ -261,10 +240,16 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_versions_from_local_cache"), &TemplateManager::load_versions_from_local_cache);
     ClassDB::bind_method(D_METHOD("get_available_versions"), &TemplateManager::get_available_versions);
     ClassDB::bind_method(D_METHOD("get_catalog_revision"), &TemplateManager::get_catalog_revision);
-    ClassDB::bind_method(D_METHOD("get_template_choices"), &TemplateManager::get_template_choices);
+    ClassDB::bind_method(D_METHOD("get_remote_template_choices"), &TemplateManager::get_remote_template_choices);
+    ClassDB::bind_method(D_METHOD("get_local_template_choices"), &TemplateManager::get_local_template_choices);
     ClassDB::bind_method(D_METHOD("get_active_template_info"), &TemplateManager::get_active_template_info);
-    ClassDB::bind_method(D_METHOD("set_active_catalog_template", "version"), &TemplateManager::set_active_catalog_template);
-    ClassDB::bind_method(D_METHOD("set_active_custom_template", "source"), &TemplateManager::set_active_custom_template);
+    ClassDB::bind_method(D_METHOD("cache_template", "template_id"), &TemplateManager::cache_template);
+    ClassDB::bind_method(D_METHOD("set_current_template", "template_id"), &TemplateManager::set_current_template);
+    ClassDB::bind_method(D_METHOD("import_local_template", "path"), &TemplateManager::import_local_template);
+    ClassDB::bind_method(D_METHOD("refresh_remote_catalog", "catalog_url"), &TemplateManager::refresh_remote_catalog);
+    ClassDB::bind_method(D_METHOD("set_template_view", "view"), &TemplateManager::set_template_view);
+    ClassDB::bind_method(D_METHOD("get_template_view"), &TemplateManager::get_template_view);
+    ClassDB::bind_method(D_METHOD("get_remote_catalog_url"), &TemplateManager::get_remote_catalog_url);
     ClassDB::bind_method(D_METHOD("get_last_local_template_path"), &TemplateManager::get_last_local_template_path);
     ClassDB::bind_method(D_METHOD("resolve_active_template_path"), &TemplateManager::resolve_active_template_path);
     ClassDB::bind_method(D_METHOD("get_best_version_for_editor"), &TemplateManager::get_best_version_for_editor);
@@ -300,32 +285,6 @@ void TemplateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_nearest_compatible_version", "target_version", "major_version"), &TemplateManager::get_nearest_compatible_version);
     ClassDB::bind_method(D_METHOD("remove_active_template_cache"), &TemplateManager::remove_active_template_cache);
     ClassDB::bind_method(D_METHOD("clear_all_template_cache"), &TemplateManager::clear_all_template_cache);
-    ClassDB::bind_method(D_METHOD("set_distribution_provider", "provider"), &TemplateManager::set_distribution_provider);
-    ClassDB::bind_method(D_METHOD("get_distribution_provider"), &TemplateManager::get_distribution_provider);
-    ClassDB::bind_method(D_METHOD("reset_distribution_preferences"), &TemplateManager::reset_distribution_preferences);
-    ClassDB::bind_method(
-            D_METHOD("set_current_release_config", "owner", "repo", "release_tag"),
-            &TemplateManager::set_current_release_config,
-            DEFVAL("latest"));
-    ClassDB::bind_method(D_METHOD("get_current_release_config"), &TemplateManager::get_current_release_config);
-    ClassDB::bind_method(
-            D_METHOD("set_github_release_config", "owner", "repo", "release_tag"),
-            &TemplateManager::set_github_release_config,
-            DEFVAL("latest"));
-    ClassDB::bind_method(D_METHOD("get_github_release_config"), &TemplateManager::get_github_release_config);
-    ClassDB::bind_method(
-            D_METHOD("set_gitee_release_config", "owner", "repo", "release_tag"),
-            &TemplateManager::set_gitee_release_config,
-            DEFVAL("latest"));
-    ClassDB::bind_method(D_METHOD("get_gitee_release_config"), &TemplateManager::get_gitee_release_config);
-    ClassDB::bind_method(
-            D_METHOD("set_atomgit_release_config", "owner", "repo", "release_tag"),
-            &TemplateManager::set_atomgit_release_config,
-            DEFVAL("latest"));
-    ClassDB::bind_method(D_METHOD("get_atomgit_release_config"), &TemplateManager::get_atomgit_release_config);
-    ClassDB::bind_method(D_METHOD("get_versions_remote_url"), &TemplateManager::get_versions_remote_url);
-    ClassDB::bind_method(D_METHOD("get_update_manifest_url"), &TemplateManager::get_update_manifest_url);
-    ClassDB::bind_method(D_METHOD("get_distribution_asset_url", "asset_name"), &TemplateManager::get_distribution_asset_url);
     ClassDB::bind_method(D_METHOD("refresh_versions"), &TemplateManager::refresh_versions);
     ClassDB::bind_method(D_METHOD("set_download_timeout", "timeout_seconds"), &TemplateManager::set_download_timeout);
     ClassDB::bind_method(D_METHOD("get_download_timeout"), &TemplateManager::get_download_timeout);
@@ -366,6 +325,7 @@ Error TemplateManager::load_versions_from_remote() {
 
     HTTPRequest* http_request = memnew(HTTPRequest);
     http_request->set_name("TemplateManager_VersionsRequest");
+    NetworkProxy::apply(http_request);
     
     EditorInterface *editor = EditorInterface::get_singleton();
     Node* parent_node = editor ? editor->get_editor_main_screen() : nullptr;
@@ -408,6 +368,7 @@ Error TemplateManager::http_get_sync_follow_redirects(const String &url, PackedB
         }
 
         Ref<HTTPClient> client = memnew(HTTPClient);
+        NetworkProxy::apply(client);
         Ref<TLSOptions> tls_options;
         if (use_tls) {
             tls_options = TLSOptions::client();
@@ -690,9 +651,13 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         String filename = String(entry.get("file", "")).strip_edges();
         String release_tag = String(entry.get("tag", "")).strip_edges();
         String sha256 = String(entry.get("sha256", "")).strip_edges().to_lower();
+        String download_url = String(entry.get("download_url", "")).strip_edges();
+        const String download_filename = download_url.get_slice("?", 0).get_file();
         if (major.is_empty() || version.is_empty() || filename.is_empty() ||
                 !filename.ends_with(".tpz") || filename.get_file() != filename ||
-                release_tag.is_empty() || !_is_sha256(sha256)) {
+                release_tag.is_empty() || !_is_sha256(sha256) ||
+                (!download_url.begins_with("https://") && !download_url.begins_with("http://")) ||
+                download_filename != filename) {
             return ERR_INVALID_DATA;
         }
 
@@ -700,6 +665,7 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         normalized_entry["file"] = filename;
         normalized_entry["tag"] = release_tag;
         normalized_entry["sha256"] = sha256;
+        normalized_entry["download_url"] = download_url;
         normalized_entry["minimum_plugin"] = minimum_plugin;
         normalized_entry["status"] = status;
 
@@ -716,6 +682,7 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         version_info["filename"] = filename;
         version_info["release_tag"] = release_tag;
         version_info["sha256"] = sha256;
+        version_info["download_url"] = download_url;
         version_info["minimum_plugin"] = minimum_plugin;
         version_info["is_embedded"] = is_template_embedded(filename);
         parsed_available.append(version_info);
@@ -766,7 +733,7 @@ String TemplateManager::get_editor_version_line() const {
     return String(parts[0]) + "." + String(parts[1]);
 }
 
-Array TemplateManager::get_template_choices() const {
+Array TemplateManager::get_remote_template_choices() const {
     Array choices;
     const String editor_line = get_editor_version_line();
     const String editor_major = get_godot_major_version();
@@ -778,12 +745,187 @@ Array TemplateManager::get_template_choices() const {
         }
         Dictionary choice = info.duplicate(true);
         const String filename = String(choice.get("filename", ""));
-        choice["id"] = "catalog:" + editor_major + ":" + version;
+        const bool cached = is_template_downloaded(filename);
+        const String bundled_path = get_bundled_template_path(filename);
+        const bool embedded = is_template_embedded(filename);
+        choice["id"] = "remote:" + String(choice.get("sha256", "")).to_lower();
         choice["kind"] = "catalog";
-        choice["cached"] = is_template_downloaded(filename);
-        choice["bundled"] = is_template_bundled(filename) || is_template_embedded(filename);
+        choice["provider"] = "remote";
+        choice["origin"] = String::utf8("远端缓存");
+        choice["display_name"] = "Godot " + version;
+        choice["cached"] = cached;
+        choice["bundled"] = !bundled_path.is_empty() || embedded;
+        choice["available"] = cached || !bundled_path.is_empty() || embedded;
+        choice["path"] = cached ? get_download_cache_path(filename) : (!bundled_path.is_empty() ? bundled_path : (embedded ? "embedded://" + filename : String()));
         choices.append(choice);
     }
+    return choices;
+}
+
+void TemplateManager::collect_local_template_files(
+        const String &root,
+        const String &fallback_origin,
+        Array &choices,
+        Dictionary &seen_paths) const {
+    Ref<DirAccess> dir = DirAccess::open(root);
+    if (dir.is_null()) {
+        return;
+    }
+    dir->list_dir_begin();
+    while (true) {
+        const String name = dir->get_next();
+        if (name.is_empty()) {
+            break;
+        }
+        if (name == "." || name == "..") {
+            continue;
+        }
+        const String path = root.path_join(name).simplify_path();
+        if (dir->current_is_dir()) {
+            collect_local_template_files(path, fallback_origin, choices, seen_paths);
+            continue;
+        }
+        if (name.get_extension().to_lower() != "tpz" || seen_paths.has(path) || !validate_template_archive(path)) {
+            continue;
+        }
+
+        String origin = fallback_origin;
+        String provider = fallback_origin == String::utf8("远端缓存") ? String("remote") : String("local");
+
+        Dictionary choice;
+        String choice_id = "local:" + path.md5_text();
+        String display_name = name;
+        String version;
+        String source;
+        const String actual_sha = FileAccess::get_sha256(path).to_lower();
+        if (provider == "remote") {
+            for (int i = 0; i < available_versions.size(); i++) {
+                const Dictionary catalog_entry = available_versions[i];
+                const String catalog_filename = String(catalog_entry.get("filename", ""));
+                if (catalog_filename.is_empty() || !name.ends_with(catalog_filename)) {
+                    continue;
+                }
+                version = String(catalog_entry.get("version", ""));
+                display_name = version.is_empty() ? name : "Godot " + version;
+                const String expected_sha = String(catalog_entry.get("sha256", "")).strip_edges().to_lower();
+                if (!expected_sha.is_empty() && actual_sha != expected_sha) {
+                    origin = String::utf8("本地修改");
+                    provider = "local";
+                }
+                break;
+            }
+        }
+        const Array record_ids = local_template_records.keys();
+        for (int i = 0; i < record_ids.size(); i++) {
+            const String record_id = String(record_ids[i]);
+            const Dictionary record = local_template_records.get(record_id, Dictionary());
+            if (String(record.get("path", "")).simplify_path() != path) {
+                continue;
+            }
+            choice_id = record_id;
+            display_name = String(record.get("display_name", display_name));
+            version = String(record.get("version", ""));
+            source = String(record.get("source", ""));
+            const String recorded_sha = String(record.get("sha256", "")).to_lower();
+            if (!recorded_sha.is_empty() && recorded_sha != actual_sha) {
+                origin = String::utf8("本地修改");
+                provider = "local";
+            } else {
+                origin = String(record.get("origin", origin));
+                provider = String(record.get("provider", provider));
+            }
+            break;
+        }
+        choice["id"] = choice_id;
+        choice["kind"] = "local";
+        choice["path"] = path;
+        choice["filename"] = name;
+        choice["display_name"] = display_name;
+        choice["origin"] = origin;
+        choice["provider"] = provider;
+        choice["source"] = source;
+        choice["version"] = version;
+        choice["cached"] = true;
+        choice["bundled"] = fallback_origin == String::utf8("插件内置");
+        choice["available"] = true;
+        choices.append(choice);
+        seen_paths[path] = true;
+    }
+    dir->list_dir_end();
+}
+
+void TemplateManager::migrate_legacy_template_cache() {
+    Array legacy_choices;
+    Dictionary seen_paths;
+    collect_local_template_files(get_global_template_cache_root().path_join("sources"), String::utf8("远端缓存"), legacy_choices, seen_paths);
+    collect_local_template_files(get_global_template_cache_root().path_join("custom"), String::utf8("本地导入"), legacy_choices, seen_paths);
+    if (legacy_choices.is_empty()) {
+        return;
+    }
+    const String artifact_dir = get_global_template_cache_root().path_join("artifacts");
+    if (!UserDataPath::create_directory_if_not_exists(artifact_dir)) {
+        return;
+    }
+    bool changed = false;
+    for (int i = 0; i < legacy_choices.size(); i++) {
+        Dictionary choice = legacy_choices[i];
+        const String source_path = String(choice.get("path", ""));
+        const String sha256 = FileAccess::get_sha256(source_path).to_lower();
+        if (sha256.is_empty()) {
+            continue;
+        }
+        const String output_path = artifact_dir.path_join(sha256 + String(".tpz"));
+        if (!FileAccess::file_exists(output_path)) {
+            const String temporary_path = output_path + String(".migrate.") + String::num_int64(OS::get_singleton()->get_process_id());
+            DirAccess::remove_absolute(temporary_path);
+            Error err = DirAccess::copy_absolute(source_path, temporary_path);
+            if (err == OK && validate_template_archive(temporary_path) && FileAccess::get_sha256(temporary_path).to_lower() == sha256) {
+                err = publish_download_atomically(temporary_path, output_path);
+            }
+            if (err != OK) {
+                DirAccess::remove_absolute(temporary_path);
+                continue;
+            }
+        }
+        choice["id"] = "local:" + sha256;
+        choice["path"] = output_path;
+        choice["sha256"] = sha256;
+        register_local_template(choice, output_path);
+        changed = true;
+    }
+    if (changed) {
+        persist_active_template_selection();
+    }
+}
+
+Array TemplateManager::get_local_template_choices() const {
+    Array choices;
+    Dictionary seen_paths;
+
+    const Array catalog_choices = get_remote_template_choices();
+    for (int i = 0; i < catalog_choices.size(); i++) {
+        const Dictionary catalog_choice = catalog_choices[i];
+        if (!bool(catalog_choice.get("available", false))) {
+            continue;
+        }
+        const String path = String(catalog_choice.get("path", ""));
+        if (path.is_empty() || seen_paths.has(path)) {
+            continue;
+        }
+        Dictionary local_choice = catalog_choice.duplicate(true);
+        local_choice["kind"] = "local";
+        const String origin = bool(local_choice.get("bundled", false))
+                ? String::utf8("插件内置")
+                : String::utf8("远端缓存");
+        local_choice["origin"] = origin;
+        choices.append(local_choice);
+        seen_paths[path] = true;
+    }
+
+    collect_local_template_files(get_global_template_cache_root().path_join("artifacts"), String::utf8("本地缓存"), choices, seen_paths);
+    collect_local_template_files(get_global_template_cache_root().path_join("sources"), String::utf8("远端缓存"), choices, seen_paths);
+    collect_local_template_files(get_global_template_cache_root().path_join("custom"), String::utf8("本地导入"), choices, seen_paths);
+    collect_local_template_files("res://addons/godot-minigame/resources/templates", String::utf8("插件内置"), choices, seen_paths);
     return choices;
 }
 
@@ -808,7 +950,34 @@ String TemplateManager::get_active_template_filename() const {
 
 Dictionary TemplateManager::get_active_template_info() const {
     Dictionary info;
+    if (!active_template_id.is_empty()) {
+        String resolved_origin = active_template_origin;
+        const Dictionary active_record = local_template_records.get(active_template_id, Dictionary());
+        if (!active_record.is_empty() && FileAccess::file_exists(active_template_path)) {
+            const String recorded_sha = String(active_record.get("sha256", "")).to_lower();
+            if (!recorded_sha.is_empty() && FileAccess::get_sha256(active_template_path).to_lower() != recorded_sha) {
+                resolved_origin = String::utf8("本地修改");
+            }
+        }
+        info["id"] = active_template_id;
+        info["pending_id"] = String(pending_template.get("id", ""));
+        info["kind"] = "local";
+        info["version"] = active_template_version;
+        info["url"] = active_custom_url;
+        info["source"] = resolved_origin;
+        info["origin"] = resolved_origin;
+        info["path"] = active_template_path;
+        info["filename"] = active_template_path.get_file();
+        info["display_name"] = active_template_display_name.is_empty() ? active_template_path.get_file() : active_template_display_name;
+        const bool bundled = active_template_path.begins_with("res://") || active_template_path.begins_with("embedded://");
+        info["bundled"] = bundled;
+        info["cached"] = !bundled;
+        info["available"] = !resolve_active_template_path().is_empty();
+        return info;
+    }
     info["kind"] = active_template_kind;
+    info["id"] = "";
+    info["pending_id"] = String(pending_template.get("id", ""));
     info["version"] = active_template_version;
     info["url"] = active_custom_url;
     info["source"] = active_template_kind == "custom" ? (active_custom_url.is_absolute_path() ? String("local") : String("remote")) : String("catalog");
@@ -828,48 +997,249 @@ Dictionary TemplateManager::get_active_template_info() const {
     return info;
 }
 
-Error TemplateManager::set_active_catalog_template(const String &version) {
-    const String normalized = version.strip_edges();
-    Array choices = get_template_choices();
-    bool found = false;
+Dictionary TemplateManager::find_template_choice(const String &template_id, bool include_local) const {
+    Array choices = get_remote_template_choices();
     for (int i = 0; i < choices.size(); i++) {
         Dictionary choice = choices[i];
-        if (String(choice.get("version", "")) == normalized) {
-            found = true;
-            break;
+        if (String(choice.get("id", "")) == template_id) {
+            return choice;
         }
     }
-    if (!found) {
-        return ERR_INVALID_PARAMETER;
+    if (include_local) {
+        choices = get_local_template_choices();
+        for (int i = 0; i < choices.size(); i++) {
+            Dictionary choice = choices[i];
+            if (String(choice.get("id", "")) == template_id) {
+                return choice;
+            }
+        }
     }
-    active_template_kind = "catalog";
-    active_template_version = normalized;
-    active_custom_url = "";
+    return Dictionary();
+}
+
+void TemplateManager::register_local_template(const Dictionary &choice, const String &path) {
+    if (path.begins_with("embedded://")) {
+        return;
+    }
+    const String id = String(choice.get("id", "local:" + path.md5_text()));
+    Dictionary record;
+    record["path"] = path.simplify_path();
+    record["display_name"] = String(choice.get("display_name", path.get_file()));
+    record["origin"] = String(choice.get("origin", String::utf8("本地")));
+    record["provider"] = String(choice.get("provider", "local"));
+    record["source"] = String(choice.get("source", ""));
+    record["version"] = String(choice.get("version", ""));
+    record["sha256"] = FileAccess::file_exists(path) ? FileAccess::get_sha256(path) : String();
+    local_template_records[id] = record;
+}
+
+Error TemplateManager::activate_local_template(const Dictionary &choice, const String &path) {
+    const bool embedded = path.begins_with("embedded://");
+    if (path.is_empty() || (!embedded && (!FileAccess::file_exists(path) || !validate_template_archive(path)))) {
+        return ERR_FILE_CORRUPT;
+    }
+    Dictionary local_choice = choice.duplicate(true);
+    const bool bundled = embedded || path.begins_with("res://");
+    if (bundled) {
+        local_choice["origin"] = String::utf8("插件内置");
+    } else if (String(local_choice.get("kind", "")) == "catalog") {
+        local_choice["origin"] = String::utf8("远端缓存");
+    }
+    active_template_id = String(local_choice.get("id", "local:" + path.md5_text()));
+    active_template_path = embedded ? path : path.simplify_path();
+    active_template_display_name = String(local_choice.get("display_name", path.get_file()));
+    active_template_origin = String(local_choice.get("origin", String::utf8("本地")));
+    active_template_version = String(local_choice.get("version", ""));
+    active_custom_url = String(local_choice.get("source", ""));
+    active_template_kind = "local";
+    register_local_template(local_choice, active_template_path);
     persist_active_template_selection();
     emit_signal("active_template_changed", get_active_template_info());
+    emit_signal("template_inventory_changed");
     return OK;
 }
 
-Error TemplateManager::set_active_custom_template(const String &source) {
-    const String normalized = source.strip_edges();
-    const String path_without_query = normalized.get_slice("?", 0).to_lower();
-    const bool remote = normalized.begins_with("https://") || normalized.begins_with("http://");
-    const bool local = normalized.is_absolute_path() && FileAccess::file_exists(normalized) && validate_template_archive(normalized);
-    if ((!remote && !local) || !path_without_query.ends_with(".tpz")) {
+void TemplateManager::complete_pending_template(const String &path) {
+    if (pending_template.is_empty()) {
+        return;
+    }
+    const Dictionary completed = pending_template.duplicate(true);
+    const bool activate_after_download = pending_template_activate;
+    pending_template.clear();
+    pending_template_activate = true;
+    if (activate_after_download) {
+        activate_local_template(completed, path);
+        return;
+    }
+    Dictionary local_choice = completed.duplicate(true);
+    local_choice["kind"] = "local";
+    local_choice["origin"] = String::utf8("远端缓存");
+    register_local_template(local_choice, path);
+    persist_active_template_selection();
+    emit_signal("template_inventory_changed");
+}
+
+Error TemplateManager::cache_template(const String &template_id) {
+    if (is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    Dictionary choice = find_template_choice(template_id.strip_edges(), false);
+    if (choice.is_empty()) {
         return ERR_INVALID_PARAMETER;
     }
-    active_template_kind = "custom";
-    active_custom_url = normalized;
-    active_template_version = "";
-    if (local) {
-        last_local_template_path = normalized.simplify_path();
+    const String path = String(choice.get("path", ""));
+    if (bool(choice.get("available", false)) && !path.is_empty()) {
+        emit_signal("template_inventory_changed");
+        return OK;
     }
+    if (String(choice.get("kind", "")) != "catalog") {
+        return ERR_FILE_NOT_FOUND;
+    }
+    pending_template = choice.duplicate(true);
+    pending_template_activate = false;
+    const Error err = download_active_template_async(false);
+    if (err != OK) {
+        pending_template.clear();
+        pending_template_activate = true;
+    }
+    return err;
+}
+
+Error TemplateManager::set_current_template(const String &template_id) {
+    if (is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    Dictionary choice = find_template_choice(template_id.strip_edges(), true);
+    if (choice.is_empty()) {
+        return ERR_INVALID_PARAMETER;
+    }
+    const String path = String(choice.get("path", ""));
+    if (bool(choice.get("available", false)) && !path.is_empty()) {
+        return activate_local_template(choice, path);
+    }
+    if (String(choice.get("kind", "")) != "catalog") {
+        return ERR_FILE_NOT_FOUND;
+    }
+    pending_template = choice;
+    pending_template_activate = true;
+    const Error err = download_active_template_async(false);
+    if (err != OK) {
+        pending_template.clear();
+    }
+    return err;
+}
+
+Dictionary TemplateManager::make_imported_template_choice(const String &source_path, const String &cached_path) const {
+    const String sha256 = FileAccess::get_sha256(cached_path).to_lower();
+    Dictionary choice;
+    choice["id"] = "local:" + sha256;
+    choice["kind"] = "local";
+    choice["path"] = cached_path;
+    choice["filename"] = source_path.get_file();
+    choice["display_name"] = source_path.get_file();
+    choice["origin"] = String::utf8("本地导入");
+    choice["provider"] = "local";
+    choice["source"] = source_path;
+    choice["version"] = "";
+    choice["sha256"] = sha256;
+    choice["cached"] = true;
+    choice["bundled"] = false;
+    choice["available"] = true;
+    for (int i = 0; i < available_versions.size(); i++) {
+        const Dictionary remote = available_versions[i];
+        if (String(remote.get("sha256", "")).to_lower() != sha256) {
+            continue;
+        }
+        const String version = String(remote.get("version", ""));
+        choice["version"] = version;
+        choice["display_name"] = version.is_empty() ? source_path.get_file() : "Godot " + version;
+        break;
+    }
+    return choice;
+}
+
+Error TemplateManager::import_local_template(const String &path) {
+    if (is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    const String source_path = path.strip_edges().simplify_path();
+    if (!source_path.is_absolute_path() || source_path.get_extension().to_lower() != "tpz" ||
+            !FileAccess::file_exists(source_path) || !validate_template_archive(source_path)) {
+        return ERR_INVALID_PARAMETER;
+    }
+    const String sha256 = FileAccess::get_sha256(source_path).to_lower();
+    const String import_dir = get_global_template_cache_root().path_join("artifacts");
+    if (!UserDataPath::create_directory_if_not_exists(import_dir)) {
+        return ERR_FILE_CANT_WRITE;
+    }
+    const String output_path = import_dir.path_join(sha256 + String(".tpz"));
+    if (!FileAccess::file_exists(output_path) || FileAccess::get_sha256(output_path).to_lower() != sha256 ||
+            !validate_template_archive(output_path)) {
+        const String temporary_path = output_path + String(".import.") + String::num_int64(OS::get_singleton()->get_process_id());
+        DirAccess::remove_absolute(temporary_path);
+        Error err = DirAccess::copy_absolute(source_path, temporary_path);
+        if (err == OK && validate_template_archive(temporary_path) && FileAccess::get_sha256(temporary_path).to_lower() == sha256) {
+            err = publish_download_atomically(temporary_path, output_path);
+        }
+        if (err != OK) {
+            DirAccess::remove_absolute(temporary_path);
+            return err;
+        }
+    }
+    last_local_template_path = source_path;
+    const Dictionary choice = make_imported_template_choice(source_path, output_path);
+    register_local_template(choice, output_path);
     persist_active_template_selection();
-    emit_signal("active_template_changed", get_active_template_info());
+    emit_signal("template_inventory_changed");
     return OK;
+}
+
+Error TemplateManager::refresh_remote_catalog(const String &catalog_url) {
+    if (refresh_in_flight || is_prefetch_active()) {
+        return ERR_BUSY;
+    }
+    const String normalized = catalog_url.strip_edges();
+    if ((!normalized.begins_with("https://") && !normalized.begins_with("http://")) ||
+            normalized.get_slice("?", 0).get_extension().to_lower() != "json") {
+        return ERR_INVALID_PARAMETER;
+    }
+    pending_catalog_url = normalized;
+    const Error err = load_versions_from_remote();
+    if (err != OK) {
+        pending_catalog_url = "";
+    }
+    return err;
+}
+
+void TemplateManager::set_template_view(const String &view) {
+    if (is_prefetch_active()) {
+        return;
+    }
+    const String normalized = view.strip_edges().to_lower();
+    if (normalized != "remote" && normalized != "local") {
+        return;
+    }
+    template_view = normalized;
+    persist_active_template_selection();
+}
+
+String TemplateManager::get_template_view() const {
+    return template_view;
+}
+
+String TemplateManager::get_remote_catalog_url() const {
+    return remote_catalog_url;
 }
 
 String TemplateManager::resolve_active_template_path() const {
+    if (!active_template_id.is_empty()) {
+        if (active_template_path.begins_with("embedded://")) {
+            return active_template_path;
+        }
+        return FileAccess::file_exists(active_template_path) && validate_template_archive(active_template_path)
+                ? active_template_path
+                : String();
+    }
     if (active_template_kind == "custom") {
         if (active_custom_url.is_empty()) {
             return "";
@@ -889,6 +1259,8 @@ Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const
     Dictionary normalized;
     normalized["filename"] = "";
     normalized["release_tag"] = fallback_release_tag.strip_edges();
+    normalized["sha256"] = "";
+    normalized["download_url"] = "";
 
     if (entry.get_type() == Variant::STRING) {
         normalized["filename"] = String(entry).strip_edges();
@@ -899,6 +1271,8 @@ Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const
         Dictionary dict_entry = entry;
         normalized["filename"] = String(dict_entry.get("file", dict_entry.get("filename", ""))).strip_edges();
         normalized["release_tag"] = String(dict_entry.get("tag", dict_entry.get("release_tag", fallback_release_tag))).strip_edges();
+        normalized["sha256"] = String(dict_entry.get("sha256", "")).strip_edges().to_lower();
+        normalized["download_url"] = String(dict_entry.get("download_url", "")).strip_edges();
     }
 
     return normalized;
@@ -1173,7 +1547,6 @@ bool TemplateManager::is_template_downloaded(const String& filename) const {
     if (verify_template_file(filename, cache_path) && validate_template_archive(cache_path)) {
         return true;
     }
-    DirAccess::remove_absolute(cache_path);
     return false;
 }
 
@@ -1206,10 +1579,18 @@ Error TemplateManager::download_active_template_async(bool force_replace) {
         return ERR_BUSY;
     }
 
-    const bool custom_request = active_template_kind == "custom";
-    const bool local_request = custom_request && active_custom_url.is_absolute_path();
-    const String filename = custom_request ? get_custom_template_cache_path(active_custom_url).get_file() : get_active_template_filename();
-    const String output_path = custom_request ? get_custom_template_cache_path(active_custom_url) : get_download_cache_path(filename);
+    const bool pending_request = !pending_template.is_empty();
+    const bool custom_request = pending_request
+            ? String(pending_template.get("kind", "")) == "custom"
+            : active_template_kind == "custom";
+    const String custom_source = pending_request
+            ? String(pending_template.get("source", ""))
+            : active_custom_url;
+    const bool local_request = custom_request && custom_source.is_absolute_path();
+    const String filename = pending_request
+            ? String(pending_template.get("filename", ""))
+            : (custom_request ? get_custom_template_cache_path(custom_source).get_file() : get_active_template_filename());
+    const String output_path = custom_request ? get_custom_template_cache_path(custom_source) : get_download_cache_path(filename);
     if (filename.is_empty() || output_path.is_empty()) {
         return ERR_INVALID_PARAMETER;
     }
@@ -1220,6 +1601,11 @@ Error TemplateManager::download_active_template_async(bool force_replace) {
                     (is_template_downloaded(filename) && verify_template_file(filename, output_path) && validate_template_archive(output_path)));
     if (!force_replace && (cached_custom || cached_catalog)) {
         update_download_state(filename, "completed", 1.0f);
+        if (pending_request) {
+            complete_pending_template(cached_catalog && !FileAccess::file_exists(output_path)
+                    ? String(pending_template.get("path", ""))
+                    : output_path);
+        }
         call_deferred("emit_signal", "template_download_progress", filename, 1.0f);
         call_deferred("emit_signal", "template_download_finished", filename, true);
         return OK;
@@ -1235,8 +1621,8 @@ Error TemplateManager::download_active_template_async(bool force_replace) {
     DirAccess::remove_absolute(temporary_path);
 
     if (local_request) {
-        Error err = validate_template_archive(active_custom_url)
-                ? DirAccess::copy_absolute(active_custom_url, temporary_path)
+        Error err = validate_template_archive(custom_source)
+                ? DirAccess::copy_absolute(custom_source, temporary_path)
                 : ERR_FILE_CORRUPT;
         if (err == OK && validate_template_archive(temporary_path)) {
             err = publish_download_atomically(temporary_path, output_path);
@@ -1247,12 +1633,13 @@ Error TemplateManager::download_active_template_async(bool force_replace) {
             return err;
         }
         update_download_state(filename, "completed", 1.0f);
+        complete_pending_template(output_path);
         call_deferred("emit_signal", "template_inventory_changed");
         call_deferred("emit_signal", "template_download_finished", filename, true);
         return OK;
     }
 
-    const String download_url = custom_request ? active_custom_url : build_download_url(filename);
+    const String download_url = custom_request ? custom_source : build_download_url(filename);
     if (download_url.is_empty()) {
         return ERR_INVALID_PARAMETER;
     }
@@ -1270,6 +1657,7 @@ Error TemplateManager::download_active_template_async(bool force_replace) {
     request->set_max_redirects(5);
     request->set_timeout(download_timeout);
     request->set_download_file(temporary_path);
+    NetworkProxy::apply(request);
     parent_node->add_child(request);
 
     template_request_id = request->get_instance_id();
@@ -1359,12 +1747,17 @@ void TemplateManager::_on_template_download_request_completed(
     template_request_output_path = "";
     template_request_temporary_path = "";
 
+    const String pending_sha = String(pending_template.get("sha256", "")).strip_edges().to_lower();
+    const bool catalog_verified = custom_request ||
+            (!pending_sha.is_empty()
+                    ? FileAccess::file_exists(temporary_path) && FileAccess::get_sha256(temporary_path).to_lower() == pending_sha
+                    : verify_template_file(filename, temporary_path));
     Error completion_err = OK;
     if (result != HTTPRequest::RESULT_SUCCESS || response_code != HTTPClient::RESPONSE_OK) {
         completion_err = result == HTTPRequest::RESULT_TIMEOUT ? ERR_TIMEOUT : ERR_CANT_CONNECT;
     } else if (!FileAccess::file_exists(temporary_path)) {
         completion_err = ERR_FILE_CANT_WRITE;
-    } else if ((!custom_request && !verify_template_file(filename, temporary_path)) || !validate_template_archive(temporary_path)) {
+    } else if (!catalog_verified || !validate_template_archive(temporary_path)) {
         completion_err = ERR_FILE_CORRUPT;
     } else {
         completion_err = publish_download_atomically(temporary_path, output_path);
@@ -1372,12 +1765,15 @@ void TemplateManager::_on_template_download_request_completed(
 
     if (completion_err != OK) {
         DirAccess::remove_absolute(temporary_path);
+        pending_template.clear();
+        pending_template_activate = true;
         update_download_state(filename, "failed", 0.0f, String::utf8("错误码 ") + String::num_int64(completion_err));
         emit_signal("template_download_finished", filename, false);
         return;
     }
 
     update_download_state(filename, "completed", 1.0f);
+    complete_pending_template(output_path);
     emit_signal("template_download_progress", filename, 1.0f);
     emit_signal("template_inventory_changed");
     emit_signal("template_download_finished", filename, true);
@@ -1671,7 +2067,6 @@ Error TemplateManager::remove_active_template_cache() {
     Error err = FileAccess::file_exists(path) ? DirAccess::remove_absolute(path) : OK;
     if (err == OK) {
         download_states.erase(path.get_file());
-        save_download_states();
         emit_signal("template_inventory_changed");
         emit_signal("active_template_changed", get_active_template_info());
     }
@@ -1698,159 +2093,6 @@ Error TemplateManager::refresh_versions() {
     return load_versions_from_remote();
 }
 
-void TemplateManager::set_distribution_provider(const String& provider) {
-    if (!apply_distribution_provider(provider, true, true)) {
-        UtilityFunctions::push_warning(String("TemplateManager: Unknown distribution provider: ") + provider);
-    }
-}
-
-String TemplateManager::get_distribution_provider() const {
-    switch (distribution_provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            return "atomgit";
-        case DistributionProvider::GITHUB_RELEASE:
-            return "github";
-        case DistributionProvider::GITEE_RELEASE:
-            return "gitee";
-        default:
-            return "atomgit";
-    }
-}
-
-void TemplateManager::set_current_release_config(const String& owner, const String& repo, const String& release_tag) {
-    switch (distribution_provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            set_atomgit_release_config(owner, repo, release_tag);
-            break;
-        case DistributionProvider::GITHUB_RELEASE:
-            set_github_release_config(owner, repo, release_tag);
-            break;
-        case DistributionProvider::GITEE_RELEASE:
-            set_gitee_release_config(owner, repo, release_tag);
-            break;
-        default:
-            break;
-    }
-}
-
-Dictionary TemplateManager::get_current_release_config() const {
-    switch (distribution_provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            return get_atomgit_release_config();
-        case DistributionProvider::GITHUB_RELEASE:
-            return get_github_release_config();
-        case DistributionProvider::GITEE_RELEASE:
-            return get_gitee_release_config();
-        default:
-            return Dictionary();
-    }
-}
-
-void TemplateManager::set_github_release_config(const String& owner, const String& repo, const String& release_tag) {
-    String normalized_owner = owner.strip_edges();
-    String normalized_repo = repo.strip_edges();
-    String normalized_tag = release_tag.strip_edges();
-    if (normalized_tag.is_empty()) {
-        normalized_tag = "latest";
-    }
-
-    bool changed = github_repo_owner != normalized_owner ||
-            github_repo_name != normalized_repo ||
-            github_release_tag != normalized_tag;
-
-    github_repo_owner = normalized_owner;
-    github_repo_name = normalized_repo;
-    github_release_tag = normalized_tag;
-    persist_distribution_preferences();
-
-    if (changed && distribution_provider == DistributionProvider::GITHUB_RELEASE) {
-        reload_active_distribution_cache(true);
-    }
-}
-
-Dictionary TemplateManager::get_github_release_config() const {
-    Dictionary config;
-    config["owner"] = github_repo_owner;
-    config["repo"] = github_repo_name;
-    config["release_tag"] = github_release_tag;
-    return config;
-}
-
-void TemplateManager::set_gitee_release_config(const String& owner, const String& repo, const String& release_tag) {
-    String normalized_owner = owner.strip_edges();
-    String normalized_repo = repo.strip_edges();
-    String normalized_tag = release_tag.strip_edges();
-    if (normalized_tag.is_empty()) {
-        normalized_tag = "latest";
-    }
-
-    bool changed = gitee_repo_owner != normalized_owner ||
-            gitee_repo_name != normalized_repo ||
-            gitee_release_tag != normalized_tag;
-
-    gitee_repo_owner = normalized_owner;
-    gitee_repo_name = normalized_repo;
-    gitee_release_tag = normalized_tag;
-    persist_distribution_preferences();
-
-    if (changed && distribution_provider == DistributionProvider::GITEE_RELEASE) {
-        reload_active_distribution_cache(true);
-    }
-}
-
-Dictionary TemplateManager::get_gitee_release_config() const {
-    Dictionary config;
-    config["owner"] = gitee_repo_owner;
-    config["repo"] = gitee_repo_name;
-    config["release_tag"] = gitee_release_tag;
-    return config;
-}
-
-void TemplateManager::set_atomgit_release_config(const String& owner, const String& repo, const String& release_tag) {
-    String normalized_owner = owner.strip_edges();
-    String normalized_repo = repo.strip_edges();
-    String normalized_tag = release_tag.strip_edges();
-    if (normalized_tag.is_empty()) {
-        normalized_tag = "latest";
-    }
-
-    bool changed = atomgit_repo_owner != normalized_owner ||
-            atomgit_repo_name != normalized_repo ||
-            atomgit_release_tag != normalized_tag;
-
-    atomgit_repo_owner = normalized_owner;
-    atomgit_repo_name = normalized_repo;
-    atomgit_release_tag = normalized_tag;
-    persist_distribution_preferences();
-
-    if (changed && distribution_provider == DistributionProvider::ATOMGIT_RELEASE) {
-        reload_active_distribution_cache(true);
-    }
-}
-
-Dictionary TemplateManager::get_atomgit_release_config() const {
-    Dictionary config;
-    config["owner"] = atomgit_repo_owner;
-    config["repo"] = atomgit_repo_name;
-    config["release_tag"] = atomgit_release_tag;
-    return config;
-}
-
-String TemplateManager::get_versions_remote_url() const {
-    return build_versions_url();
-}
-
-String TemplateManager::get_update_manifest_url() const {
-    return get_distribution_asset_url("latest.json");
-}
-
-String TemplateManager::get_distribution_asset_url(const String& asset_name) const {
-    if (asset_name == "catalog/templates.json") {
-        return build_versions_url();
-    }
-    return build_download_url(asset_name);
-}
-
 void TemplateManager::set_download_timeout(int timeout_seconds) {
     download_timeout = timeout_seconds;
 }
@@ -1860,145 +2102,28 @@ int TemplateManager::get_download_timeout() const {
 }
 
 String TemplateManager::build_versions_url() const {
-    String owner;
-    String repo;
-    switch (distribution_provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            owner = atomgit_repo_owner.strip_edges();
-            repo = atomgit_repo_name.strip_edges();
-            if (owner.is_empty() || repo.is_empty()) {
-                return "";
-            }
-            return "https://raw.atomgit.com/" + owner + "/" + repo + "/raw/main/plugin/catalog/templates.json";
-        case DistributionProvider::GITHUB_RELEASE:
-            owner = github_repo_owner.strip_edges();
-            repo = github_repo_name.strip_edges();
-            if (owner.is_empty() || repo.is_empty()) {
-                return "";
-            }
-            return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/main/plugin/catalog/templates.json";
-        case DistributionProvider::GITEE_RELEASE:
-            owner = gitee_repo_owner.strip_edges();
-            repo = gitee_repo_name.strip_edges();
-            if (owner.is_empty() || repo.is_empty()) {
-                return "";
-            }
-            return "https://gitee.com/" + owner + "/" + repo + "/raw/main/plugin/catalog/templates.json";
-        default:
-            return "";
-    }
-}
-
-String TemplateManager::build_release_download_url(DistributionProvider provider, const String& owner, const String& repo, const String& release_tag, const String& filename) const {
-    String normalized_owner = owner.strip_edges();
-    String normalized_repo = repo.strip_edges();
-    String normalized_filename = filename.strip_edges();
-    String normalized_tag = release_tag.strip_edges();
-    if (normalized_tag.is_empty()) {
-        normalized_tag = "latest";
-    }
-
-    if (normalized_owner.is_empty() ||
-            normalized_repo.is_empty() ||
-            normalized_filename.is_empty()) {
-        return "";
-    }
-
-    switch (provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            if (normalized_tag.to_lower() == "latest") {
-                return "https://atomgit.com/" + normalized_owner + "/" + normalized_repo + "/releases/latest/download/" + normalized_filename;
-            }
-            return "https://atomgit.com/" + normalized_owner + "/" + normalized_repo + "/releases/download/" + normalized_tag + "/" + normalized_filename;
-        case DistributionProvider::GITHUB_RELEASE:
-            if (normalized_tag.to_lower() == "latest") {
-                return "https://github.com/" + normalized_owner + "/" + normalized_repo + "/releases/latest/download/" + normalized_filename;
-            }
-            return "https://github.com/" + normalized_owner + "/" + normalized_repo + "/releases/download/" + normalized_tag + "/" + normalized_filename;
-        case DistributionProvider::GITEE_RELEASE:
-            return "https://gitee.com/" + normalized_owner + "/" + normalized_repo + "/releases/download/" + normalized_tag + "/" + normalized_filename;
-        default:
-            return "";
-    }
+    return pending_catalog_url.is_empty() ? remote_catalog_url : pending_catalog_url;
 }
 
 String TemplateManager::build_download_url(const String& filename) const {
-    String resolved_release_tag = find_release_tag_for_filename(filename);
-    switch (distribution_provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            return build_release_download_url(
-                    DistributionProvider::ATOMGIT_RELEASE,
-                    atomgit_repo_owner,
-                    atomgit_repo_name,
-                    resolved_release_tag.is_empty() ? atomgit_release_tag : resolved_release_tag,
-                    filename);
-        case DistributionProvider::GITHUB_RELEASE:
-            return build_release_download_url(
-                    DistributionProvider::GITHUB_RELEASE,
-                    github_repo_owner,
-                    github_repo_name,
-                    resolved_release_tag.is_empty() ? github_release_tag : resolved_release_tag,
-                    filename);
-        case DistributionProvider::GITEE_RELEASE:
-            return build_release_download_url(
-                    DistributionProvider::GITEE_RELEASE,
-                    gitee_repo_owner,
-                    gitee_repo_name,
-                    resolved_release_tag.is_empty() ? gitee_release_tag : resolved_release_tag,
-                    filename);
-        default:
-            return "";
+    for (int i = 0; i < available_versions.size(); i++) {
+        const Dictionary entry = available_versions[i];
+        if (String(entry.get("filename", "")) == filename) {
+            return String(entry.get("download_url", "")).strip_edges();
+        }
     }
+    return "";
 }
 
 String TemplateManager::get_download_cache_path(const String& filename) const {
-    String templates_dir = get_distribution_cache_root_dir().path_join("templates");
+    String templates_dir = get_global_template_cache_root().path_join("artifacts");
     DirAccess::make_dir_recursive_absolute(templates_dir);
-    return templates_dir.path_join(filename);
+    const String expected_sha = find_sha256_for_filename(filename);
+    return templates_dir.path_join(expected_sha.is_empty() ? filename : expected_sha + String(".tpz"));
 }
 
 String TemplateManager::get_local_versions_cache_path() const {
-    return get_distribution_cache_root_dir().path_join("templates.json");
-}
-
-String TemplateManager::get_download_state_cache_path() const {
-    return get_distribution_cache_root_dir().path_join("download_states.json");
-}
-
-void TemplateManager::load_download_states() {
-    String path = get_download_state_cache_path();
-    if (!FileAccess::file_exists(path)) {
-        return;
-    }
-
-    Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
-    if (file.is_null()) {
-        return;
-    }
-
-    String content = file->get_as_text();
-    file->close();
-    if (content.is_empty()) {
-        return;
-    }
-
-    Variant parsed = JSON::parse_string(content);
-    if (parsed.get_type() == Variant::DICTIONARY) {
-        download_states = parsed;
-    }
-}
-
-void TemplateManager::save_download_states() const {
-    String path = get_download_state_cache_path();
-    String dir = path.get_base_dir();
-    UserDataPath::create_directory_if_not_exists(dir);
-
-    Ref<FileAccess> file = FileAccess::open(path, FileAccess::WRITE);
-    if (file.is_null()) {
-        return;
-    }
-    file->store_string(JSON::stringify(download_states, "  "));
-    file->close();
+    return get_global_template_cache_root().path_join("catalog.json");
 }
 
 void TemplateManager::update_download_state(const String& filename, const String& state, float progress, const String& note) {
@@ -2011,7 +2136,6 @@ void TemplateManager::update_download_state(const String& filename, const String
     }
 
     download_states[filename] = download_info;
-    save_download_states();
 }
 
 // New helper methods for template availability checking
@@ -2316,6 +2440,8 @@ Array TemplateManager::build_available_versions_from_cache() const {
             version_info["version"] = version;
             version_info["filename"] = filename;
             version_info["release_tag"] = String(normalized_entry.get("release_tag", "")).strip_edges();
+            version_info["sha256"] = String(normalized_entry.get("sha256", "")).strip_edges();
+            version_info["download_url"] = String(normalized_entry.get("download_url", "")).strip_edges();
             version_info["is_embedded"] = is_template_embedded(filename);
 
             rebuilt_versions.append(version_info);
@@ -2327,7 +2453,7 @@ Array TemplateManager::build_available_versions_from_cache() const {
 
 Error TemplateManager::initialize_template_system() {
     TOOLKIT_LOG("TemplateManager: Initializing template system...");
-    load_distribution_preferences();
+    load_active_template_selection();
 
     // Step 1: Try to load from local cache first
     Error load_result = load_versions_from_local_cache();
@@ -2343,6 +2469,7 @@ Error TemplateManager::initialize_template_system() {
         }
     }
 
+    migrate_legacy_template_cache();
     ensure_default_active_template();
 
     // Step 3: Check template status for current editor
@@ -2404,13 +2531,35 @@ void TemplateManager::load_active_template_selection() {
     const bool has_state = PluginStateStore::has_section(TEMPLATE_STATE_SECTION);
     Dictionary template_state = PluginStateStore::load_section(TEMPLATE_STATE_SECTION);
     if (has_state) {
-        last_local_template_path = String(template_state.get("last_local_path", "")).simplify_path();
+        last_local_template_path = String(template_state.get("last_local_path", ""));
+        if (!last_local_template_path.is_empty()) {
+            last_local_template_path = last_local_template_path.simplify_path();
+        }
+        const String legacy_channel = String(template_state.get("last_channel", "remote")).strip_edges().to_lower();
+        template_view = String(template_state.get("view", legacy_channel == "local" ? String("local") : String("remote"))).strip_edges().to_lower();
+        if (template_view != "remote" && template_view != "local") {
+            template_view = "remote";
+        }
+        remote_catalog_url = String(template_state.get("remote_catalog_url", DEFAULT_TEMPLATE_CATALOG_URL)).strip_edges();
+        if (!remote_catalog_url.begins_with("https://") && !remote_catalog_url.begins_with("http://")) {
+            remote_catalog_url = DEFAULT_TEMPLATE_CATALOG_URL;
+        }
+        local_template_records = template_state.get("local_artifacts", Dictionary());
         Dictionary active_by_editor = template_state.get("active_by_editor", Dictionary());
         Dictionary active = active_by_editor.get(get_editor_version_line(), Dictionary());
+        active_template_id = String(active.get("artifact_id", "")).strip_edges();
+        active_template_path = String(active.get("path", ""));
+        if (!active_template_path.is_empty() && !active_template_path.begins_with("embedded://")) {
+            active_template_path = active_template_path.simplify_path();
+        }
+        active_template_display_name = String(active.get("display_name", "")).strip_edges();
+        active_template_origin = String(active.get("origin", "")).strip_edges();
         active_template_kind = String(active.get("kind", active_template_kind)).strip_edges().to_lower();
         active_template_version = String(active.get("version", active_template_version)).strip_edges();
         active_custom_url = String(active.get("custom_source", active_custom_url)).strip_edges();
-        if (active_template_kind != "custom") {
+        if (!active_template_id.is_empty()) {
+            active_template_kind = "local";
+        } else if (active_template_kind != "custom") {
             active_template_kind = "catalog";
         }
         return;
@@ -2443,271 +2592,82 @@ void TemplateManager::persist_active_template_selection() const {
     active["kind"] = active_template_kind;
     active["version"] = active_template_version;
     active["custom_source"] = active_custom_url;
+    active["artifact_id"] = active_template_id;
+    active["path"] = active_template_path;
+    active["display_name"] = active_template_display_name;
+    active["origin"] = active_template_origin;
     active_by_editor[get_editor_version_line()] = active;
     template_state["last_local_path"] = last_local_template_path;
+    template_state["view"] = template_view;
+    template_state["remote_catalog_url"] = remote_catalog_url;
+    template_state.erase("last_channel");
+    template_state["local_artifacts"] = local_template_records;
     template_state["active_by_editor"] = active_by_editor;
     PluginStateStore::save_section(TEMPLATE_STATE_SECTION, template_state);
 }
 
 void TemplateManager::ensure_default_active_template() {
-    if (active_template_kind == "custom" && !active_custom_url.is_empty()) {
+    if (!active_template_id.is_empty() && !resolve_active_template_path().is_empty()) {
         return;
     }
-    Array choices = get_template_choices();
-    bool selected_exists = false;
-    for (int i = 0; i < choices.size(); i++) {
-        Dictionary choice = choices[i];
-        if (String(choice.get("version", "")) == active_template_version) {
-            selected_exists = true;
-            break;
+    if (!active_template_id.is_empty()) {
+        active_template_id = "";
+        active_template_path = "";
+        active_template_display_name = "";
+        active_template_origin = "";
+    }
+
+    if (active_template_kind == "custom" && !active_custom_url.is_empty()) {
+        const String custom_path = get_custom_template_cache_path(active_custom_url);
+        if (FileAccess::file_exists(custom_path) && validate_template_archive(custom_path)) {
+            Dictionary migrated;
+            migrated["id"] = "import:" + active_custom_url.md5_text();
+            migrated["display_name"] = active_custom_url.get_slice("?", 0).get_file();
+            migrated["origin"] = active_custom_url.is_absolute_path() ? String::utf8("用户导入") : String::utf8("网址导入");
+            migrated["provider"] = "local";
+            migrated["source"] = active_custom_url;
+            migrated["version"] = "";
+            activate_local_template(migrated, custom_path);
+            return;
         }
     }
-    if (selected_exists) {
+
+    Array choices = get_remote_template_choices();
+    for (int i = 0; i < choices.size(); i++) {
+        Dictionary choice = choices[i];
+        if (String(choice.get("version", "")) == active_template_version && bool(choice.get("available", false))) {
+            activate_local_template(choice, String(choice.get("path", "")));
+            return;
+        }
+    }
+
+    Dictionary best_available;
+    for (int i = 0; i < choices.size(); i++) {
+        Dictionary choice = choices[i];
+        if (!bool(choice.get("available", false))) {
+            continue;
+        }
+        if (best_available.is_empty() || compare_version_numbers(
+                String(choice.get("version", "")),
+                String(best_available.get("version", ""))) > 0) {
+            best_available = choice;
+        }
+    }
+    if (!best_available.is_empty()) {
+        activate_local_template(best_available, String(best_available.get("path", "")));
         return;
     }
-    active_template_kind = "catalog";
+
+    active_template_kind = "local";
     active_template_version = "";
     active_custom_url = "";
-    for (int i = 0; i < choices.size(); i++) {
-        Dictionary choice = choices[i];
-        const String candidate = String(choice.get("version", ""));
-        if (active_template_version.is_empty() || compare_version_numbers(candidate, active_template_version) > 0) {
-            active_template_version = candidate;
-        }
-    }
     persist_active_template_selection();
-}
-
-bool TemplateManager::apply_distribution_provider(const String& provider, bool persist_selection, bool refresh_version_cache) {
-    String normalized = provider.strip_edges().to_lower();
-    DistributionProvider next_provider;
-    if (normalized == "atomgit" || normalized == "atomgit_release" || normalized == "atomgit-release") {
-        next_provider = DistributionProvider::ATOMGIT_RELEASE;
-    } else if (normalized == "github" || normalized == "github_release" || normalized == "github-release") {
-        next_provider = DistributionProvider::GITHUB_RELEASE;
-    } else if (normalized == "gitee" || normalized == "gitee_release" || normalized == "gitee-release") {
-        next_provider = DistributionProvider::GITEE_RELEASE;
-    } else {
-        return false;
-    }
-
-    bool provider_changed = distribution_provider != next_provider;
-    distribution_provider = next_provider;
-
-    if (persist_selection) {
-        persist_distribution_preferences();
-    }
-
-    if (provider_changed && refresh_version_cache) {
-        reload_active_distribution_cache(true);
-    } else if (provider_changed) {
-        reload_active_distribution_cache(false);
-    }
-
-    TOOLKIT_LOG("TemplateManager: Distribution provider set to ", get_distribution_provider());
-    return true;
-}
-
-void TemplateManager::load_distribution_preferences() {
-    if (!Engine::get_singleton()->is_editor_hint()) {
-        return;
-    }
-
-    const bool has_state = PluginStateStore::has_section(DISTRIBUTION_STATE_SECTION);
-    if (has_state) {
-        Dictionary state = PluginStateStore::load_section(DISTRIBUTION_STATE_SECTION);
-        Dictionary github = state.get("github", Dictionary());
-        Dictionary gitee = state.get("gitee", Dictionary());
-        Dictionary atomgit = state.get("atomgit", Dictionary());
-        github_repo_owner = String(github.get("owner", github_repo_owner)).strip_edges();
-        github_repo_name = String(github.get("repo", github_repo_name)).strip_edges();
-        github_release_tag = String(github.get("release_tag", github_release_tag)).strip_edges();
-        gitee_repo_owner = String(gitee.get("owner", gitee_repo_owner)).strip_edges();
-        gitee_repo_name = String(gitee.get("repo", gitee_repo_name)).strip_edges();
-        gitee_release_tag = String(gitee.get("release_tag", gitee_release_tag)).strip_edges();
-        atomgit_repo_owner = String(atomgit.get("owner", atomgit_repo_owner)).strip_edges();
-        atomgit_repo_name = String(atomgit.get("repo", atomgit_repo_name)).strip_edges();
-        atomgit_release_tag = String(atomgit.get("release_tag", atomgit_release_tag)).strip_edges();
-        apply_distribution_provider(String(state.get("provider", "github")), false, false);
-    } else {
-        EditorInterface *editor_interface = EditorInterface::get_singleton();
-        Ref<EditorSettings> editor_settings = editor_interface ? editor_interface->get_editor_settings() : Ref<EditorSettings>();
-        if (editor_settings.is_valid()) {
-            auto read_setting = [&](const String &name, const String &fallback) -> String {
-                const String key = String(EDITOR_SETTING_PREFIX) + name;
-                return editor_settings->has_setting(key) ? String(editor_settings->get_setting(key)).strip_edges() : fallback;
-            };
-            github_repo_owner = read_setting("github_owner", github_repo_owner);
-            github_repo_name = read_setting("github_repo", github_repo_name);
-            github_release_tag = read_setting("github_release_tag", github_release_tag);
-            gitee_repo_owner = read_setting("gitee_owner", gitee_repo_owner);
-            gitee_repo_name = read_setting("gitee_repo", gitee_repo_name);
-            gitee_release_tag = read_setting("gitee_release_tag", gitee_release_tag);
-            atomgit_repo_owner = read_setting("atomgit_owner", atomgit_repo_owner);
-            atomgit_repo_name = read_setting("atomgit_repo", atomgit_repo_name);
-            atomgit_release_tag = read_setting("atomgit_release_tag", atomgit_release_tag);
-            apply_distribution_provider(read_setting("distribution_provider", "github"), false, false);
-        }
-        persist_distribution_preferences();
-    }
-
-    // Allow headless tests and CI to inject release source config without
-    // mutating editor settings in the user's global profile.
-    String env_provider = _get_env_trimmed("TOOLKIT_RELEASE_PROVIDER").to_lower();
-    String env_owner = _get_env_trimmed("TOOLKIT_RELEASE_OWNER");
-    String env_repo = _get_env_trimmed("TOOLKIT_RELEASE_REPO");
-    String env_tag = _get_env_trimmed("TOOLKIT_RELEASE_TAG");
-
-    if (!env_provider.is_empty()) {
-        apply_distribution_provider(env_provider, false, false);
-    }
-
-    if (!env_owner.is_empty() || !env_repo.is_empty() || !env_tag.is_empty()) {
-        String effective_tag = env_tag.is_empty() ? String("latest") : env_tag;
-        switch (distribution_provider) {
-            case DistributionProvider::ATOMGIT_RELEASE:
-                if (!env_owner.is_empty()) {
-                    atomgit_repo_owner = env_owner;
-                }
-                if (!env_repo.is_empty()) {
-                    atomgit_repo_name = env_repo;
-                }
-                atomgit_release_tag = effective_tag;
-                break;
-            case DistributionProvider::GITHUB_RELEASE:
-                if (!env_owner.is_empty()) {
-                    github_repo_owner = env_owner;
-                }
-                if (!env_repo.is_empty()) {
-                    github_repo_name = env_repo;
-                }
-                github_release_tag = effective_tag;
-                break;
-            case DistributionProvider::GITEE_RELEASE:
-                if (!env_owner.is_empty()) {
-                    gitee_repo_owner = env_owner;
-                }
-                if (!env_repo.is_empty()) {
-                    gitee_repo_name = env_repo;
-                }
-                gitee_release_tag = effective_tag;
-                break;
-            default:
-                break;
-        }
-    }
-
-    download_states.clear();
-    load_download_states();
-    load_active_template_selection();
-}
-
-void TemplateManager::persist_distribution_preferences() const {
-    if (!Engine::get_singleton()->is_editor_hint()) {
-        return;
-    }
-
-    Dictionary github;
-    github["owner"] = github_repo_owner;
-    github["repo"] = github_repo_name;
-    github["release_tag"] = github_release_tag;
-    Dictionary gitee;
-    gitee["owner"] = gitee_repo_owner;
-    gitee["repo"] = gitee_repo_name;
-    gitee["release_tag"] = gitee_release_tag;
-    Dictionary atomgit;
-    atomgit["owner"] = atomgit_repo_owner;
-    atomgit["repo"] = atomgit_repo_name;
-    atomgit["release_tag"] = atomgit_release_tag;
-
-    Dictionary state = PluginStateStore::load_section(DISTRIBUTION_STATE_SECTION);
-    state["provider"] = get_distribution_provider();
-    state["github"] = github;
-    state["gitee"] = gitee;
-    state["atomgit"] = atomgit;
-    PluginStateStore::save_section(DISTRIBUTION_STATE_SECTION, state);
-}
-
-void TemplateManager::reset_distribution_preferences() {
-    distribution_provider = DistributionProvider::GITHUB_RELEASE;
-    github_repo_owner = "Losomz";
-    github_repo_name = "godot-minigame";
-    github_release_tag = "latest";
-    gitee_repo_owner = "Losomz";
-    gitee_repo_name = "godot-minigame";
-    gitee_release_tag = "latest";
-    atomgit_repo_owner = "Losomz";
-    atomgit_repo_name = "godot-minigame";
-    atomgit_release_tag = "latest";
-
-    persist_distribution_preferences();
-    reload_active_distribution_cache(false);
-    TOOLKIT_LOG("TemplateManager: Distribution preferences reset to defaults");
-}
-
-void TemplateManager::reload_active_distribution_cache(bool load_remote_versions) {
-    download_states.clear();
-    load_download_states();
-
-    versions_cache.clear();
-    available_versions.clear();
-    versions_loaded = false;
-
-    if (load_versions_from_local_cache() != OK) {
-        load_versions_from_embedded();
-    }
-
-    if (load_remote_versions && Engine::get_singleton()->is_editor_hint()) {
-        load_versions_from_remote();
-    }
 }
 
 String TemplateManager::get_global_template_cache_root() const {
     const String root = PluginStateStore::get_root_dir().path_join("templates");
     DirAccess::make_dir_recursive_absolute(root);
     return root;
-}
-
-String TemplateManager::get_distribution_cache_root_dir() const {
-    String templates_dir = get_global_template_cache_root();
-    String owner;
-    String repo;
-    String release_tag;
-
-    switch (distribution_provider) {
-        case DistributionProvider::ATOMGIT_RELEASE:
-            owner = atomgit_repo_owner;
-            repo = atomgit_repo_name;
-            release_tag = atomgit_release_tag;
-            break;
-        case DistributionProvider::GITHUB_RELEASE:
-            owner = github_repo_owner;
-            repo = github_repo_name;
-            release_tag = github_release_tag;
-            break;
-        case DistributionProvider::GITEE_RELEASE:
-            owner = gitee_repo_owner;
-            repo = gitee_repo_name;
-            release_tag = gitee_release_tag;
-            break;
-        default:
-            owner = "default";
-            repo = "default";
-            release_tag = "latest";
-            break;
-    }
-
-    String provider_dir = templates_dir.path_join(
-            String("sources/")
-            + get_distribution_provider()
-            + "/"
-            + _sanitize_cache_component(owner)
-            + "__"
-            + _sanitize_cache_component(repo)
-            + "__"
-            + _sanitize_cache_component(release_tag));
-    DirAccess::make_dir_recursive_absolute(provider_dir);
-    return provider_dir;
 }
 
 bool TemplateManager::has_template_updates_available() const {
@@ -2778,31 +2738,27 @@ void TemplateManager::_on_versions_download_completed(int p_result, int p_respon
     refresh_in_flight = false;
     TOOLKIT_LOG("TemplateManager: templates catalog download completed. Result: ", p_result, ", Response Code: ", p_response_code);
 
-    if (request_url != build_versions_url()) {
-        TOOLKIT_LOG("TemplateManager: Distribution changed during refresh; discarding stale response and refreshing the active source.");
-        Error restart_err = load_versions_from_remote();
-        if (restart_err != OK) {
-            emit_signal("versions_refresh_failed", restart_err);
-        }
-        return;
-    }
-
     // The HTTPRequest node is a child of the editor main screen, it will be freed automatically.
 
     if (p_result == HTTPRequest::RESULT_SUCCESS && p_response_code == 200) {
         String catalog_content = p_body.get_string_from_utf8();
         Error parse_err = parse_templates_catalog(catalog_content);
         if (parse_err == OK) {
+            remote_catalog_url = request_url;
+            pending_catalog_url = "";
+            persist_active_template_selection();
             TOOLKIT_LOG("TemplateManager: Successfully parsed remote templates catalog");
             save_versions_to_local_cache();
             ensure_default_active_template();
             emit_signal("versions_loaded");
             emit_signal("template_inventory_changed");
         } else {
+            pending_catalog_url = "";
             TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to parse remote templates catalog; retaining current catalog.[/color]");
             emit_signal("versions_refresh_failed", parse_err);
         }
     } else {
+        pending_catalog_url = "";
         TOOLKIT_LOG_RICH("[color=red]TemplateManager: Failed to download templates catalog; retaining current catalog.[/color]");
         emit_signal("versions_refresh_failed", ERR_CANT_CONNECT);
     }

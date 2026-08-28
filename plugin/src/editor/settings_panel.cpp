@@ -1,6 +1,8 @@
 #include "editor/settings_panel.h"
-#include "core/update_manager.h"
+
+#include "core/network_proxy.h"
 #include "core/types.h"
+#include "core/update_manager.h"
 
 #include <godot_cpp/classes/config_file.hpp>
 #include <godot_cpp/classes/dir_access.hpp>
@@ -17,26 +19,35 @@ namespace editor {
 
 namespace {
 
-void restore_file_dialog_path(EditorFileDialog *p_dialog, const String &p_path) {
-	if (!p_dialog || p_path.is_empty()) {
+void restore_file_dialog_path(EditorFileDialog *dialog, const String &path) {
+	if (!dialog || path.is_empty()) {
 		return;
 	}
-	const String normalized = p_path.simplify_path();
+	const String normalized = path.simplify_path();
 	if (FileAccess::file_exists(normalized)) {
-		p_dialog->set_current_path(normalized);
+		dialog->set_current_path(normalized);
 		return;
 	}
 	const String directory = normalized.get_base_dir();
 	if (DirAccess::dir_exists_absolute(directory)) {
-		p_dialog->set_current_dir(directory);
+		dialog->set_current_dir(directory);
 	}
+}
+
+void configure_field_label(Label *label) {
+	label->set_custom_minimum_size(Vector2(96, 0));
+	label->set_vertical_alignment(VerticalAlignment::VERTICAL_ALIGNMENT_CENTER);
+}
+
+void configure_status_label(Label *label) {
+	label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
 }
 
 } // namespace
 
 SettingsPanel::SettingsPanel() {
 	set_name("Settings");
-
 	set_anchors_preset(Control::PRESET_FULL_RECT);
 	add_theme_constant_override("margin_left", 12);
 	add_theme_constant_override("margin_right", 12);
@@ -48,70 +59,52 @@ SettingsPanel::~SettingsPanel() {
 }
 
 void SettingsPanel::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("refresh_distribution_info"), &SettingsPanel::refresh_distribution_info);
-	ClassDB::bind_method(D_METHOD("refresh_template_cache_info"), &SettingsPanel::refresh_template_cache_info);
+	ClassDB::bind_method(D_METHOD("refresh_template_view"), &SettingsPanel::refresh_template_view);
+	ClassDB::bind_method(D_METHOD("refresh_template_choices"), &SettingsPanel::refresh_template_choices);
+	ClassDB::bind_method(D_METHOD("_on_template_view_changed", "index"), &SettingsPanel::_on_template_view_changed);
+	ClassDB::bind_method(D_METHOD("_on_refresh_remote_catalog_pressed"), &SettingsPanel::_on_refresh_remote_catalog_pressed);
+	ClassDB::bind_method(D_METHOD("_on_template_selected", "index"), &SettingsPanel::_on_template_selected);
+	ClassDB::bind_method(D_METHOD("_on_set_current_template_pressed"), &SettingsPanel::_on_set_current_template_pressed);
+	ClassDB::bind_method(D_METHOD("_on_cache_template_pressed"), &SettingsPanel::_on_cache_template_pressed);
+	ClassDB::bind_method(D_METHOD("_on_import_local_template_pressed"), &SettingsPanel::_on_import_local_template_pressed);
+	ClassDB::bind_method(D_METHOD("_on_local_template_file_selected", "path"), &SettingsPanel::_on_local_template_file_selected);
+	ClassDB::bind_method(D_METHOD("_on_versions_loaded"), &SettingsPanel::_on_versions_loaded);
+	ClassDB::bind_method(D_METHOD("_on_versions_refresh_failed", "error_code"), &SettingsPanel::_on_versions_refresh_failed);
+	ClassDB::bind_method(D_METHOD("_on_active_template_changed", "template_info"), &SettingsPanel::_on_active_template_changed);
+	ClassDB::bind_method(D_METHOD("_on_template_download_progress", "filename", "progress"), &SettingsPanel::_on_template_download_progress);
+	ClassDB::bind_method(D_METHOD("_on_template_download_finished", "filename", "success"), &SettingsPanel::_on_template_download_finished);
+
 	ClassDB::bind_method(D_METHOD("_on_check_plugin_update_pressed"), &SettingsPanel::_on_check_plugin_update_pressed);
 	ClassDB::bind_method(D_METHOD("_on_download_plugin_update_pressed"), &SettingsPanel::_on_download_plugin_update_pressed);
-	ClassDB::bind_method(D_METHOD("_on_plugin_update_channel_selected", "index"), &SettingsPanel::_on_plugin_update_channel_selected);
 	ClassDB::bind_method(D_METHOD("_on_select_local_plugin_pressed"), &SettingsPanel::_on_select_local_plugin_pressed);
 	ClassDB::bind_method(D_METHOD("_on_local_plugin_file_selected", "path"), &SettingsPanel::_on_local_plugin_file_selected);
-	ClassDB::bind_method(D_METHOD("_on_install_local_plugin_pressed"), &SettingsPanel::_on_install_local_plugin_pressed);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_state_changed", "state"), &SettingsPanel::_on_plugin_update_state_changed);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_available", "version_info"), &SettingsPanel::_on_plugin_update_available);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_download_finished", "success"), &SettingsPanel::_on_plugin_update_download_finished);
 	ClassDB::bind_method(D_METHOD("_on_confirm_update_restart"), &SettingsPanel::_on_confirm_update_restart);
 	ClassDB::bind_method(D_METHOD("_on_plugin_update_error", "message"), &SettingsPanel::_on_plugin_update_error);
-	ClassDB::bind_method(D_METHOD("_on_distribution_provider_selected", "index"), &SettingsPanel::_on_distribution_provider_selected);
-	ClassDB::bind_method(D_METHOD("_on_save_distribution_config_pressed"), &SettingsPanel::_on_save_distribution_config_pressed);
-	ClassDB::bind_method(D_METHOD("_on_reset_config_pressed"), &SettingsPanel::_on_reset_config_pressed);
-	ClassDB::bind_method(D_METHOD("_on_refresh_versions_pressed"), &SettingsPanel::_on_refresh_versions_pressed);
-	ClassDB::bind_method(D_METHOD("_on_versions_loaded"), &SettingsPanel::_on_versions_loaded);
-	ClassDB::bind_method(D_METHOD("_on_versions_refresh_failed", "error_code"), &SettingsPanel::_on_versions_refresh_failed);
-	ClassDB::bind_method(D_METHOD("_on_active_template_changed", "template_info"), &SettingsPanel::_on_active_template_changed);
-	ClassDB::bind_method(D_METHOD("_on_template_version_selected", "index"), &SettingsPanel::_on_template_version_selected);
-	ClassDB::bind_method(D_METHOD("_on_use_custom_template_pressed"), &SettingsPanel::_on_use_custom_template_pressed);
-	ClassDB::bind_method(D_METHOD("_on_select_local_template_pressed"), &SettingsPanel::_on_select_local_template_pressed);
-	ClassDB::bind_method(D_METHOD("_on_local_template_file_selected", "path"), &SettingsPanel::_on_local_template_file_selected);
-	ClassDB::bind_method(D_METHOD("_on_prefetch_template_pressed"), &SettingsPanel::_on_prefetch_template_pressed);
-	ClassDB::bind_method(D_METHOD("_on_replace_template_pressed"), &SettingsPanel::_on_replace_template_pressed);
-	ClassDB::bind_method(D_METHOD("_on_remove_template_pressed"), &SettingsPanel::_on_remove_template_pressed);
-	ClassDB::bind_method(D_METHOD("_on_clear_templates_pressed"), &SettingsPanel::_on_clear_templates_pressed);
-	ClassDB::bind_method(D_METHOD("_on_confirm_clear_templates"), &SettingsPanel::_on_confirm_clear_templates);
-	ClassDB::bind_method(D_METHOD("_on_template_download_progress", "filename", "progress"), &SettingsPanel::_on_template_download_progress);
-	ClassDB::bind_method(D_METHOD("_on_template_cache_download_finished", "filename", "success"), &SettingsPanel::_on_template_cache_download_finished);
+	ClassDB::bind_method(D_METHOD("refresh_proxy_settings"), &SettingsPanel::refresh_proxy_settings);
+	ClassDB::bind_method(D_METHOD("_on_proxy_enabled_toggled", "enabled"), &SettingsPanel::_on_proxy_enabled_toggled);
+	ClassDB::bind_method(D_METHOD("_on_apply_proxy_pressed"), &SettingsPanel::_on_apply_proxy_pressed);
 }
 
 void SettingsPanel::_ready() {
 	create_interface();
+
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		manager->connect("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded));
+		manager->connect("versions_refresh_failed", callable_mp(this, &SettingsPanel::_on_versions_refresh_failed));
+		manager->connect("template_download_progress", callable_mp(this, &SettingsPanel::_on_template_download_progress));
+		manager->connect("template_download_finished", callable_mp(this, &SettingsPanel::_on_template_download_finished));
+		manager->connect("active_template_changed", callable_mp(this, &SettingsPanel::_on_active_template_changed));
+		manager->connect("template_inventory_changed", callable_mp(this, &SettingsPanel::refresh_template_choices));
+		remote_catalog_input->set_text(String(manager->call("get_remote_catalog_url")));
+	}
+
 	UpdateManager *update_manager = UpdateManager::get_singleton();
 	if (update_manager) {
 		update_manager->initialize();
-	}
-	load_plugin_update_channel();
-	refresh_plugin_update_channel();
-
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager && !template_manager->is_connected("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded))) {
-			template_manager->connect("versions_loaded", callable_mp(this, &SettingsPanel::_on_versions_loaded));
-		}
-		if (template_manager && !template_manager->is_connected("versions_refresh_failed", callable_mp(this, &SettingsPanel::_on_versions_refresh_failed))) {
-			template_manager->connect("versions_refresh_failed", callable_mp(this, &SettingsPanel::_on_versions_refresh_failed));
-		}
-		if (template_manager && !template_manager->is_connected("template_download_progress", callable_mp(this, &SettingsPanel::_on_template_download_progress))) {
-			template_manager->connect("template_download_progress", callable_mp(this, &SettingsPanel::_on_template_download_progress));
-		}
-		if (template_manager && !template_manager->is_connected("template_download_finished", callable_mp(this, &SettingsPanel::_on_template_cache_download_finished))) {
-			template_manager->connect("template_download_finished", callable_mp(this, &SettingsPanel::_on_template_cache_download_finished));
-		}
-		if (template_manager && !template_manager->is_connected("active_template_changed", callable_mp(this, &SettingsPanel::_on_active_template_changed))) {
-			template_manager->connect("active_template_changed", callable_mp(this, &SettingsPanel::_on_active_template_changed));
-		}
-		if (template_manager && !template_manager->is_connected("template_inventory_changed", callable_mp(this, &SettingsPanel::refresh_template_cache_info))) {
-			template_manager->connect("template_inventory_changed", callable_mp(this, &SettingsPanel::refresh_template_cache_info));
-		}
-	}
-	if (update_manager) {
 		update_manager->connect("update_state_changed", callable_mp(this, &SettingsPanel::_on_plugin_update_state_changed));
 		update_manager->connect("update_available", callable_mp(this, &SettingsPanel::_on_plugin_update_available));
 		update_manager->connect("download_finished", callable_mp(this, &SettingsPanel::_on_plugin_update_download_finished));
@@ -121,8 +114,10 @@ void SettingsPanel::_ready() {
 			plugin_update_label->set_text(install_message);
 		}
 	}
-	call_deferred("refresh_distribution_info");
-	call_deferred("refresh_template_cache_info");
+
+	refresh_template_view();
+	refresh_plugin_update_controls();
+	refresh_proxy_settings();
 }
 
 void SettingsPanel::create_interface() {
@@ -151,253 +146,176 @@ void SettingsPanel::create_interface() {
 		title->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 		main_vbox->add_child(title);
 	};
-	auto add_section_separator = [this]() {
-		HSeparator *separator = memnew(HSeparator);
-		separator->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-		main_vbox->add_child(separator);
-	};
-	auto configure_field_label = [](Label *label) {
-		label->set_custom_minimum_size(Vector2(96, 0));
-		label->set_vertical_alignment(VerticalAlignment::VERTICAL_ALIGNMENT_CENTER);
-	};
-	auto configure_status_label = [](Label *label) {
-		label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-		label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
-	};
 
-	add_section_title(String::utf8("模板管理"));
+	add_section_title(String::utf8("模板"));
+
+	current_template_label = memnew(Label);
+	current_template_label->set_text(String::utf8("当前模板：未选择"));
+	configure_status_label(current_template_label);
+	main_vbox->add_child(current_template_label);
+
+	template_view_tabs = memnew(TabBar);
+	template_view_tabs->add_tab(String::utf8("远端"));
+	template_view_tabs->add_tab(String::utf8("本地"));
+	template_view_tabs->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	template_view_tabs->connect("tab_changed", callable_mp(this, &SettingsPanel::_on_template_view_changed));
+	main_vbox->add_child(template_view_tabs);
+
+	remote_catalog_controls = memnew(HBoxContainer);
+	remote_catalog_controls->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(remote_catalog_controls);
+
+	Label *catalog_label = memnew(Label);
+	catalog_label->set_text(String::utf8("模板源"));
+	configure_field_label(catalog_label);
+	remote_catalog_controls->add_child(catalog_label);
+
+	remote_catalog_input = memnew(LineEdit);
+	remote_catalog_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	remote_catalog_input->set_placeholder("https://.../templates.json");
+	remote_catalog_controls->add_child(remote_catalog_input);
+
+	refresh_remote_catalog_button = memnew(Button);
+	refresh_remote_catalog_button->set_text(String::utf8("刷新"));
+	refresh_remote_catalog_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_refresh_remote_catalog_pressed));
+	remote_catalog_controls->add_child(refresh_remote_catalog_button);
 
 	GridContainer *template_form = memnew(GridContainer);
 	template_form->set_columns(2);
 	template_form->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	main_vbox->add_child(template_form);
 
-	Label *template_selection_label = memnew(Label);
-	template_selection_label->set_text(String::utf8("当前模板"));
-	configure_field_label(template_selection_label);
-	template_form->add_child(template_selection_label);
+	Label *template_label = memnew(Label);
+	template_label->set_text(String::utf8("模板"));
+	configure_field_label(template_label);
+	template_form->add_child(template_label);
 
-	template_version_selector = memnew(OptionButton);
-	template_version_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	template_version_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_template_version_selected));
-	template_form->add_child(template_version_selector);
+	template_selector = memnew(OptionButton);
+	template_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	template_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_template_selected));
+	template_form->add_child(template_selector);
 
-	Label *custom_template_label = memnew(Label);
-	custom_template_label->set_text(String::utf8("自定义 TPZ"));
-	configure_field_label(custom_template_label);
-	template_form->add_child(custom_template_label);
+	HBoxContainer *template_actions = memnew(HBoxContainer);
+	template_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(template_actions);
 
-	VBoxContainer *custom_template_field = memnew(VBoxContainer);
-	custom_template_field->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	template_form->add_child(custom_template_field);
+	set_current_template_button = memnew(Button);
+	set_current_template_button->set_text(String::utf8("设为当前"));
+	set_current_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_set_current_template_pressed));
+	template_actions->add_child(set_current_template_button);
 
-	custom_template_url_input = memnew(LineEdit);
-	custom_template_url_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	custom_template_url_input->set_placeholder(String::utf8("https://.../template.tpz 或选择本地文件"));
-	custom_template_field->add_child(custom_template_url_input);
+	cache_template_button = memnew(Button);
+	cache_template_button->set_text(String::utf8("缓存到本地"));
+	cache_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_cache_template_pressed));
+	template_actions->add_child(cache_template_button);
 
-	HFlowContainer *custom_template_actions = memnew(HFlowContainer);
-	custom_template_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	custom_template_field->add_child(custom_template_actions);
+	import_local_template_button = memnew(Button);
+	import_local_template_button->set_text(String::utf8("导入本地 TPZ..."));
+	import_local_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_import_local_template_pressed));
+	template_actions->add_child(import_local_template_button);
 
-	use_custom_template_button = memnew(Button);
-	use_custom_template_button->set_text(String::utf8("设为当前"));
-	use_custom_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_use_custom_template_pressed));
-	custom_template_actions->add_child(use_custom_template_button);
+	template_status_label = memnew(Label);
+	template_status_label->set_text(String::utf8("模板列表已就绪"));
+	configure_status_label(template_status_label);
+	main_vbox->add_child(template_status_label);
 
-	select_local_template_button = memnew(Button);
-	select_local_template_button->set_text(String::utf8("选择本地 TPZ"));
-	custom_template_actions->add_child(select_local_template_button);
-	select_local_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_select_local_template_pressed));
+	template_progress = memnew(ProgressBar);
+	template_progress->set_custom_minimum_size(Vector2(0, 6));
+	template_progress->set_min(0.0);
+	template_progress->set_max(1.0);
+	template_progress->set_show_percentage(false);
+	template_progress->set_visible(false);
+	main_vbox->add_child(template_progress);
 
-	template_cache_label = memnew(Label);
-	template_cache_label->set_text(String::utf8("模板缓存："));
-	configure_status_label(template_cache_label);
-	main_vbox->add_child(template_cache_label);
+	HSeparator *separator = memnew(HSeparator);
+	separator->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(separator);
 
-	template_cache_progress = memnew(ProgressBar);
-	template_cache_progress->set_custom_minimum_size(Vector2(0, 6));
-	template_cache_progress->set_min(0.0);
-	template_cache_progress->set_max(1.0);
-	template_cache_progress->set_value(0.0);
-	template_cache_progress->set_show_percentage(false);
-	template_cache_progress->set_indeterminate(true);
-	template_cache_progress->set_visible(false);
-	main_vbox->add_child(template_cache_progress);
-
-	HFlowContainer *template_cache_actions = memnew(HFlowContainer);
-	template_cache_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(template_cache_actions);
-
-	prefetch_template_button = memnew(Button);
-	prefetch_template_button->set_text(String::utf8("下载"));
-	prefetch_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_prefetch_template_pressed));
-	template_cache_actions->add_child(prefetch_template_button);
-
-	replace_template_button = memnew(Button);
-	replace_template_button->set_text(String::utf8("重新下载并覆盖"));
-	replace_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_replace_template_pressed));
-	template_cache_actions->add_child(replace_template_button);
-
-	remove_template_button = memnew(Button);
-	remove_template_button->set_text(String::utf8("删除当前缓存"));
-	remove_template_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_remove_template_pressed));
-	template_cache_actions->add_child(remove_template_button);
-
-	clear_templates_button = memnew(Button);
-	clear_templates_button->set_text(String::utf8("清空全部"));
-	clear_templates_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_clear_templates_pressed));
-	template_cache_actions->add_child(clear_templates_button);
-
-	add_section_separator();
-	add_section_title(String::utf8("模板分发源"));
-
-	GridContainer *distribution_form = memnew(GridContainer);
-	distribution_form->set_columns(2);
-	distribution_form->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(distribution_form);
-
-	distribution_provider_title_label = memnew(Label);
-	distribution_provider_title_label->set_text(String::utf8("分发源"));
-	configure_field_label(distribution_provider_title_label);
-	distribution_form->add_child(distribution_provider_title_label);
-
-	distribution_provider_selector = memnew(OptionButton);
-	distribution_provider_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	distribution_provider_selector->add_item("AtomGit");
-	distribution_provider_selector->add_item("GitHub");
-	distribution_provider_selector->add_item("Gitee");
-	distribution_provider_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_distribution_provider_selected));
-	distribution_form->add_child(distribution_provider_selector);
-
-	owner_label = memnew(Label);
-	owner_label->set_text("Owner");
-	configure_field_label(owner_label);
-	distribution_form->add_child(owner_label);
-
-	owner_input = memnew(LineEdit);
-	owner_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	owner_input->set_placeholder("Losomz");
-	distribution_form->add_child(owner_input);
-
-	repo_label = memnew(Label);
-	repo_label->set_text("Repo");
-	configure_field_label(repo_label);
-	distribution_form->add_child(repo_label);
-
-	repo_input = memnew(LineEdit);
-	repo_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	repo_input->set_placeholder("godot-minigame");
-	distribution_form->add_child(repo_input);
-
-	tag_label = memnew(Label);
-	tag_label->set_text("Tag");
-	configure_field_label(tag_label);
-	distribution_form->add_child(tag_label);
-
-	tag_input = memnew(LineEdit);
-	tag_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	tag_input->set_placeholder("latest / 4.5.1");
-	distribution_form->add_child(tag_input);
-
-	HFlowContainer *distribution_actions = memnew(HFlowContainer);
-	distribution_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(distribution_actions);
-
-	save_config_button = memnew(Button);
-	save_config_button->set_text(String::utf8("保存并刷新"));
-	save_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_save_distribution_config_pressed));
-	distribution_actions->add_child(save_config_button);
-
-	refresh_versions_button = memnew(Button);
-	refresh_versions_button->set_text(String::utf8("刷新远端索引"));
-	refresh_versions_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_refresh_versions_pressed));
-	distribution_actions->add_child(refresh_versions_button);
-
-	reset_config_button = memnew(Button);
-	reset_config_button->set_text(String::utf8("恢复默认配置"));
-	reset_config_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_reset_config_pressed));
-	distribution_actions->add_child(reset_config_button);
-
-	add_section_separator();
 	add_section_title(String::utf8("插件更新"));
 
-	GridContainer *plugin_update_channel_form = memnew(GridContainer);
-	plugin_update_channel_form->set_columns(2);
-	plugin_update_channel_form->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(plugin_update_channel_form);
-
-	Label *plugin_update_channel_label = memnew(Label);
-	plugin_update_channel_label->set_text(String::utf8("更新渠道"));
-	configure_field_label(plugin_update_channel_label);
-	plugin_update_channel_form->add_child(plugin_update_channel_label);
-
-	plugin_update_channel_selector = memnew(OptionButton);
-	plugin_update_channel_selector->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	plugin_update_channel_selector->add_item(String::utf8("远端稳定版"));
-	plugin_update_channel_selector->add_item(String::utf8("本地插件包"));
-	plugin_update_channel_selector->connect("item_selected", callable_mp(this, &SettingsPanel::_on_plugin_update_channel_selected));
-	plugin_update_channel_form->add_child(plugin_update_channel_selector);
+	plugin_version_label = memnew(Label);
+	plugin_version_label->set_text(String::utf8("当前版本：") + get_installed_plugin_version());
+	configure_status_label(plugin_version_label);
+	main_vbox->add_child(plugin_version_label);
 
 	plugin_update_label = memnew(Label);
-	plugin_update_label->set_text(String::utf8("插件更新：尚未检查"));
+	plugin_update_label->set_text(String::utf8("尚未检查更新"));
 	configure_status_label(plugin_update_label);
 	main_vbox->add_child(plugin_update_label);
 
-	remote_update_controls = memnew(VBoxContainer);
-	remote_update_controls->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(remote_update_controls);
-
-	HFlowContainer *plugin_update_actions = memnew(HFlowContainer);
-	plugin_update_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	remote_update_controls->add_child(plugin_update_actions);
+	HBoxContainer *plugin_actions = memnew(HBoxContainer);
+	plugin_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(plugin_actions);
 
 	check_plugin_update_button = memnew(Button);
-	check_plugin_update_button->set_text(String::utf8("检查插件更新"));
+	check_plugin_update_button->set_text(String::utf8("检查更新"));
 	check_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_check_plugin_update_pressed));
-	plugin_update_actions->add_child(check_plugin_update_button);
+	plugin_actions->add_child(check_plugin_update_button);
 
 	download_plugin_update_button = memnew(Button);
-	download_plugin_update_button->set_text(String::utf8("下载插件更新"));
+	download_plugin_update_button->set_text(String::utf8("下载更新"));
 	download_plugin_update_button->set_disabled(true);
 	download_plugin_update_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_download_plugin_update_pressed));
-	plugin_update_actions->add_child(download_plugin_update_button);
-
-	local_update_controls = memnew(VBoxContainer);
-	local_update_controls->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	main_vbox->add_child(local_update_controls);
-
-	local_plugin_package_label = memnew(Label);
-	local_plugin_package_label->set_text(String::utf8("尚未选择插件 ZIP"));
-	configure_status_label(local_plugin_package_label);
-	local_update_controls->add_child(local_plugin_package_label);
-
-	HFlowContainer *local_plugin_actions = memnew(HFlowContainer);
-	local_plugin_actions->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	local_update_controls->add_child(local_plugin_actions);
+	plugin_actions->add_child(download_plugin_update_button);
 
 	select_local_plugin_button = memnew(Button);
-	select_local_plugin_button->set_text(String::utf8("选择插件 ZIP"));
+	select_local_plugin_button->set_text(String::utf8("从本地安装 ZIP..."));
 	select_local_plugin_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_select_local_plugin_pressed));
-	local_plugin_actions->add_child(select_local_plugin_button);
+	plugin_actions->add_child(select_local_plugin_button);
 
-	install_local_plugin_button = memnew(Button);
-	install_local_plugin_button->set_text(String::utf8("安装并重启"));
-	install_local_plugin_button->set_disabled(true);
-	install_local_plugin_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_install_local_plugin_pressed));
-	local_plugin_actions->add_child(install_local_plugin_button);
+	HSeparator *network_separator = memnew(HSeparator);
+	network_separator->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(network_separator);
 
-	action_status_label = memnew(Label);
-	action_status_label->set_text(String::utf8("配置已就绪"));
-	configure_status_label(action_status_label);
-	layout_root->add_child(action_status_label);
+	add_section_title(String::utf8("网络代理"));
 
-	update_restart_dialog = memnew(ConfirmationDialog);
-	update_restart_dialog->set_title(String::utf8("安装插件更新"));
-	update_restart_dialog->set_text(String::utf8("将保存当前场景和项目设置，关闭 Godot，安装已下载的插件更新，然后重新打开当前项目。是否继续？"));
-	update_restart_dialog->get_ok_button()->set_text(String::utf8("安装并重启"));
-	update_restart_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_update_restart));
-	add_child(update_restart_dialog);
+	HBoxContainer *proxy_controls = memnew(HBoxContainer);
+	proxy_controls->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	main_vbox->add_child(proxy_controls);
+
+	proxy_enabled_check = memnew(CheckBox);
+	proxy_enabled_check->set_text(String::utf8("使用代理"));
+	proxy_enabled_check->connect("toggled", callable_mp(this, &SettingsPanel::_on_proxy_enabled_toggled));
+	proxy_controls->add_child(proxy_enabled_check);
+
+	Label *proxy_host_label = memnew(Label);
+	proxy_host_label->set_text(String::utf8("主机"));
+	proxy_controls->add_child(proxy_host_label);
+
+	proxy_host_input = memnew(LineEdit);
+	proxy_host_input->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	proxy_host_input->set_placeholder("127.0.0.1");
+	proxy_controls->add_child(proxy_host_input);
+
+	Label *proxy_port_label = memnew(Label);
+	proxy_port_label->set_text(String::utf8("端口"));
+	proxy_controls->add_child(proxy_port_label);
+
+	proxy_port_input = memnew(SpinBox);
+	proxy_port_input->set_custom_minimum_size(Vector2(120, 0));
+	proxy_port_input->set_min(1);
+	proxy_port_input->set_max(65535);
+	proxy_port_input->set_step(1);
+	proxy_port_input->set_allow_greater(false);
+	proxy_port_input->set_allow_lesser(false);
+	proxy_controls->add_child(proxy_port_input);
+
+	apply_proxy_button = memnew(Button);
+	apply_proxy_button->set_text(String::utf8("应用"));
+	apply_proxy_button->connect("pressed", callable_mp(this, &SettingsPanel::_on_apply_proxy_pressed));
+	proxy_controls->add_child(apply_proxy_button);
+
+	proxy_status_label = memnew(Label);
+	configure_status_label(proxy_status_label);
+	main_vbox->add_child(proxy_status_label);
+
+	local_template_file_dialog = memnew(EditorFileDialog);
+	local_template_file_dialog->set_title(String::utf8("导入本地微信模板"));
+	local_template_file_dialog->set_access(EditorFileDialog::ACCESS_FILESYSTEM);
+	local_template_file_dialog->set_file_mode(EditorFileDialog::FILE_MODE_OPEN_FILE);
+	local_template_file_dialog->add_filter("*.tpz", String::utf8("微信小游戏模板"));
+	local_template_file_dialog->connect("file_selected", callable_mp(this, &SettingsPanel::_on_local_template_file_selected));
+	add_child(local_template_file_dialog);
 
 	local_plugin_file_dialog = memnew(EditorFileDialog);
 	local_plugin_file_dialog->set_title(String::utf8("选择本地插件包"));
@@ -407,107 +325,292 @@ void SettingsPanel::create_interface() {
 	local_plugin_file_dialog->connect("file_selected", callable_mp(this, &SettingsPanel::_on_local_plugin_file_selected));
 	add_child(local_plugin_file_dialog);
 
-	local_template_file_dialog = memnew(EditorFileDialog);
-	local_template_file_dialog->set_title(String::utf8("选择本地微信模板"));
-	local_template_file_dialog->set_access(EditorFileDialog::ACCESS_FILESYSTEM);
-	local_template_file_dialog->set_file_mode(EditorFileDialog::FILE_MODE_OPEN_FILE);
-	local_template_file_dialog->add_filter("*.tpz", String::utf8("微信小游戏模板"));
-	add_child(local_template_file_dialog);
-	local_template_file_dialog->connect("file_selected", callable_mp(this, &SettingsPanel::_on_local_template_file_selected));
+	update_restart_dialog = memnew(ConfirmationDialog);
+	update_restart_dialog->set_title(String::utf8("安装插件更新"));
+	update_restart_dialog->get_ok_button()->set_text(String::utf8("安装并重启"));
+	update_restart_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_update_restart));
+	add_child(update_restart_dialog);
+}
 
-	clear_templates_dialog = memnew(ConfirmationDialog);
-	clear_templates_dialog->set_title(String::utf8("清空全局模板缓存"));
-	clear_templates_dialog->set_text(String::utf8("将删除所有项目共享的已下载模板。此操作不会修改模板分发源。"));
-	clear_templates_dialog->get_ok_button()->set_text(String::utf8("清空"));
-	clear_templates_dialog->connect("confirmed", callable_mp(this, &SettingsPanel::_on_confirm_clear_templates));
-	add_child(clear_templates_dialog);
+void SettingsPanel::refresh_template_view() {
+	String view = "remote";
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		view = String(manager->call("get_template_view"));
+	}
+	const bool local = view == "local";
+	if (template_view_tabs) {
+		template_view_tabs->set_current_tab(local ? 1 : 0);
+	}
+	if (remote_catalog_controls) {
+		remote_catalog_controls->set_visible(!local);
+	}
+	if (cache_template_button) {
+		cache_template_button->set_visible(!local);
+	}
+	if (import_local_template_button) {
+		import_local_template_button->set_visible(local);
+	}
+	refresh_template_choices();
+}
+
+void SettingsPanel::refresh_template_choices() {
+	if (!template_selector || !Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	const String view = String(manager->call("get_template_view"));
+	const Array choices = manager->call(view == "local" ? "get_local_template_choices" : "get_remote_template_choices");
+	const Dictionary active = manager->call("get_active_template_info");
+	const String active_id = String(active.get("id", ""));
+	String previous_id;
+	if (template_selector->get_selected() >= 0) {
+		const Dictionary previous = template_selector->get_item_metadata(template_selector->get_selected());
+		previous_id = String(previous.get("id", ""));
+	}
+
+	template_selector->clear();
+	int selected_index = -1;
+	for (int i = 0; i < choices.size(); i++) {
+		const Dictionary choice = choices[i];
+		String text = String(choice.get("display_name", choice.get("filename", "")));
+		if (view == "remote") {
+			const String tag = String(choice.get("release_tag", ""));
+			if (!tag.is_empty()) {
+				text += " [" + tag + "]";
+			}
+			text += bool(choice.get("available", false)) ? String::utf8(" · 已缓存") : String::utf8(" · 未缓存");
+		} else {
+			text += String::utf8(" · ") + String(choice.get("origin", String::utf8("本地")));
+		}
+		template_selector->add_item(text);
+		template_selector->set_item_metadata(i, choice);
+		const String id = String(choice.get("id", ""));
+		if (id == previous_id || (selected_index < 0 && id == active_id)) {
+			selected_index = i;
+		}
+	}
+	if (selected_index < 0 && !choices.is_empty()) {
+		selected_index = 0;
+	}
+	if (selected_index >= 0) {
+		template_selector->select(selected_index);
+	}
+
+	const String display_name = String(active.get("display_name", String::utf8("未选择")));
+	const String origin = String(active.get("origin", ""));
+	current_template_label->set_text(String::utf8("当前模板：") + display_name +
+			(origin.is_empty() ? String() : String::utf8(" · ") + origin));
+	refresh_template_action_state();
+}
+
+void SettingsPanel::refresh_template_action_state() {
+	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	const bool busy = bool(manager->call("is_prefetch_active"));
+	const bool has_selection = template_selector && template_selector->get_selected() >= 0;
+	Dictionary choice;
+	if (has_selection) {
+		choice = template_selector->get_item_metadata(template_selector->get_selected());
+	}
+	const Dictionary active = manager->call("get_active_template_info");
+	const bool already_current = has_selection && String(choice.get("id", "")) == String(active.get("id", ""));
+	const bool local = String(manager->call("get_template_view")) == "local";
+
+	template_selector->set_disabled(busy || !has_selection);
+	template_view_tabs->set_tab_disabled(0, busy);
+	template_view_tabs->set_tab_disabled(1, busy);
+	remote_catalog_input->set_editable(!busy);
+	refresh_remote_catalog_button->set_disabled(busy);
+	set_current_template_button->set_disabled(busy || !has_selection || already_current);
+	cache_template_button->set_disabled(busy || !has_selection || bool(choice.get("available", false)));
+	import_local_template_button->set_disabled(busy);
+	cache_template_button->set_visible(!local);
+	import_local_template_button->set_visible(local);
+	template_progress->set_visible(busy);
+}
+
+void SettingsPanel::_on_template_view_changed(int index) {
+	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	manager->call("set_template_view", index == 1 ? String("local") : String("remote"));
+	refresh_template_view();
+}
+
+void SettingsPanel::_on_refresh_remote_catalog_pressed() {
+	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	const int result = int(manager->call("refresh_remote_catalog", remote_catalog_input->get_text()));
+	if (result == OK) {
+		template_status_label->set_text(String::utf8("正在刷新远端模板列表..."));
+	} else if (result == ERR_BUSY) {
+		template_status_label->set_text(String::utf8("当前有模板操作正在进行"));
+	} else {
+		template_status_label->set_text(String::utf8("模板源必须是有效的 HTTP(S) JSON 地址"));
+	}
+	refresh_template_action_state();
+}
+
+void SettingsPanel::_on_template_selected(int) {
+	refresh_template_action_state();
+}
+
+void SettingsPanel::_on_set_current_template_pressed() {
+	if (!template_selector || template_selector->get_selected() < 0 ||
+			!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	const Dictionary choice = template_selector->get_item_metadata(template_selector->get_selected());
+	const int result = int(manager->call("set_current_template", String(choice.get("id", ""))));
+	if (result == OK) {
+		template_status_label->set_text(bool(choice.get("available", false))
+				? String::utf8("当前模板已切换")
+				: String::utf8("正在缓存模板，完成后设为当前"));
+	} else if (result == ERR_BUSY) {
+		template_status_label->set_text(String::utf8("当前有模板操作正在进行"));
+	} else {
+		template_status_label->set_text(String::utf8("无法使用所选模板"));
+	}
+	refresh_template_action_state();
+}
+
+void SettingsPanel::_on_cache_template_pressed() {
+	if (!template_selector || template_selector->get_selected() < 0 ||
+			!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	const Dictionary choice = template_selector->get_item_metadata(template_selector->get_selected());
+	const int result = int(manager->call("cache_template", String(choice.get("id", ""))));
+	if (result == OK) {
+		template_status_label->set_text(String::utf8("正在缓存模板..."));
+	} else if (result == ERR_BUSY) {
+		template_status_label->set_text(String::utf8("当前有模板操作正在进行"));
+	} else {
+		template_status_label->set_text(String::utf8("模板缓存失败"));
+	}
+	refresh_template_action_state();
+}
+
+void SettingsPanel::_on_import_local_template_pressed() {
+	if (!local_template_file_dialog) {
+		return;
+	}
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		restore_file_dialog_path(local_template_file_dialog, String(manager->call("get_last_local_template_path")));
+	}
+	local_template_file_dialog->popup_file_dialog();
+}
+
+void SettingsPanel::_on_local_template_file_selected(const String &path) {
+	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
+		return;
+	}
+	Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+	const int result = int(manager->call("import_local_template", path));
+	if (result == OK) {
+		manager->call("set_template_view", "local");
+		template_status_label->set_text(String::utf8("模板已导入本地列表，请选择后设为当前"));
+		refresh_template_view();
+	} else {
+		template_status_label->set_text(String::utf8("所选文件不是有效的 TPZ 模板"));
+	}
+}
+
+void SettingsPanel::_on_versions_loaded() {
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		remote_catalog_input->set_text(String(manager->call("get_remote_catalog_url")));
+	}
+	template_status_label->set_text(String::utf8("远端模板列表已更新"));
+	refresh_template_choices();
+}
+
+void SettingsPanel::_on_versions_refresh_failed(int) {
+	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
+		Object *manager = Engine::get_singleton()->get_singleton("TemplateManager");
+		remote_catalog_input->set_text(String(manager->call("get_remote_catalog_url")));
+	}
+	template_status_label->set_text(String::utf8("远端模板源获取失败，已保留原列表"));
+	refresh_template_choices();
+}
+
+void SettingsPanel::_on_active_template_changed(const Dictionary &) {
+	refresh_template_choices();
+}
+
+void SettingsPanel::_on_template_download_progress(const String &filename, float progress) {
+	template_progress->set_visible(true);
+	template_progress->set_value(progress);
+	template_status_label->set_text(String::utf8("正在下载：") + filename);
+}
+
+void SettingsPanel::_on_template_download_finished(const String &, bool success) {
+	template_progress->set_visible(false);
+	template_progress->set_value(0.0);
+	template_status_label->set_text(success ? String::utf8("模板已缓存到本地") : String::utf8("模板下载或校验失败，当前模板未改变"));
+	refresh_template_choices();
 }
 
 void SettingsPanel::_on_check_plugin_update_pressed() {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (!update_manager) {
-		_on_plugin_update_error("Plugin update manager is unavailable.");
+	UpdateManager *manager = UpdateManager::get_singleton();
+	if (!manager) {
+		_on_plugin_update_error("Update manager is unavailable.");
 		return;
 	}
-	const String version = get_installed_plugin_version();
-	plugin_update_label->set_text(String::utf8("插件更新：正在检查，当前版本 ") + version);
-	check_plugin_update_button->set_disabled(true);
-	download_plugin_update_button->set_disabled(true);
-	update_manager->check_for_updates(version);
+	manager->clear_pending_update();
+	manager->set_update_channel("remote");
+	plugin_update_label->set_text(String::utf8("正在检查更新..."));
+	manager->check_for_updates(get_installed_plugin_version());
+	refresh_plugin_update_controls();
 }
 
 void SettingsPanel::_on_download_plugin_update_pressed() {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (!update_manager) {
-		_on_plugin_update_error("Plugin update manager is unavailable.");
+	UpdateManager *manager = UpdateManager::get_singleton();
+	if (!manager) {
+		_on_plugin_update_error("Update manager is unavailable.");
 		return;
 	}
-	if (update_manager->get_current_state() == UpdateManager::STATE_DOWNLOADED) {
-		if (update_restart_dialog) {
-			update_restart_dialog->set_title(String::utf8("安装插件更新"));
-			update_restart_dialog->set_text(String::utf8("将保存当前场景和项目设置，关闭 Godot，安装已下载的插件更新，然后重新打开当前项目。是否继续？"));
-			update_restart_dialog->popup_centered();
-		}
+	if (manager->get_current_state() == UpdateManager::STATE_DOWNLOADED) {
+		update_restart_dialog->set_title(String::utf8("安装插件更新"));
+		update_restart_dialog->set_text(String::utf8("将关闭 Godot、替换插件并重新打开当前项目。是否继续？"));
+		update_restart_dialog->popup_centered();
 		return;
 	}
-	download_plugin_update_button->set_disabled(true);
-	update_manager->download_update();
-}
-
-void SettingsPanel::_on_plugin_update_channel_selected(int index) {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (update_manager) {
-		update_manager->clear_pending_update();
-	}
-	if (plugin_update_channel_selector) {
-		plugin_update_channel_selector->select(index == 1 ? 1 : 0);
-	}
-	if (local_plugin_package_label) {
-		local_plugin_package_label->set_text(String::utf8("尚未选择插件 ZIP"));
-	}
-	if (plugin_update_label) {
-		plugin_update_label->set_text(index == 1 ? String::utf8("本地插件包：请选择标准插件 ZIP") : String::utf8("插件更新：尚未检查"));
-	}
-	save_plugin_update_channel();
-	refresh_plugin_update_channel();
+	manager->download_update();
+	refresh_plugin_update_controls();
 }
 
 void SettingsPanel::_on_select_local_plugin_pressed() {
-	if (local_plugin_file_dialog) {
-		UpdateManager *update_manager = UpdateManager::get_singleton();
-		if (update_manager) {
-			restore_file_dialog_path(local_plugin_file_dialog, update_manager->get_last_local_package_path());
-		}
-		local_plugin_file_dialog->popup_file_dialog();
+	UpdateManager *manager = UpdateManager::get_singleton();
+	if (manager) {
+		manager->clear_pending_update();
+		restore_file_dialog_path(local_plugin_file_dialog, manager->get_last_local_package_path());
 	}
+	local_plugin_file_dialog->popup_file_dialog();
 }
 
 void SettingsPanel::_on_local_plugin_file_selected(const String &path) {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (!update_manager) {
-		_on_plugin_update_error("Plugin update manager is unavailable.");
+	UpdateManager *manager = UpdateManager::get_singleton();
+	if (!manager) {
+		_on_plugin_update_error("Update manager is unavailable.");
 		return;
 	}
-	const Dictionary result = update_manager->select_local_package(path, get_installed_plugin_version());
+	const Dictionary result = manager->select_local_package(path, get_installed_plugin_version());
 	if (!bool(result.get("success", false))) {
 		_on_plugin_update_error(String(result.get("error", "Invalid local plugin package.")));
-		refresh_plugin_update_channel();
-		return;
-	}
-	const String filename = String(result.get("filename", path.get_file()));
-	const String version = String(result.get("version", ""));
-	local_plugin_package_label->set_text(filename + String::utf8("，版本 ") + version);
-	plugin_update_label->set_text(String::utf8("本地插件包已校验并缓存，等待安装"));
-	refresh_plugin_update_channel();
-}
-
-void SettingsPanel::_on_install_local_plugin_pressed() {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (!update_manager || update_manager->get_current_state() != UpdateManager::STATE_DOWNLOADED) {
 		return;
 	}
 	const String current_version = get_installed_plugin_version();
-	const String target_version = String(update_manager->get_remote_version_info().get("version", ""));
+	const String target_version = String(result.get("version", ""));
 	const VersionInfo current = VersionInfo::from_string(current_version);
 	const VersionInfo target = VersionInfo::from_string(target_version);
 	String operation = String::utf8("同版本覆盖");
@@ -516,6 +619,7 @@ void SettingsPanel::_on_install_local_plugin_pressed() {
 	} else if (current.is_newer_than(target)) {
 		operation = String::utf8("降级");
 	}
+	plugin_update_label->set_text(String::utf8("本地插件包已校验，版本 ") + target_version);
 	update_restart_dialog->set_title(String::utf8("安装本地插件包"));
 	update_restart_dialog->set_text(
 			String::utf8("当前版本：") + current_version + "\n" +
@@ -523,63 +627,94 @@ void SettingsPanel::_on_install_local_plugin_pressed() {
 			String::utf8("操作类型：") + operation + "\n\n" +
 			String::utf8("将关闭 Godot、替换插件并重新打开当前项目。是否继续？"));
 	update_restart_dialog->popup_centered();
+	refresh_plugin_update_controls();
 }
 
 void SettingsPanel::_on_plugin_update_state_changed(int state) {
-	refresh_plugin_update_channel();
-	if (plugin_update_label) {
-		if (state == UpdateManager::STATE_UP_TO_DATE) {
-			plugin_update_label->set_text(String::utf8("插件更新：当前已是最新版本"));
-		} else if (state == UpdateManager::STATE_DOWNLOADING) {
-			plugin_update_label->set_text(String::utf8("插件更新：正在下载"));
-		} else if (state == UpdateManager::STATE_DOWNLOADED) {
-			UpdateManager *update_manager = UpdateManager::get_singleton();
-			const bool is_local = update_manager && String(update_manager->get_remote_version_info().get("channel", "")) == "local";
-			plugin_update_label->set_text(is_local ? String::utf8("本地插件包已校验并缓存，等待安装") : String::utf8("插件更新已下载，等待确认安装"));
-		} else if (state == UpdateManager::STATE_INSTALLING) {
-			plugin_update_label->set_text(String::utf8("正在启动安装程序并重启 Godot..."));
-		}
+	if (state == UpdateManager::STATE_UP_TO_DATE) {
+		plugin_update_label->set_text(String::utf8("当前已是最新版本"));
+	} else if (state == UpdateManager::STATE_CHECKING) {
+		plugin_update_label->set_text(String::utf8("正在检查更新..."));
+	} else if (state == UpdateManager::STATE_DOWNLOADING) {
+		plugin_update_label->set_text(String::utf8("正在下载插件更新..."));
+	} else if (state == UpdateManager::STATE_DOWNLOADED) {
+		UpdateManager *manager = UpdateManager::get_singleton();
+		const bool local = manager && String(manager->get_remote_version_info().get("channel", "")) == "local";
+		plugin_update_label->set_text(local ? String::utf8("本地插件包已准备安装") : String::utf8("插件更新已下载"));
+	} else if (state == UpdateManager::STATE_INSTALLING) {
+		plugin_update_label->set_text(String::utf8("正在启动安装程序并重启 Godot..."));
 	}
+	refresh_plugin_update_controls();
 }
 
 void SettingsPanel::_on_plugin_update_available(const Dictionary &version_info) {
-	String version = String(version_info.get("version", ""));
-	plugin_update_label->set_text(String::utf8("插件更新：发现新版本 ") + version);
-	download_plugin_update_button->set_disabled(false);
+	plugin_update_label->set_text(String::utf8("发现新版本 ") + String(version_info.get("version", "")));
+	refresh_plugin_update_controls();
 }
 
 void SettingsPanel::_on_plugin_update_download_finished(bool success) {
-	if (success) {
-		plugin_update_label->set_text(String::utf8("插件更新已下载，等待确认安装"));
-		download_plugin_update_button->set_text(String::utf8("安装并重启"));
-		download_plugin_update_button->set_disabled(false);
-	} else {
-		plugin_update_label->set_text(String::utf8("插件更新下载失败"));
-	}
+	plugin_update_label->set_text(success ? String::utf8("插件更新已下载") : String::utf8("插件更新下载失败"));
+	refresh_plugin_update_controls();
 }
 
 void SettingsPanel::_on_confirm_update_restart() {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (!update_manager) {
-		_on_plugin_update_error("Plugin update manager is unavailable.");
+	UpdateManager *manager = UpdateManager::get_singleton();
+	if (!manager) {
+		_on_plugin_update_error("Update manager is unavailable.");
 		return;
 	}
 	plugin_update_label->set_text(String::utf8("正在准备安装并重启 Godot..."));
 	check_plugin_update_button->set_disabled(true);
 	download_plugin_update_button->set_disabled(true);
-	plugin_update_channel_selector->set_disabled(true);
 	select_local_plugin_button->set_disabled(true);
-	install_local_plugin_button->set_disabled(true);
-	update_manager->restart_editor_for_update();
+	manager->restart_editor_for_update();
 }
 
 void SettingsPanel::_on_plugin_update_error(const String &message) {
-	if (plugin_update_label) {
-		plugin_update_label->set_text(String::utf8("插件更新失败：") + message);
+	plugin_update_label->set_text(String::utf8("插件更新失败：") + message);
+	refresh_plugin_update_controls();
+}
+
+void SettingsPanel::refresh_plugin_update_controls() {
+	UpdateManager *manager = UpdateManager::get_singleton();
+	const int state = manager ? int(manager->get_current_state()) : int(UpdateManager::STATE_ERROR);
+	const bool busy = state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING || state == UpdateManager::STATE_INSTALLING;
+	check_plugin_update_button->set_disabled(busy || state == UpdateManager::STATE_DOWNLOADED);
+	download_plugin_update_button->set_text(state == UpdateManager::STATE_DOWNLOADED ? String::utf8("安装并重启") : String::utf8("下载更新"));
+	download_plugin_update_button->set_disabled(state != UpdateManager::STATE_UPDATE_AVAILABLE && state != UpdateManager::STATE_DOWNLOADED);
+	select_local_plugin_button->set_disabled(busy);
+	plugin_version_label->set_text(String::utf8("当前版本：") + get_installed_plugin_version());
+}
+
+void SettingsPanel::refresh_proxy_settings() {
+	const Dictionary config = NetworkProxy::get_config();
+	const bool enabled = bool(config.get("proxy_enabled", false));
+	const String host = String(config.get("proxy_host", "127.0.0.1"));
+	const int port = int(config.get("proxy_port", 7890));
+	proxy_enabled_check->set_pressed_no_signal(enabled);
+	proxy_host_input->set_text(host);
+	proxy_port_input->set_value(port);
+	_on_proxy_enabled_toggled(enabled);
+	proxy_status_label->set_text(enabled
+			? String::utf8("代理已启用：") + host + ":" + String::num_int64(port)
+			: String::utf8("当前使用直连"));
+}
+
+void SettingsPanel::_on_proxy_enabled_toggled(bool enabled) {
+	proxy_host_input->set_editable(enabled);
+	proxy_port_input->set_editable(enabled);
+}
+
+void SettingsPanel::_on_apply_proxy_pressed() {
+	const bool enabled = proxy_enabled_check->is_pressed();
+	const String host = proxy_host_input->get_text().strip_edges();
+	const int port = int(proxy_port_input->get_value());
+	const Error result = NetworkProxy::save_config(enabled, host, port);
+	if (result != OK) {
+		proxy_status_label->set_text(String::utf8("代理设置无效，请检查主机和端口"));
+		return;
 	}
-	if (check_plugin_update_button) {
-		refresh_plugin_update_channel();
-	}
+	refresh_proxy_settings();
 }
 
 String SettingsPanel::get_installed_plugin_version() const {
@@ -590,425 +725,6 @@ String SettingsPanel::get_installed_plugin_version() const {
 		version = String(config->get_value("plugin", "version", version)).strip_edges();
 	}
 	return version;
-}
-
-void SettingsPanel::load_plugin_update_channel() {
-	int channel = 0;
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (update_manager && update_manager->get_update_channel() == "local") {
-		channel = 1;
-	}
-	if (plugin_update_channel_selector) {
-		plugin_update_channel_selector->select(channel);
-	}
-	if (plugin_update_label && channel == 1) {
-		plugin_update_label->set_text(String::utf8("本地插件包：请选择标准插件 ZIP"));
-	}
-}
-
-void SettingsPanel::save_plugin_update_channel() const {
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	if (!update_manager || !plugin_update_channel_selector) {
-		return;
-	}
-	update_manager->set_update_channel(plugin_update_channel_selector->get_selected() == 1 ? String("local") : String("remote"));
-}
-
-void SettingsPanel::refresh_plugin_update_channel() {
-	if (!plugin_update_channel_selector) {
-		return;
-	}
-	const bool local_channel = plugin_update_channel_selector->get_selected() == 1;
-	if (remote_update_controls) {
-		remote_update_controls->set_visible(!local_channel);
-	}
-	if (local_update_controls) {
-		local_update_controls->set_visible(local_channel);
-	}
-	UpdateManager *update_manager = UpdateManager::get_singleton();
-	const int state = update_manager ? int(update_manager->get_current_state()) : int(UpdateManager::STATE_ERROR);
-	const bool busy = state == UpdateManager::STATE_CHECKING || state == UpdateManager::STATE_DOWNLOADING || state == UpdateManager::STATE_INSTALLING;
-	const bool local_ready = state == UpdateManager::STATE_DOWNLOADED && update_manager &&
-			String(update_manager->get_remote_version_info().get("channel", "")) == "local";
-	plugin_update_channel_selector->set_disabled(busy);
-	if (check_plugin_update_button) {
-		check_plugin_update_button->set_disabled(local_channel || busy || state == UpdateManager::STATE_DOWNLOADED);
-	}
-	if (download_plugin_update_button) {
-		download_plugin_update_button->set_text(state == UpdateManager::STATE_DOWNLOADED ? String::utf8("安装并重启") : String::utf8("下载插件更新"));
-		download_plugin_update_button->set_disabled(local_channel || (state != UpdateManager::STATE_UPDATE_AVAILABLE && state != UpdateManager::STATE_DOWNLOADED));
-	}
-	if (select_local_plugin_button) {
-		select_local_plugin_button->set_disabled(!local_channel || busy);
-	}
-	if (install_local_plugin_button) {
-		install_local_plugin_button->set_disabled(!local_channel || !local_ready || busy);
-	}
-}
-
-void SettingsPanel::refresh_distribution_info() {
-	String provider = "github";
-	Dictionary config;
-
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager) {
-			if (template_manager->has_method("get_distribution_provider")) {
-				provider = template_manager->call("get_distribution_provider");
-			}
-
-			if (template_manager->has_method("get_current_release_config")) {
-				config = template_manager->call("get_current_release_config");
-			}
-		}
-	}
-
-	if (distribution_provider_selector) {
-		if (provider == "gitee") {
-			distribution_provider_selector->select(2);
-		} else if (provider == "github") {
-			distribution_provider_selector->select(1);
-		} else {
-			distribution_provider_selector->select(0);
-		}
-	}
-	if (owner_input) {
-		owner_input->set_text(String(config.get("owner", "")));
-	}
-	if (repo_input) {
-		repo_input->set_text(String(config.get("repo", "")));
-	}
-	if (tag_input) {
-		tag_input->set_text(String(config.get("release_tag", "latest")));
-	}
-}
-
-void SettingsPanel::_on_distribution_provider_selected(int index) {
-	String provider = "atomgit";
-	if (index == 1) {
-		provider = "github";
-	} else if (index == 2) {
-		provider = "gitee";
-	}
-
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager && template_manager->has_method("set_distribution_provider")) {
-			template_manager->call("set_distribution_provider", provider);
-		}
-	}
-
-	if (action_status_label) {
-		action_status_label->set_text(String::utf8("已切换源，正在刷新索引..."));
-	}
-	refresh_distribution_info();
-}
-
-void SettingsPanel::_on_save_distribution_config_pressed() {
-	if (!owner_input || !repo_input || !tag_input) {
-		return;
-	}
-
-	String owner = owner_input->get_text().strip_edges();
-	String repo = repo_input->get_text().strip_edges();
-	String release_tag = tag_input->get_text().strip_edges();
-
-	if (owner.is_empty() || repo.is_empty()) {
-		if (action_status_label) {
-			action_status_label->set_text(String::utf8("owner 和 repo 不能为空"));
-		}
-		return;
-	}
-	if (release_tag.is_empty()) {
-		release_tag = "latest";
-		tag_input->set_text(release_tag);
-	}
-
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager && template_manager->has_method("set_current_release_config")) {
-			template_manager->call("set_current_release_config", owner, repo, release_tag);
-		}
-	}
-
-	if (action_status_label) {
-		action_status_label->set_text(String::utf8("配置已保存，正在刷新索引..."));
-	}
-	refresh_distribution_info();
-}
-
-void SettingsPanel::_on_reset_config_pressed() {
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager && template_manager->has_method("reset_distribution_preferences")) {
-			template_manager->call("reset_distribution_preferences");
-		}
-	}
-
-	if (action_status_label) {
-		action_status_label->set_text(String::utf8("已恢复默认配置"));
-	}
-	refresh_distribution_info();
-}
-
-void SettingsPanel::_on_refresh_versions_pressed() {
-	int error_code = ERR_UNCONFIGURED;
-
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager && template_manager->has_method("refresh_versions")) {
-			Variant result = template_manager->call("refresh_versions");
-			if (result.get_type() == Variant::INT) {
-				error_code = int(result);
-			}
-		}
-	}
-
-	if (action_status_label) {
-		if (error_code == OK) {
-			action_status_label->set_text(String::utf8("已发起远端索引刷新"));
-		} else {
-			action_status_label->set_text(String::utf8("刷新启动失败，错误码: ") + String::num_int64(error_code));
-		}
-	}
-	refresh_distribution_info();
-}
-
-void SettingsPanel::_on_versions_loaded() {
-	if (action_status_label) {
-		action_status_label->set_text(String::utf8("远端索引刷新完成"));
-	}
-	refresh_distribution_info();
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::_on_versions_refresh_failed(int error_code) {
-	if (action_status_label) {
-		action_status_label->set_text(String::utf8("远端索引刷新失败，已保留当前索引。错误码: ") + String::num_int64(error_code));
-	}
-	refresh_distribution_info();
-}
-
-void SettingsPanel::_on_active_template_changed(const Dictionary &) {
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::_on_template_version_selected(int index) {
-	if (!template_version_selector || index < 0 || index >= template_version_selector->get_item_count() ||
-			!Engine::get_singleton()->has_singleton("TemplateManager")) {
-		return;
-	}
-	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-	const String version = String(template_version_selector->get_item_metadata(index));
-	Variant result = template_manager->call("set_active_catalog_template", version);
-	if (action_status_label) {
-		action_status_label->set_text(int(result) == OK ? String::utf8("当前模板已切换为 Godot ") + version : String::utf8("模板切换失败"));
-	}
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::_on_use_custom_template_pressed() {
-	if (!custom_template_url_input || !Engine::get_singleton()->has_singleton("TemplateManager")) {
-		return;
-	}
-	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-	Variant result = template_manager->call("set_active_custom_template", custom_template_url_input->get_text());
-	if (int(result) != OK) {
-		if (action_status_label) {
-			action_status_label->set_text(String::utf8("请选择有效的本地 TPZ，或填写 HTTP(S) 的 .tpz 直链"));
-		}
-		return;
-	}
-	_on_prefetch_template_pressed();
-}
-
-void SettingsPanel::_on_select_local_template_pressed() {
-	if (local_template_file_dialog) {
-		if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-			Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-			if (template_manager && template_manager->has_method("get_last_local_template_path")) {
-				restore_file_dialog_path(local_template_file_dialog, template_manager->call("get_last_local_template_path"));
-			}
-		}
-		local_template_file_dialog->popup_file_dialog();
-	}
-}
-
-void SettingsPanel::_on_local_template_file_selected(const String &path) {
-	if (custom_template_url_input) {
-		custom_template_url_input->set_text(path);
-	}
-	_on_use_custom_template_pressed();
-}
-
-void SettingsPanel::_on_replace_template_pressed() {
-	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
-		return;
-	}
-	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-	Variant result = template_manager->call("download_active_template_async", true);
-	if (action_status_label) {
-		action_status_label->set_text(int(result) == OK ? String::utf8("正在更新模板缓存") : String::utf8("无法更新模板缓存"));
-	}
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::_on_remove_template_pressed() {
-	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
-		return;
-	}
-	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-	Variant result = template_manager->call("remove_active_template_cache");
-	if (action_status_label) {
-		action_status_label->set_text(int(result) == OK ? String::utf8("当前模板缓存已删除") : String::utf8("当前模板缓存删除失败"));
-	}
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::_on_clear_templates_pressed() {
-	if (clear_templates_dialog) {
-		clear_templates_dialog->popup_centered();
-	}
-}
-
-void SettingsPanel::_on_confirm_clear_templates() {
-	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
-		return;
-	}
-	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-	Variant result = template_manager->call("clear_all_template_cache");
-	if (action_status_label) {
-		action_status_label->set_text(int(result) == OK ? String::utf8("全部全局模板缓存已清空") : String::utf8("全局模板缓存清理失败"));
-	}
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::refresh_template_cache_info() {
-	bool prefetch_active = false;
-	Dictionary active_info;
-	Array choices;
-
-	if (Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager) {
-			if (template_manager->has_method("get_template_choices")) {
-				choices = template_manager->call("get_template_choices");
-			}
-			if (template_manager->has_method("get_active_template_info")) {
-				active_info = template_manager->call("get_active_template_info");
-			}
-			if (template_manager->has_method("is_prefetch_active")) {
-				prefetch_active = bool(template_manager->call("is_prefetch_active"));
-			}
-		}
-	}
-
-	if (template_version_selector) {
-		template_version_selector->clear();
-		const String active_kind = String(active_info.get("kind", "catalog"));
-		const String active_version = String(active_info.get("version", ""));
-		for (int i = 0; i < choices.size(); i++) {
-			Dictionary choice = choices[i];
-			const String version = String(choice.get("version", ""));
-			const String tag = String(choice.get("release_tag", ""));
-			template_version_selector->add_item("Godot " + version + (tag.is_empty() ? String() : "  [" + tag + "]"));
-			template_version_selector->set_item_metadata(i, version);
-			if (active_kind == "catalog" && version == active_version) {
-				template_version_selector->select(i);
-			}
-		}
-		template_version_selector->set_disabled(prefetch_active || choices.is_empty());
-	}
-
-	const String display_name = String(active_info.get("display_name", String::utf8("未选择模板")));
-	if (custom_template_url_input && String(active_info.get("kind", "catalog")) == "custom") {
-		custom_template_url_input->set_text(String(active_info.get("url", "")));
-	}
-	const bool cached = bool(active_info.get("cached", false));
-	const bool bundled = bool(active_info.get("bundled", false));
-	const bool available = bool(active_info.get("available", false));
-	const bool local_source = String(active_info.get("source", "catalog")) == "local";
-	if (template_cache_label) {
-		String status = cached ? String::utf8("全局缓存") : (bundled ? String::utf8("插件内置") : String::utf8("未下载"));
-		template_cache_label->set_text(display_name + String::utf8("：") + status);
-	}
-	if (prefetch_template_button) {
-		prefetch_template_button->set_text(local_source ? String::utf8("导入") : String::utf8("下载"));
-		prefetch_template_button->set_disabled(prefetch_active || available || active_info.is_empty());
-	}
-	if (replace_template_button) {
-		replace_template_button->set_text(local_source ? String::utf8("重新导入并覆盖") : String::utf8("重新下载并覆盖"));
-		replace_template_button->set_disabled(prefetch_active || active_info.is_empty());
-	}
-	if (remove_template_button) {
-		remove_template_button->set_disabled(prefetch_active || !cached);
-	}
-	if (clear_templates_button) {
-		clear_templates_button->set_disabled(prefetch_active);
-	}
-	if (template_cache_progress) {
-		template_cache_progress->set_visible(prefetch_active);
-	}
-}
-
-void SettingsPanel::_on_prefetch_template_pressed() {
-	if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
-		return;
-	}
-	Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-	if (!template_manager || !template_manager->has_method("download_active_template_async")) {
-		return;
-	}
-
-	Variant result = template_manager->call("download_active_template_async", false);
-	int error_code = ERR_UNCONFIGURED;
-	if (result.get_type() == Variant::INT) {
-		error_code = int(result);
-	}
-
-	if (action_status_label) {
-		if (error_code == OK) {
-			action_status_label->set_text(String::utf8("模板下载已启动"));
-		} else if (error_code == ERR_BUSY) {
-			action_status_label->set_text(String::utf8("已有下载任务在进行"));
-		} else {
-			action_status_label->set_text(String::utf8("预下载启动失败，错误码: ") + String::num_int64(error_code));
-		}
-	}
-	refresh_template_cache_info();
-}
-
-void SettingsPanel::_on_template_download_progress(const String &filename, float progress) {
-	if (!template_cache_progress || !template_cache_progress->is_visible()) {
-		return;
-	}
-	template_cache_progress->set_value(progress);
-	if (template_cache_label && Engine::get_singleton()->has_singleton("TemplateManager")) {
-		Object *template_manager = Engine::get_singleton()->get_singleton("TemplateManager");
-		if (template_manager && template_manager->has_method("get_download_status_text") && !filename.is_empty()
-				&& filename != String("__prefetch__")) {
-			String status_text = template_manager->call("get_download_status_text", filename);
-			template_cache_label->set_text(
-					String::utf8("模板缓存：") + filename + String::utf8("（") + status_text + String::utf8("）"));
-		}
-	}
-}
-
-void SettingsPanel::_on_template_cache_download_finished(const String &filename, bool success) {
-	if (template_cache_progress) {
-		template_cache_progress->set_visible(false);
-		template_cache_progress->set_value(0.0);
-	}
-	if (action_status_label) {
-		if (success) {
-			action_status_label->set_text(String::utf8("模板已写入全局缓存，当前编辑器可立即使用"));
-		} else if (filename == String("__prefetch__")) {
-			action_status_label->set_text(String::utf8("模板预下载失败：没有可用的模板版本"));
-		} else {
-			action_status_label->set_text(String::utf8("模板预下载失败，请检查分发源配置或网络后重试"));
-		}
-	}
-	refresh_template_cache_info();
 }
 
 } // namespace editor

@@ -30,24 +30,7 @@ class TemplateManager : public Object {
     GDCLASS(TemplateManager, Object);
 
 private:
-    enum class DistributionProvider {
-        GITHUB_RELEASE = 0,
-        GITEE_RELEASE = 1,
-        ATOMGIT_RELEASE = 2,
-    };
-
     static TemplateManager* singleton;
-
-    DistributionProvider distribution_provider = DistributionProvider::GITHUB_RELEASE;
-    String github_repo_owner = "Losomz";
-    String github_repo_name = "godot-minigame";
-    String github_release_tag = "latest";
-    String gitee_repo_owner = "Losomz";
-    String gitee_repo_name = "godot-minigame";
-    String gitee_release_tag = "latest";
-    String atomgit_repo_owner = "Losomz";
-    String atomgit_repo_name = "godot-minigame";
-    String atomgit_release_tag = "latest";
 
     Dictionary versions_cache;
     Dictionary catalog_cache;
@@ -75,10 +58,16 @@ public:
     int64_t get_catalog_revision() const;
 
     // Single editor-global template selection used by every project export.
-    Array get_template_choices() const;
+    Array get_remote_template_choices() const;
+    Array get_local_template_choices() const;
     Dictionary get_active_template_info() const;
-    Error set_active_catalog_template(const String& version);
-    Error set_active_custom_template(const String& source);
+    Error cache_template(const String& template_id);
+    Error set_current_template(const String& template_id);
+    Error import_local_template(const String& path);
+    Error refresh_remote_catalog(const String& catalog_url);
+    void set_template_view(const String& view);
+    String get_template_view() const;
+    String get_remote_catalog_url() const;
     String get_last_local_template_path() const;
     String resolve_active_template_path() const;
 
@@ -132,21 +121,6 @@ public:
     Error refresh_versions();
     Error initialize_template_system();
 
-    // Configuration
-    void set_distribution_provider(const String& provider);
-    String get_distribution_provider() const;
-    void set_current_release_config(const String& owner, const String& repo, const String& release_tag = "latest");
-    Dictionary get_current_release_config() const;
-    void set_github_release_config(const String& owner, const String& repo, const String& release_tag = "latest");
-    Dictionary get_github_release_config() const;
-    void set_gitee_release_config(const String& owner, const String& repo, const String& release_tag = "latest");
-    Dictionary get_gitee_release_config() const;
-    void set_atomgit_release_config(const String& owner, const String& repo, const String& release_tag = "latest");
-    Dictionary get_atomgit_release_config() const;
-    String get_versions_remote_url() const;
-    String get_update_manifest_url() const;
-    String get_distribution_asset_url(const String& asset_name) const;
-
     void set_download_timeout(int timeout_seconds);
     int get_download_timeout() const;
 
@@ -166,22 +140,23 @@ private:
     String active_template_version;
     String active_custom_url;
     String last_local_template_path;
+    String template_view = "remote";
+    String remote_catalog_url;
+    String pending_catalog_url;
+    String active_template_id;
+    String active_template_path;
+    String active_template_display_name;
+    String active_template_origin;
+    Dictionary local_template_records;
+    Dictionary pending_template;
+    bool pending_template_activate = true;
 
     Error parse_templates_catalog(const String& json_content);
     TemplateVersion parse_version_entry(const String& godot_major, const String& version, const String& filename);
     String build_versions_url() const;
-    String build_release_download_url(DistributionProvider provider, const String& owner, const String& repo, const String& release_tag, const String& filename) const;
     String build_download_url(const String& filename) const;
     String get_download_cache_path(const String& filename) const;
     String get_local_versions_cache_path() const;
-    String get_download_state_cache_path() const;
-    void load_download_states();
-    void save_download_states() const;
-    bool apply_distribution_provider(const String& provider, bool persist_selection, bool refresh_version_cache);
-    void load_distribution_preferences();
-    void persist_distribution_preferences() const;
-    void reset_distribution_preferences();
-    void reload_active_distribution_cache(bool load_remote_versions);
 
     void update_download_state(const String& filename, const String& state, float progress = 0.0f, const String& note = "");
 
@@ -196,11 +171,17 @@ private:
     int compare_version_numbers(const String& version1, const String& version2) const;
     Array parse_version_components(const String& version) const;
     String get_global_template_cache_root() const;
-    String get_distribution_cache_root_dir() const;
     Array build_available_versions_from_cache() const;
     String get_editor_version_line() const;
     String get_active_template_filename() const;
     String get_custom_template_cache_path(const String& url) const;
+    void collect_local_template_files(const String& root, const String& fallback_origin, Array& choices, Dictionary& seen_paths) const;
+    void migrate_legacy_template_cache();
+    Dictionary find_template_choice(const String& template_id, bool include_local) const;
+    Error activate_local_template(const Dictionary& choice, const String& path);
+    void register_local_template(const Dictionary& choice, const String& path);
+    void complete_pending_template(const String& path);
+    Dictionary make_imported_template_choice(const String& source_path, const String& cached_path) const;
     bool validate_template_archive(const String& path) const;
     Error publish_download_atomically(const String& temporary_path, const String& output_path) const;
     void load_active_template_selection();
