@@ -134,8 +134,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "target_repo",
         nargs="?",
-        default=str(REPOSITORY_ROOT / "godot"),
-        help="Path to the target Godot repo root (default: repository godot/ submodule)",
+        default=str(SKILL_ROOT / "thirdparty" / "godot"),
+        help="Path to the target Godot repo root (default: adapter/thirdparty/godot submodule)",
     )
     parser.add_argument(
         "--include-optional",

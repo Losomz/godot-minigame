@@ -10,7 +10,7 @@
 
 > 当前未实现 Banner。组件不包含 PowerShell、业务图片、AppID 或项目广告位。
 
-打包时使用 `python ci/package.py --ad` 即可将本组件融合进模板（产物名带 `-ad`）。本目录是独立组件，也可以手动迁移到其他 Godot 项目。
+打包时使用 `python adapter/ci/package.py --ad` 即可将本组件融合进模板（产物名带 `-ad`）。本目录是独立组件，也可以手动迁移到其他 Godot 项目。
 
 ## 1. 文件职责
 
@@ -90,7 +90,7 @@ Interstitial Ad Unit Id  插屏广告位
 Custom Ad Unit Id        原生模板广告位
 ```
 
-- [打开微信广告配置区](./wechat_ad.gd#L20)
+- [打开微信广告配置区](./wechat_ad.gd#L22)
 
 广告位必须属于当前小游戏 AppID，并且类型必须对应：
 
@@ -100,7 +100,7 @@ Custom Ad Unit Id        原生模板广告位
 原生模板广告位 -> show_custom()
 ```
 
-原生模板的 `Custom Left`、`Custom Top`、`Custom Width` 使用微信屏幕坐标，不是 Godot Control 节点坐标。
+原生模板的 `Custom Position` 支持 `top/bottom/left/right/absolute`：前四种由桥按窗口自动居中，`absolute` 才使用 `Custom Left/Top`，所有位置都会叠加 `Custom Offset X/Y`。坐标均为微信屏幕坐标，不是 Godot Control 节点坐标。
 
 ### 3.4 连接信号并调用
 
@@ -138,12 +138,12 @@ func grant_reward() -> void:
 
 公开接口：
 
-- [初始化与 GODOTSDK 获取](./wechat_ad.gd#L61)
-- [激励视频](./wechat_ad.gd#L92)
-- [插屏广告](./wechat_ad.gd#L100)
-- [原生模板广告](./wechat_ad.gd#L108)
-- [隐藏原生模板](./wechat_ad.gd#L120)
-- [微信事件处理](./wechat_ad.gd#L129)
+- [初始化与 GODOTSDK 获取](./wechat_ad.gd#L69)
+- [激励视频](./wechat_ad.gd#L100)
+- [插屏广告](./wechat_ad.gd#L109)
+- [原生模板广告](./wechat_ad.gd#L118)
+- [隐藏原生模板](./wechat_ad.gd#L135)
+- [微信事件处理](./wechat_ad.gd#L144)
 
 `show_*()` 返回 `true` 只表示请求已经传给 JavaScript，不代表广告展示成功。激励奖励只能在 `rewarded_closed(true)` 时发放。
 
@@ -235,32 +235,38 @@ godot-sdk -> godot -> wx-ad-bridge -> startGame
 [`engine/wx-ad-bridge.js`](./engine/wx-ad-bridge.js) 负责：
 
 1. 从微信运行环境取得 `wx`。
-2. 向 `GODOTSDK` 挂载 `dsWxAd*` 方法。
-3. 创建并复用微信广告实例。
+2. 向 `GODOTSDK` 挂载 `dsWxAd*` 方法（桥协议版本 v2）。
+3. 创建并复用微信广告实例，原生模板按广告位分别管理。
 4. `show()` 失败时执行 `load()` 后再次展示。
-5. 监听微信 `onClose`、`onLoad`、`onError`。
+5. 监听微信 `onClose`、`onLoad`、`onError`，支持取消激励请求与销毁实例。
 6. 将事件转换为 JSON 字符串回调 Godot。
 
 关键位置：
 
 - [取得微信 API](./engine/wx-ad-bridge.js#L19)
-- [挂载 GODOTSDK 接口](./engine/wx-ad-bridge.js#L140)
-- [整理并发送事件](./engine/wx-ad-bridge.js#L209)
-- [展示失败后的加载兜底](./engine/wx-ad-bridge.js#L252)
-- [激励视频实例](./engine/wx-ad-bridge.js#L299)
-- [插屏广告实例](./engine/wx-ad-bridge.js#L345)
-- [原生模板实例](./engine/wx-ad-bridge.js#L388)
+- [挂载 GODOTSDK 接口](./engine/wx-ad-bridge.js#L161)
+- [整理并发送事件](./engine/wx-ad-bridge.js#L262)
+- [展示失败后的加载兜底](./engine/wx-ad-bridge.js#L305)
+- [激励视频实例](./engine/wx-ad-bridge.js#L401)
+- [插屏广告实例](./engine/wx-ad-bridge.js#L475)
+- [原生模板实例](./engine/wx-ad-bridge.js#L514)
 
 桥接方法：
 
 ```text
+dsWxAdGetBridgeVersion() -> 2
 dsWxAdSetEventCallback(callback)
+dsWxAdClearEventCallback()
 dsWxAdDebugState()
-dsWxAdShowRewarded(adUnitId)
+dsWxAdShowRewarded(adUnitId, requestId)
+dsWxAdCancelRewarded(requestId)
 dsWxAdShowInterstitial(adUnitId)
-dsWxAdShowCustom(adUnitId, left, top, width)
-dsWxAdHideCustom()
+dsWxAdShowCustom(adUnitId, position, width, estimatedHeight, offsetX, offsetY, left, top)
+dsWxAdHideCustom(adUnitId)
+dsWxAdDestroyAll()
 ```
+
+`dsWxAdHideCustom` 传空字符串会隐藏全部原生模板；`position` 支持 `top/bottom/left/right/absolute`。
 
 回调结构：
 
@@ -270,11 +276,12 @@ dsWxAdHideCustom()
   "stage": "close",
   "ok": true,
   "adUnitId": "adunit-xxx",
+  "requestId": "1",
   "isEnded": true
 }
 ```
 
-`errMsg` 和微信错误码是可选诊断字段；`isEnded` 只在激励视频关闭事件中出现。
+`errMsg` 和微信错误码是可选诊断字段；`isEnded` 只在激励视频关闭事件中出现，`requestId` 标识一次激励请求，取消与失败事件同样携带。
 
 ## 7. 验证
 

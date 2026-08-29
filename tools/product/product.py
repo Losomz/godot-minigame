@@ -13,6 +13,7 @@ import re
 import shutil
 import sys
 import tempfile
+from urllib.parse import urlparse
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,7 +85,7 @@ def version_key(value: str) -> tuple[int, int, int]:
 def render_versions(catalog: dict) -> str:
     entries = catalog.get("templates")
     if not isinstance(entries, list):
-        raise ProductError("catalog/templates.json must contain a templates array")
+        raise ProductError("plugin/catalog/templates.json must contain a templates array")
 
     groups: dict[str, list[dict]] = {}
     for entry in entries:
@@ -113,12 +114,12 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     errors: list[str] = []
     try:
         version = plugin["version"]
-        parse_semver(version, "product/plugin.json version")
+        parse_semver(version, "plugin/plugin.json version")
     except (KeyError, ProductError) as exc:
         return [str(exc)]
 
     if plugin.get("schema_version") != 1:
-        errors.append("product/plugin.json schema_version must be 1")
+        errors.append("plugin/plugin.json schema_version must be 1")
     if plugin.get("tag_prefix") != "plugin-v":
         errors.append("Plugin tag_prefix must be plugin-v")
 
@@ -126,7 +127,7 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     if not addon_path.is_dir():
         errors.append(f"Plugin addon_path does not exist: {addon_path}")
 
-    for cfg in (root / "plugin.cfg", addon_path / "plugin.cfg"):
+    for cfg in (addon_path / "plugin.cfg",):
         try:
             cfg_version = read_plugin_cfg_version(cfg)
             if cfg_version != version:
@@ -135,15 +136,21 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
             errors.append(str(exc))
 
     if update_catalog.get("schema_version") != 1:
-        errors.append("catalog/plugin-stable.json schema_version must be 1")
-    if update_catalog.get("version") != version:
-        errors.append("Plugin update catalog version must match product/plugin.json")
+        errors.append("plugin/catalog/plugin-stable.json schema_version must be 1")
+    stable_version = str(update_catalog.get("version", ""))
+    try:
+        stable_version_key = parse_semver(stable_version, "plugin/catalog/plugin-stable.json version")
+    except ProductError as exc:
+        errors.append(str(exc))
+        stable_version_key = None
+    if stable_version_key is not None and stable_version_key > parse_semver(version, "plugin/plugin.json version"):
+        errors.append("Plugin stable catalog version cannot be newer than plugin/plugin.json")
 
     published = update_catalog.get("published")
     if not isinstance(published, bool):
         errors.append("Plugin update catalog published must be boolean")
     if published:
-        expected_tag = f"plugin-v{version}"
+        expected_tag = f"plugin-v{stable_version}"
         if update_catalog.get("tag") != expected_tag:
             errors.append(f"Published plugin tag must be {expected_tag}")
         platforms = update_catalog.get("platforms")
@@ -163,16 +170,26 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     elif update_catalog.get("tag") or update_catalog.get("platforms"):
         errors.append("Unpublished plugin catalog must not expose a tag or platform assets")
 
+    runtime_source = root / "plugin/src/templates/template_manager.cpp"
+    try:
+        runtime_text = runtime_source.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"Cannot read {runtime_source}: {exc}")
+    else:
+        runtime_match = re.search(r'TOOLKIT_PLUGIN_VERSION\s*=\s*"([^"]+)"', runtime_text)
+        if not runtime_match or runtime_match.group(1) != version:
+            errors.append("Template runtime plugin version must match plugin/plugin.json")
+
     return errors
 
 
 def validate_adapters(root: Path, adapters: dict) -> list[str]:
     errors: list[str] = []
     if adapters.get("schema_version") != 1:
-        errors.append("product/adapters.json schema_version must be 1")
+        errors.append("adapter/adapters.json schema_version must be 1")
     entries = adapters.get("adapters")
     if not isinstance(entries, list) or not entries:
-        return errors + ["product/adapters.json must contain at least one adapter"]
+        return errors + ["adapter/adapters.json must contain at least one adapter"]
 
     ids: set[str] = set()
     branches: set[str] = set()
@@ -196,22 +213,46 @@ def validate_adapters(root: Path, adapters: dict) -> list[str]:
             errors.append(str(exc))
         if entry.get("status") not in {"experimental", "stable", "maintenance", "retired"}:
             errors.append(f"Adapter {adapter_id} has an invalid status")
-        workflow = str(entry.get("workflow", ""))
+        build = entry.get("build")
+        if build is None:
+            if entry.get("status") in {"stable", "maintenance"}:
+                errors.append(f"Adapter {adapter_id} must define a build contract")
+            continue
+        if not isinstance(build, dict):
+            errors.append(f"Adapter {adapter_id} build contract must be an object")
+            continue
+        workflow = str(build.get("workflow", ""))
         if Path(workflow).name != workflow or not (root / ".github/workflows" / workflow).is_file():
             errors.append(f"Adapter {adapter_id} workflow does not exist: {workflow!r}")
-        required_paths = entry.get("required_paths")
-        if not isinstance(required_paths, list) or not all(isinstance(item, str) and item for item in required_paths):
-            errors.append(f"Adapter {adapter_id} required_paths must be non-empty strings")
+        for field in (
+            "runner",
+            "manifest_path",
+            "godot_commit_field",
+            "godot_base_field",
+            "build_script",
+            "profile",
+        ):
+            if not isinstance(build.get(field), str) or not build[field]:
+                errors.append(f"Adapter {adapter_id} build.{field} must be a non-empty string")
+        if not isinstance(build.get("production"), bool):
+            errors.append(f"Adapter {adapter_id} build.production must be boolean")
+        if not isinstance(build.get("supports_ad"), bool):
+            errors.append(f"Adapter {adapter_id} build.supports_ad must be boolean")
+        required_paths = build.get("required_paths")
+        if not isinstance(required_paths, list) or not required_paths or not all(
+            isinstance(item, str) and item for item in required_paths
+        ):
+            errors.append(f"Adapter {adapter_id} build.required_paths must be non-empty strings")
     return errors
 
 
 def validate_templates(catalog: dict, adapters: dict) -> list[str]:
     errors: list[str] = []
     if catalog.get("schema_version") != 1:
-        errors.append("catalog/templates.json schema_version must be 1")
+        errors.append("plugin/catalog/templates.json schema_version must be 1")
     entries = catalog.get("templates")
     if not isinstance(entries, list) or not entries:
-        return errors + ["catalog/templates.json must contain templates"]
+        return errors + ["plugin/catalog/templates.json must contain templates"]
 
     seen: set[tuple[str, str]] = set()
     registered_sources = {
@@ -239,6 +280,12 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
         filename = str(entry.get("file", ""))
         if not filename.endswith(".tpz") or Path(filename).name != filename:
             errors.append(f"Template {major}/{version} file must be a .tpz basename")
+        download_url = str(entry.get("download_url", ""))
+        parsed_download_url = urlparse(download_url)
+        if parsed_download_url.scheme not in {"http", "https"} or not parsed_download_url.netloc:
+            errors.append(f"Template {major}/{version} must have an HTTP(S) download_url")
+        elif Path(parsed_download_url.path).name != filename:
+            errors.append(f"Template {major}/{version} download_url must target {filename}")
         status = entry.get("status")
         if status not in {"legacy", "prerelease", "stable", "retired"}:
             errors.append(f"Template {major}/{version} has an invalid status")
@@ -259,10 +306,10 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
 
 
 def validate_repository(root: Path) -> None:
-    plugin = load_json(root / "product/plugin.json")
-    adapters = load_json(root / "product/adapters.json")
-    update_catalog = load_json(root / "catalog/plugin-stable.json")
-    template_catalog = load_json(root / "catalog/templates.json")
+    plugin = load_json(root / "plugin/plugin.json")
+    adapters = load_json(root / "adapter/adapters.json")
+    update_catalog = load_json(root / "plugin/catalog/plugin-stable.json")
+    template_catalog = load_json(root / "plugin/catalog/templates.json")
 
     errors = []
     errors.extend(validate_plugin(root, plugin, update_catalog))
@@ -270,14 +317,14 @@ def validate_repository(root: Path) -> None:
     errors.extend(validate_templates(template_catalog, adapters))
 
     expected_versions = render_versions(template_catalog)
-    versions_path = root / "resources/versions.yaml"
+    versions_path = root / "plugin/resources/versions.yaml"
     try:
         current_versions = versions_path.read_text(encoding="utf-8")
     except OSError as exc:
         errors.append(f"Cannot read {versions_path}: {exc}")
     else:
         if current_versions.replace("\r\n", "\n") != expected_versions:
-            errors.append("resources/versions.yaml is stale; run render-versions")
+            errors.append("plugin/resources/versions.yaml is stale; run render-versions")
 
     if errors:
         raise ProductError("Product validation failed:\n- " + "\n- ".join(errors))
@@ -321,6 +368,11 @@ def command_promote_template(args: argparse.Namespace) -> None:
         raise ProductError("Template promotion requires a full lowercase source commit")
     if Path(args.file).name != args.file or not args.file.endswith(".tpz"):
         raise ProductError("Template asset must be a .tpz basename")
+    parsed_download_url = urlparse(args.download_url)
+    if parsed_download_url.scheme not in {"http", "https"} or not parsed_download_url.netloc:
+        raise ProductError("Template download URL must use HTTP(S)")
+    if Path(parsed_download_url.path).name != args.file:
+        raise ProductError("Template download URL must target the promoted TPZ asset")
 
     catalog = load_json(args.catalog)
     entries = catalog.get("templates")
@@ -333,6 +385,7 @@ def command_promote_template(args: argparse.Namespace) -> None:
         "godot_version": args.godot_version,
         "tag": args.tag,
         "file": args.file,
+        "download_url": args.download_url,
         "sha256": args.sha256.lower(),
         "minimum_plugin": args.minimum_plugin,
         "source_branch": args.source_branch,
@@ -375,8 +428,29 @@ def iter_addon_files(addon_path: Path):
         yield path, relative
 
 
+NATIVE_SUFFIXES = {".dll", ".so", ".dylib"}
+UPDATE_WAITER_PREFIX = "godot-minigame-update-waiter."
+
+
+def versioned_native_relative(relative: Path, version: str) -> Path:
+    """Return the release-package path for a native library."""
+    if relative.suffix.lower() not in NATIVE_SUFFIXES:
+        raise ProductError(f"Unsupported native library: {relative}")
+    return relative.with_name(f"{relative.stem}.{version}{relative.suffix}")
+
+
+def rewrite_release_gdextension(descriptor: Path, native_renames: dict[str, str]) -> None:
+    content = descriptor.read_text(encoding="utf-8")
+    for original_name, versioned_name in native_renames.items():
+        occurrences = content.count(original_name)
+        if occurrences == 0:
+            raise ProductError(f"GDExtension descriptor does not reference {original_name}")
+        content = content.replace(original_name, versioned_name)
+    descriptor.write_text(content, encoding="utf-8", newline="\n")
+
+
 def command_package_plugin(args: argparse.Namespace) -> None:
-    plugin = load_json(args.root / "product/plugin.json")
+    plugin = load_json(args.root / "plugin/plugin.json")
     validate_repository(args.root)
     version = plugin["version"]
     addon_path = args.root / plugin["addon_path"]
@@ -385,18 +459,37 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         raise ProductError(f"No plugin files found under {addon_path}")
 
     native_path = args.native_dir.resolve()
+    descriptor_text = (addon_path / "godot-minigame.gdextension").read_text(encoding="utf-8")
     native_files = [
         (path, relative)
         for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
-        if path.suffix.lower() in {".dll", ".so", ".dylib"}
+        if path.suffix.lower() in NATIVE_SUFFIXES and relative.name in descriptor_text
+    ]
+    waiter_files = [
+        (path, relative)
+        for path, relative in (iter_addon_files(native_path) if native_path.is_dir() else [])
+        if relative.name.startswith(UPDATE_WAITER_PREFIX)
     ]
     if args.require_binaries and not native_files:
         raise ProductError(f"Plugin package requires native binaries under {native_path}")
+    if args.require_binaries:
+        present_platforms = {relative.parts[0] for _, relative in native_files if relative.parts}
+        missing_platforms = {"windows", "linux", "macos"} - present_platforms
+        if missing_platforms:
+            raise ProductError(
+                "Plugin package is missing native binaries for: " + ", ".join(sorted(missing_platforms))
+            )
+        waiter_platforms = {relative.parts[0] for _, relative in waiter_files if relative.parts}
+        missing_waiters = present_platforms - waiter_platforms
+        if missing_waiters:
+            raise ProductError(
+                "Plugin package is missing update waiters for: " + ", ".join(sorted(missing_waiters))
+            )
 
     bundled_templates: list[tuple[Path, Path]] = []
     seen_template_names: set[str] = set()
     addon_archive_paths = {relative.as_posix() for _, relative in source_files}
-    template_catalog = load_json(args.root / "catalog/templates.json")
+    template_catalog = load_json(args.root / "plugin/catalog/templates.json")
     catalog_template_names = {
         str(entry.get("file", ""))
         for entry in template_catalog.get("templates", [])
@@ -407,7 +500,9 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         if not template_path.is_file() or template_path.suffix.lower() != ".tpz":
             raise ProductError(f"Bundled template must be an existing .tpz file: {template}")
         if template_path.name not in catalog_template_names:
-            raise ProductError(f"Bundled template is not registered in catalog/templates.json: {template_path.name}")
+            raise ProductError(
+                f"Bundled template is not registered in plugin/catalog/templates.json: {template_path.name}"
+            )
         if template_path.name in seen_template_names:
             raise ProductError(f"Bundled template filename is duplicated: {template_path.name}")
         bundled_relative = Path("resources/templates") / template_path.name
@@ -422,13 +517,24 @@ def command_package_plugin(args: argparse.Namespace) -> None:
         shutil.rmtree(staging_addon.parent)
     staging_addon.mkdir(parents=True)
     for source, relative in source_files:
+        if relative.parts and relative.parts[0] == "bin" and source.suffix.lower() in NATIVE_SUFFIXES:
+            continue
         target = staging_addon / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    native_renames: dict[str, str] = {}
     for source, relative in native_files:
+        release_relative = versioned_native_relative(relative, version)
+        target = staging_addon / "bin" / release_relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        native_renames[relative.name] = release_relative.name
+    for source, relative in waiter_files:
         target = staging_addon / "bin" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    if native_renames:
+        rewrite_release_gdextension(staging_addon / "godot-minigame.gdextension", native_renames)
     for source, relative in bundled_templates:
         target = staging_addon / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -441,7 +547,8 @@ def command_package_plugin(args: argparse.Namespace) -> None:
             archive_name = Path("addons/godot-minigame") / relative
             info = zipfile.ZipInfo(archive_name.as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
+            mode = 0o100755 if relative.name.startswith(UPDATE_WAITER_PREFIX) else 0o100644
+            info.external_attr = mode << 16
             output.writestr(info, source.read_bytes())
 
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -459,19 +566,20 @@ def build_parser() -> argparse.ArgumentParser:
     validate = subparsers.add_parser("validate", help="validate all product contracts")
     validate.set_defaults(func=command_validate)
 
-    render = subparsers.add_parser("render-versions", help="render resources/versions.yaml from the catalog")
-    render.add_argument("--catalog", type=Path, default=ROOT / "catalog/templates.json")
-    render.add_argument("--output", type=Path, default=ROOT / "resources/versions.yaml")
+    render = subparsers.add_parser("render-versions", help="render plugin/resources/versions.yaml from the catalog")
+    render.add_argument("--catalog", type=Path, default=ROOT / "plugin/catalog/templates.json")
+    render.add_argument("--output", type=Path, default=ROOT / "plugin/resources/versions.yaml")
     render.add_argument("--check", action="store_true")
     render.set_defaults(func=command_render_versions)
 
     promote = subparsers.add_parser("promote-template", help="promote a verified template into the product catalog")
-    promote.add_argument("--catalog", type=Path, default=ROOT / "catalog/templates.json")
-    promote.add_argument("--versions", type=Path, default=ROOT / "resources/versions.yaml")
+    promote.add_argument("--catalog", type=Path, default=ROOT / "plugin/catalog/templates.json")
+    promote.add_argument("--versions", type=Path, default=ROOT / "plugin/resources/versions.yaml")
     promote.add_argument("--godot-major", required=True)
     promote.add_argument("--godot-version", required=True)
     promote.add_argument("--tag", required=True)
     promote.add_argument("--file", required=True)
+    promote.add_argument("--download-url", required=True)
     promote.add_argument("--sha256", required=True)
     promote.add_argument("--minimum-plugin", required=True)
     promote.add_argument("--source-branch", required=True)

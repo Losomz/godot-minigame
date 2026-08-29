@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {
+      "godot_major": "godot4",
+      "godot_version": "4.5.2",
+      "tag": "4.5.2-glx-2d-r1",
+      "file": "minigame4.5.2-glx-2d-r1.tpz",
+      "download_url": "https://github.com/Losomz/godot-minigame/releases/download/4.5.2-glx-2d-r1/minigame4.5.2-glx-2d-r1.tpz",
+      "sha256": "15aceaed52d3256605186a1c0a53a804bd1be8eb5e81c9859fc527806ee54620",
+      "minimum_plugin": "1.0.4",
+      "source_branch": "4.5",
+      "source_commit": "20d2731f3efc0b9afd7d3df32dc477997fd1a3e2",
+      "status": "stable"
+    }
+  ]
+}

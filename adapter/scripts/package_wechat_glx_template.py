@@ -13,12 +13,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GODOT_DIR = REPO_ROOT / "godot"
+GODOT_DIR = REPO_ROOT / "adapter" / "thirdparty" / "godot"
 BUILD_DIR = GODOT_DIR / "bin" / ".web_zip"
 DEFAULT_TEMPLATE = "4.5.2"
-TEMPLATES_MANIFEST_PATH = REPO_ROOT / "templates" / "manifest.json"
+TEMPLATES_MANIFEST_PATH = REPO_ROOT / "adapter" / "templates" / "manifest.json"
 TEMPLATES_MANIFEST = json.loads(TEMPLATES_MANIFEST_PATH.read_text(encoding="utf-8"))
-DEFAULT_PROFILE_PATH = REPO_ROOT / "templates" / "configs" / "wechat_2d.py"
+DEFAULT_PROFILE_PATH = REPO_ROOT / "adapter" / "configs" / "wechat_2d.py"
 DIST_DIR = REPO_ROOT / "dist"
 RUNTIME_DIR = REPO_ROOT / "adapter" / "assets" / "min-runtime"
 AD_DIR = REPO_ROOT / "adapter" / "wechat_ad"
@@ -41,7 +41,7 @@ VARIANT_DEFAULT = VARIANT_GLX
 
 
 def resolve_template_dir(template: str) -> Path:
-    """Resolve a template id to its base directory via templates/manifest.json."""
+    """Resolve a template id via adapter/templates/manifest.json."""
     entry = TEMPLATES_MANIFEST.get(template)
     if not entry:
         raise RuntimeError(
@@ -73,7 +73,7 @@ def base_arguments(variant: str) -> list[str]:
 def profile_variant(profile_path: Path) -> str:
     """Derive the artifact variant tag from a profile file name.
 
-    templates/configs/wechat_2d.py -> 2d
+    adapter/configs/wechat_2d.py -> 2d
     """
     return profile_path.stem.removeprefix("wechat_").replace("_", "-")
 
@@ -240,7 +240,7 @@ def verify_source() -> str:
 
     status = run(["git", "status", "--porcelain", "--untracked-files=all"], GODOT_DIR)
     if status:
-        raise RuntimeError("godot/ must be clean and committed before building")
+        raise RuntimeError("adapter/thirdparty/godot must be clean and committed before building")
 
     godot_commit = run(["git", "rev-parse", "HEAD"], GODOT_DIR)
     if godot_commit != expected_ref:
@@ -266,7 +266,9 @@ def verify_source() -> str:
             result.stderr.decode("utf-8", errors="replace").strip()
             or result.stdout.decode("utf-8", errors="replace").strip()
         )
-        raise RuntimeError(f"GLX patch is not applied in godot/ (reverse check):\n{detail}")
+        raise RuntimeError(
+            f"GLX patch is not applied in adapter/thirdparty/godot (reverse check):\n{detail}"
+        )
 
     synchronized_files = (
         (
@@ -666,7 +668,7 @@ def package_template(
             *glx_exceptions_arguments(exceptions),
             f"profile={profile_path.relative_to(REPO_ROOT).as_posix()}",
         ],
-        "verified_against": "godot/.scons_env.json",
+        "verified_against": "adapter/thirdparty/godot/.scons_env.json",
         "settings": profile_settings,
     }
     effective_profile_bytes = (
@@ -775,7 +777,7 @@ def parse_args() -> argparse.Namespace:
         "--template",
         default=DEFAULT_TEMPLATE,
         help=(
-            "Template base id from templates/manifest.json (default: 4.5.2). "
+            "Template base id from adapter/templates/manifest.json (default: 4.5.2). "
             "The base directory provides the template format files."
         ),
     )
@@ -798,9 +800,9 @@ def parse_args() -> argparse.Namespace:
         default=str(DEFAULT_PROFILE_PATH),
         help=(
             "Trim profile (cut list) to build with. Short names resolve to "
-            "templates/configs/<name>.py (e.g. '2d' -> templates/configs/"
+            "adapter/configs/<name>.py (e.g. '2d' -> adapter/configs/"
             "wechat_2d.py); absolute or relative paths are accepted as-is "
-            "(default: templates/configs/wechat_2d.py)."
+            "(default: adapter/configs/wechat_2d.py)."
         ),
     )
     parser.add_argument(
@@ -827,13 +829,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_profile(profile: str) -> Path:
-    """Resolve --profile: short name -> templates/configs/<name>.py, else path."""
+    """Resolve --profile: short name -> adapter/configs/<name>.py, else path."""
     candidate = Path(profile)
     if not candidate.exists() and "/" not in profile and "\\" not in profile and "." not in profile:
-        resolved = REPO_ROOT / "templates" / "configs" / f"wechat_{profile}.py"
+        resolved = REPO_ROOT / "adapter" / "configs" / f"wechat_{profile}.py"
         if resolved.is_file():
             return resolved
-        resolved = REPO_ROOT / "templates" / "configs" / f"{profile}.py"
+        resolved = REPO_ROOT / "adapter" / "configs" / f"{profile}.py"
         if resolved.is_file():
             return resolved
         raise RuntimeError(

@@ -25,15 +25,22 @@ static var _active_instance: WechatAd = null
 @export var custom_ad_unit_id: String = ""
 
 # 原生模板广告使用微信屏幕坐标，不是 Godot 场景节点坐标。
+# position 为 top/bottom/left/right 时由桥按窗口自动居中，absolute 时才使用 left/top。
 @export_group("原生模板样式")
+@export_enum("top", "bottom", "left", "right", "absolute") var custom_position: String = "top"
+@export var custom_width: float = 350.0
+@export var custom_estimated_height: float = 120.0
+@export var custom_offset_x: float = 0.0
+@export var custom_offset_y: float = 0.0
 @export var custom_left: float = 0.0
 @export var custom_top: float = 0.0
-@export var custom_width: float = 350.0
 # ===== 微信广告配置结束 =====
 
 var _godot_sdk: Object = null
 # JavaScriptBridge 回调必须由成员变量持有，否则可能被回收并停止接收微信事件。
 var _event_callback: Object = null
+# 激励视频是否还在等待终态事件；v2 桥的 close/cancel/失败都可能成为终态，防止重复发信号。
+var _rewarded_pending := false
 
 
 func _enter_tree() -> void:
@@ -52,6 +59,7 @@ func _exit_tree() -> void:
 	if _has_bridge_method("dsWxAdSetEventCallback"):
 		_godot_sdk.dsWxAdSetEventCallback(null)
 	_event_callback = null
+	_rewarded_pending = false
 	_godot_sdk = null
 	_active_instance = null
 
@@ -92,6 +100,7 @@ func is_available() -> bool:
 func show_rewarded() -> bool:
 	if not _can_show("rewarded", "dsWxAdShowRewarded", rewarded_ad_unit_id):
 		return false
+	_rewarded_pending = true
 	return bool(_godot_sdk.dsWxAdShowRewarded(rewarded_ad_unit_id.strip_edges()))
 
 
@@ -104,25 +113,31 @@ func show_interstitial() -> bool:
 
 
 ## 请求展示原生模板广告。
-## left、top、width 会直接传给微信广告组件，修改 Inspector 配置后无需改 JS 桥。
+## position 为 top/bottom/left/right 时桥按窗口自动居中，absolute 时使用 left/top，
+## 全部位置都会再叠加 offset；修改 Inspector 配置后无需改 JS 桥。
 func show_custom() -> bool:
 	if not _can_show("custom", "dsWxAdShowCustom", custom_ad_unit_id):
 		return false
 	return bool(_godot_sdk.dsWxAdShowCustom(
 		custom_ad_unit_id.strip_edges(),
+		custom_position,
+		maxf(1.0, custom_width),
+		maxf(1.0, custom_estimated_height),
+		custom_offset_x,
+		custom_offset_y,
 		custom_left,
-		custom_top,
-		maxf(1.0, custom_width)
+		custom_top
 	))
 
 
-## 隐藏当前原生模板广告。激励视频和插屏由微信界面负责关闭，因此不提供隐藏方法。
+## 隐藏原生模板广告；广告位留空时隐藏全部原生模板。
+## 激励视频和插屏由微信界面负责关闭，因此不提供隐藏方法。
 func hide_custom() -> bool:
 	if not is_available() and not initialize():
 		return _fail("custom", "微信广告桥不可用，请确认导出入口已加载 wx-ad-bridge.js")
 	if not _has_bridge_method("dsWxAdHideCustom"):
 		return _fail("custom", "广告桥缺少 dsWxAdHideCustom 方法")
-	return bool(_godot_sdk.dsWxAdHideCustom())
+	return bool(_godot_sdk.dsWxAdHideCustom(custom_ad_unit_id.strip_edges()))
 
 
 # JS 桥统一传入 JSON 字符串，避免普通 JavaScript 对象跨桥时丢失字段。
@@ -138,15 +153,29 @@ func _on_javascript_event(args: Array) -> void:
 	match [ad_type, event_name]:
 		["rewarded", "close"]:
 			# isEnded=true 才表示完整观看，业务奖励只能在这个条件下发放。
-			rewarded_closed.emit(bool(event_data.get("isEnded", false)))
+			_finish_rewarded(bool(event_data.get("isEnded", false)))
+		["rewarded", "cancel"]:
+			# v2 桥的取消请求事件，等同于未完成观看。
+			_finish_rewarded(false)
 		["interstitial", "close"]:
 			interstitial_closed.emit()
 		["custom", "load"]:
 			custom_loaded.emit()
 
+	# v2 桥把创建/展示失败也作为激励终态上报，避免业务一直等待。
+	if ad_type == "rewarded" and not bool(event_data.get("ok", true)):
+		_finish_rewarded(false)
+
 	if not bool(event_data.get("ok", true)):
 		var message: String = str(event_data.get("errMsg", "未知广告错误"))
 		ad_error.emit(ad_type, message)
+
+
+func _finish_rewarded(completed: bool) -> void:
+	if not _rewarded_pending:
+		return
+	_rewarded_pending = false
+	rewarded_closed.emit(completed)
 
 
 func _parse_event(args: Array) -> Dictionary:
