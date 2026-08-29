@@ -24,14 +24,36 @@
             || null;
     }
 
+    function getWindowInfo() {
+        const wxApi = getWxApi();
+        if (!wxApi) {
+            return {};
+        }
+        try {
+            if (typeof wxApi.getWindowInfo === 'function') {
+                return wxApi.getWindowInfo() || {};
+            }
+            if (typeof wxApi.getSystemInfoSync === 'function') {
+                return wxApi.getSystemInfoSync() || {};
+            }
+        } catch (_err) {
+            return {};
+        }
+        return {};
+    }
+
     function getSdkVersion() {
+        const info = getWindowInfo();
+        if (info.SDKVersion) {
+            return String(info.SDKVersion);
+        }
         const wxApi = getWxApi();
         if (!wxApi || typeof wxApi.getSystemInfoSync !== 'function') {
             return '';
         }
         try {
-            const info = wxApi.getSystemInfoSync();
-            return info && info.SDKVersion ? String(info.SDKVersion) : '';
+            const systemInfo = wxApi.getSystemInfoSync() || {};
+            return systemInfo.SDKVersion ? String(systemInfo.SDKVersion) : '';
         } catch (_err) {
             return '';
         }
@@ -97,7 +119,6 @@
             eventCallback(payload);
             return;
         }
-
         const roots = getRoots();
         for (let i = 0; i < roots.length; i += 1) {
             const callback = roots[i] && roots[i][EVENT_CALLBACK_NAME];
@@ -140,6 +161,9 @@
     function attachGodotSdkApi(bridgeApi) {
         const hosts = getGodotSdkHosts();
         for (const sdk of hosts) {
+            sdk.dsWxAdGetBridgeVersion = function () {
+                return 2;
+            };
             sdk.dsWxAdSetEventCallback = function (callback) {
                 eventCallback = callback;
                 report('bridge', 'callback', typeof callback === 'function', {
@@ -147,24 +171,56 @@
                 });
                 return typeof callback === 'function';
             };
+            sdk.dsWxAdClearEventCallback = function () {
+                eventCallback = null;
+                return true;
+            };
             sdk.dsWxAdDebugState = function () {
                 bridgeApi.debugState();
                 return true;
             };
-            sdk.dsWxAdShowRewarded = function (adUnitId) {
-                bridgeApi.showRewarded(String(adUnitId || ''));
+            sdk.dsWxAdShowRewarded = function (adUnitId, requestId) {
+                bridgeApi.showRewarded(
+                    String(adUnitId || ''),
+                    String(requestId || '')
+                );
+                return true;
+            };
+            sdk.dsWxAdCancelRewarded = function (requestId) {
+                bridgeApi.cancelRewarded(String(requestId || ''));
                 return true;
             };
             sdk.dsWxAdShowInterstitial = function (adUnitId) {
                 bridgeApi.showInterstitial(String(adUnitId || ''));
                 return true;
             };
-            sdk.dsWxAdShowCustom = function (adUnitId, left, top, width) {
-                bridgeApi.showCustom(String(adUnitId || ''), Number(left) || 0, Number(top) || 0, Number(width) || 350);
+            sdk.dsWxAdShowCustom = function (
+                adUnitId,
+                position,
+                width,
+                estimatedHeight,
+                offsetX,
+                offsetY,
+                left,
+                top
+            ) {
+                bridgeApi.showCustom(String(adUnitId || ''), {
+                    position: String(position || 'top'),
+                    width: Number(width) || 350,
+                    estimatedHeight: Number(estimatedHeight) || 120,
+                    offsetX: Number(offsetX) || 0,
+                    offsetY: Number(offsetY) || 0,
+                    left: Number(left) || 0,
+                    top: Number(top) || 0
+                });
                 return true;
             };
-            sdk.dsWxAdHideCustom = function () {
-                bridgeApi.hideCustom();
+            sdk.dsWxAdHideCustom = function (adUnitId) {
+                bridgeApi.hideCustom(String(adUnitId || ''));
+                return true;
+            };
+            sdk.dsWxAdDestroyAll = function () {
+                bridgeApi.destroyAll();
                 return true;
             };
         }
@@ -176,7 +232,7 @@
 
     function logEvent(event) {
         const parts = [
-            '[WxAdBridge]',
+            '[SumeruWxAdBridge]',
             `type=${event.type}`,
             `stage=${event.stage}`,
             `ok=${event.ok}`,
@@ -184,10 +240,7 @@
             `hasWx=${event.hasWx}`,
             `hasApi=${event.hasApi}`
         ];
-        if (event.adUnitId) {
-            parts.push(`adUnitId=${event.adUnitId}`);
-        }
-        ['rewardedApi', 'interstitialApi', 'customApi', 'rewardedReady', 'interstitialReady', 'customReady'].forEach((key) => {
+        ['adUnitId', 'requestId', 'windowWidth', 'windowHeight', 'pixelRatio', 'style'].forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(event, key)) {
                 parts.push(`${key}=${event[key]}`);
             }
@@ -213,13 +266,13 @@
         return event;
     }
 
-    function getAdApi(type) {
+    function getAdApi(type, eventExtra) {
         const wxApi = getWxApi();
         const apiName = getApiName(type);
         if (!wxApi || !apiName || typeof wxApi[apiName] !== 'function') {
-            report(type, 'api-missing', false, {
+            report(type, 'api-missing', false, Object.assign({
                 errMsg: `${apiName || 'ad api'} not available`
-            });
+            }, eventExtra || {}));
             return null;
         }
         return wxApi[apiName].bind(wxApi);
@@ -249,66 +302,112 @@
         }
     }
 
-    function showWithLoadFallback(ad, type, adUnitId) {
+    function showWithLoadFallback(ad, type, adUnitId, extra) {
+        const eventExtra = Object.assign({ adUnitId }, extra || {});
         if (!ad || typeof ad.show !== 'function') {
-            report(type, 'show', false, {
-                adUnitId,
+            report(type, 'show', false, Object.assign({
                 errMsg: `${type} ad instance not available`
-            });
+            }, eventExtra));
             return;
         }
-
-        report(type, 'show-request', true, { adUnitId });
+        report(type, 'show-request', true, eventExtra);
         Promise.resolve()
             .then(() => ad.show())
             .then(() => {
-                report(type, 'show', true, { adUnitId });
+                report(type, 'show', true, eventExtra);
             })
             .catch((showError) => {
                 report(type, 'show-fallback', true, Object.assign({
-                    adUnitId,
                     fallback: 'load-then-show'
-                }, normalizeError(showError)));
+                }, eventExtra, normalizeError(showError)));
                 if (typeof ad.load !== 'function') {
                     throw showError;
                 }
-                report(type, 'load-request', true, { adUnitId });
+                report(type, 'load-request', true, eventExtra);
                 return ad.load()
                     .then(() => {
-                        report(type, 'load', true, { adUnitId });
+                        report(type, 'load', true, eventExtra);
                         return ad.show();
                     })
                     .then(() => {
-                        report(type, 'show-after-load', true, { adUnitId });
+                        report(type, 'show-after-load', true, eventExtra);
                     });
             })
             .catch((err) => {
-                report(type, 'error', false, Object.assign({ adUnitId }, normalizeError(err)));
+                report(type, 'error', false, Object.assign({}, eventExtra, normalizeError(err)));
             });
+    }
+
+    function clamp(value, minimum, maximum) {
+        return Math.min(Math.max(value, minimum), maximum);
+    }
+
+    function calculateCustomStyle(rawPlacement) {
+        const info = getWindowInfo();
+        const windowWidth = Math.max(0, Number(info.windowWidth) || 0);
+        const windowHeight = Math.max(0, Number(info.windowHeight) || 0);
+        const requestedWidth = Math.max(1, Number(rawPlacement.width) || 350);
+        const width = windowWidth > 0 ? Math.min(requestedWidth, windowWidth) : requestedWidth;
+        const estimatedHeight = Math.max(1, Number(rawPlacement.estimatedHeight) || 120);
+        const offsetX = Number(rawPlacement.offsetX) || 0;
+        const offsetY = Number(rawPlacement.offsetY) || 0;
+        const maxLeft = Math.max(0, windowWidth - width);
+        const maxTop = Math.max(0, windowHeight - estimatedHeight);
+        let left = 0;
+        let top = 0;
+
+        switch (String(rawPlacement.position || 'top').toLowerCase()) {
+            case 'bottom':
+                left = maxLeft / 2;
+                top = maxTop;
+                break;
+            case 'left':
+                left = 0;
+                top = maxTop / 2;
+                break;
+            case 'right':
+                left = maxLeft;
+                top = maxTop / 2;
+                break;
+            case 'absolute':
+                left = Number(rawPlacement.left) || 0;
+                top = Number(rawPlacement.top) || 0;
+                break;
+            case 'top':
+            default:
+                left = maxLeft / 2;
+                top = 0;
+                break;
+        }
+
+        left = clamp(left + offsetX, 0, maxLeft);
+        top = clamp(top + offsetY, 0, maxTop);
+        return {
+            style: { left, top, width },
+            windowWidth,
+            windowHeight,
+            pixelRatio: Number(info.pixelRatio) || 1
+        };
     }
 
     const bridge = {
         rewarded: null,
         rewardedId: '',
+        rewardedRequestId: '',
         interstitial: null,
         interstitialId: '',
-        custom: null,
-        customId: '',
-        customStyleKey: '',
+        customAds: {},
 
-        createRewarded(adUnitId) {
-            const createAd = getAdApi('rewarded');
+        createRewarded(adUnitId, requestId) {
+            const eventExtra = { adUnitId, requestId };
+            const createAd = getAdApi('rewarded', eventExtra);
             if (!createAd) {
                 return null;
             }
-            if (this.rewarded && this.rewardedId === adUnitId) {
-                report('rewarded', 'reuse', true, { adUnitId });
-                return this.rewarded;
-            }
 
-            destroyAd(this.rewarded, 'rewarded', this.rewardedId);
-            this.rewarded = null;
+            this.cancelRewarded(this.rewardedRequestId);
             this.rewardedId = adUnitId;
+            this.rewardedRequestId = requestId;
             try {
                 const ad = createAd({ adUnitId });
                 this.rewarded = ad;
@@ -316,30 +415,61 @@
                     ad.onClose((result) => {
                         report('rewarded', 'close', true, {
                             adUnitId,
+                            requestId,
                             isEnded: !!(result && result.isEnded)
                         });
                     });
                 }
                 if (ad && typeof ad.onError === 'function') {
                     ad.onError((err) => {
-                        report('rewarded', 'error', false, Object.assign({ adUnitId }, normalizeError(err)));
+                        report('rewarded', 'error', false, Object.assign(
+                            { adUnitId, requestId },
+                            normalizeError(err)
+                        ));
                     });
                 }
                 report('rewarded', 'create', !!ad, {
                     adUnitId,
+                    requestId,
                     errMsg: ad ? '' : 'wx.createRewardedVideoAd returned empty instance'
                 });
                 return ad;
             } catch (err) {
                 this.rewarded = null;
-                report('rewarded', 'create', false, Object.assign({ adUnitId }, normalizeError(err)));
+                this.rewardedId = '';
+                this.rewardedRequestId = '';
+                report('rewarded', 'create', false, Object.assign(
+                    { adUnitId, requestId },
+                    normalizeError(err)
+                ));
                 return null;
             }
         },
 
-        showRewarded(adUnitId) {
-            const ad = this.createRewarded(adUnitId);
-            showWithLoadFallback(ad, 'rewarded', adUnitId);
+        showRewarded(adUnitId, requestId) {
+            showWithLoadFallback(
+                this.createRewarded(adUnitId, requestId),
+                'rewarded',
+                adUnitId,
+                { requestId }
+            );
+        },
+
+        cancelRewarded(requestId) {
+            if (!this.rewarded || (requestId && requestId !== this.rewardedRequestId)) {
+                return;
+            }
+            const ad = this.rewarded;
+            const adUnitId = this.rewardedId;
+            const activeRequestId = this.rewardedRequestId;
+            this.rewarded = null;
+            this.rewardedId = '';
+            this.rewardedRequestId = '';
+            report('rewarded', 'cancel', true, {
+                adUnitId,
+                requestId: activeRequestId
+            });
+            destroyAd(ad, 'rewarded', adUnitId);
         },
 
         createInterstitial(adUnitId) {
@@ -351,7 +481,6 @@
                 report('interstitial', 'reuse', true, { adUnitId });
                 return this.interstitial;
             }
-
             destroyAd(this.interstitial, 'interstitial', this.interstitialId);
             this.interstitial = null;
             this.interstitialId = adUnitId;
@@ -359,9 +488,7 @@
                 const ad = createAd({ adUnitId });
                 this.interstitial = ad;
                 if (ad && typeof ad.onClose === 'function') {
-                    ad.onClose(() => {
-                        report('interstitial', 'close', true, { adUnitId });
-                    });
+                    ad.onClose(() => report('interstitial', 'close', true, { adUnitId }));
                 }
                 if (ad && typeof ad.onError === 'function') {
                     ad.onError((err) => {
@@ -381,87 +508,112 @@
         },
 
         showInterstitial(adUnitId) {
-            const ad = this.createInterstitial(adUnitId);
-            showWithLoadFallback(ad, 'interstitial', adUnitId);
+            showWithLoadFallback(this.createInterstitial(adUnitId), 'interstitial', adUnitId);
         },
 
-        createCustom(adUnitId, left, top, width) {
+        createCustom(adUnitId, placement) {
             const createAd = getAdApi('custom');
             if (!createAd) {
                 return null;
             }
-
-            const style = {
-                left: Number(left) || 0,
-                top: Number(top) || 0,
-                width: Math.max(1, Number(width) || 350)
-            };
-            const styleKey = JSON.stringify(style);
-            if (this.custom && this.customId === adUnitId && this.customStyleKey === styleKey) {
-                report('custom', 'reuse', true, { adUnitId });
-                return this.custom;
+            const calculated = calculateCustomStyle(placement);
+            const styleKey = JSON.stringify(calculated.style);
+            const existing = this.customAds[adUnitId];
+            if (existing && existing.ad && existing.styleKey === styleKey) {
+                report('custom', 'reuse', true, { adUnitId, style: styleKey });
+                return existing.ad;
             }
-
-            hideAd(this.custom, 'custom', this.customId);
-            destroyAd(this.custom, 'custom', this.customId);
-            this.custom = null;
-            this.customId = adUnitId;
-            this.customStyleKey = styleKey;
+            if (existing) {
+                hideAd(existing.ad, 'custom', adUnitId);
+                destroyAd(existing.ad, 'custom', adUnitId);
+                delete this.customAds[adUnitId];
+            }
             try {
-                const ad = createAd({ adUnitId, style });
-                this.custom = ad;
+                const ad = createAd({
+                    adUnitId,
+                    adIntervals: 30,
+                    style: calculated.style
+                });
+                this.customAds[adUnitId] = { ad, styleKey };
                 if (ad && typeof ad.onLoad === 'function') {
-                    ad.onLoad(() => {
-                        report('custom', 'load', true, { adUnitId });
-                    });
+                    ad.onLoad(() => report('custom', 'load', true, { adUnitId }));
                 }
                 if (ad && typeof ad.onError === 'function') {
                     ad.onError((err) => {
-                        hideAd(this.custom, 'custom', adUnitId);
-                        destroyAd(this.custom, 'custom', adUnitId);
-                        this.custom = null;
-                        this.customStyleKey = '';
+                        const current = this.customAds[adUnitId];
+                        if (current && current.ad === ad) {
+                            hideAd(ad, 'custom', adUnitId);
+                            destroyAd(ad, 'custom', adUnitId);
+                            delete this.customAds[adUnitId];
+                        }
                         report('custom', 'error', false, Object.assign({ adUnitId }, normalizeError(err)));
                     });
                 }
                 report('custom', 'create', !!ad, {
                     adUnitId,
                     style: styleKey,
+                    windowWidth: calculated.windowWidth,
+                    windowHeight: calculated.windowHeight,
+                    pixelRatio: calculated.pixelRatio,
                     errMsg: ad ? '' : 'wx.createCustomAd returned empty instance'
                 });
                 return ad;
             } catch (err) {
-                this.custom = null;
-                this.customStyleKey = '';
+                delete this.customAds[adUnitId];
                 report('custom', 'create', false, Object.assign({ adUnitId }, normalizeError(err)));
                 return null;
             }
         },
 
-        showCustom(adUnitId, left, top, width) {
-            const ad = this.createCustom(adUnitId, left, top, width);
-            showWithLoadFallback(ad, 'custom', adUnitId);
+        showCustom(adUnitId, placement) {
+            showWithLoadFallback(this.createCustom(adUnitId, placement), 'custom', adUnitId);
         },
 
-        hideCustom() {
-            hideAd(this.custom, 'custom', this.customId);
+        hideCustom(adUnitId) {
+            if (adUnitId) {
+                const entry = this.customAds[adUnitId];
+                if (entry) {
+                    hideAd(entry.ad, 'custom', adUnitId);
+                }
+                return;
+            }
+            Object.keys(this.customAds).forEach((id) => hideAd(this.customAds[id].ad, 'custom', id));
         },
 
-        destroyCustom() {
-            hideAd(this.custom, 'custom', this.customId);
-            destroyAd(this.custom, 'custom', this.customId);
-            this.custom = null;
-            this.customStyleKey = '';
+        destroyCustom(adUnitId) {
+            const ids = adUnitId ? [adUnitId] : Object.keys(this.customAds);
+            ids.forEach((id) => {
+                const entry = this.customAds[id];
+                if (!entry) {
+                    return;
+                }
+                hideAd(entry.ad, 'custom', id);
+                destroyAd(entry.ad, 'custom', id);
+                delete this.customAds[id];
+            });
+        },
+
+        destroyAll() {
+            this.cancelRewarded(this.rewardedRequestId);
+            destroyAd(this.interstitial, 'interstitial', this.interstitialId);
+            this.interstitial = null;
+            this.interstitialId = '';
+            this.destroyCustom('');
         },
 
         debugState() {
+            const info = getWindowInfo();
             report('bridge', 'debug', true, {
                 rewardedReady: !!this.rewarded,
                 interstitialReady: !!this.interstitial,
-                customReady: !!this.custom,
+                customReady: Object.keys(this.customAds).length > 0,
+                customCount: Object.keys(this.customAds).length,
                 rewardedApi: !!(getWxApi() && getWxApi().createRewardedVideoAd),
                 interstitialApi: !!(getWxApi() && getWxApi().createInterstitialAd),
-                customApi: !!(getWxApi() && getWxApi().createCustomAd)
+                customApi: !!(getWxApi() && getWxApi().createCustomAd),
+                windowWidth: Number(info.windowWidth) || 0,
+                windowHeight: Number(info.windowHeight) || 0,
+                pixelRatio: Number(info.pixelRatio) || 1
             });
         }
     };
