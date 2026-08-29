@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$ToolRoot = Join-Path $RepoRoot "dist\build-tools"
+$ToolRoot = Join-Path $RepoRoot ".build-tools"
 $VenvRoot = Join-Path $ToolRoot "scons-4.10.1"
 $VenvPython = Join-Path $VenvRoot "Scripts\python.exe"
 $SCons = Join-Path $VenvRoot "Scripts\scons.exe"
