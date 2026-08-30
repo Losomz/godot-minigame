@@ -4,13 +4,13 @@
     {
       "godot_major": "godot4",
       "godot_version": "4.5.2",
-      "tag": "4.5.2-glx-2d-ad-r3",
-      "file": "minigame4.5.2-glx-2d-ad-r3.tpz",
-      "download_url": "https://github.com/Losomz/godot-minigame/releases/download/4.5.2-glx-2d-ad-r3/minigame4.5.2-glx-2d-ad-r3.tpz",
-      "sha256": "388b4a55b2881838883a86ab483e25bfc583a235d9724b574d17f2b4bb4e4725",
+      "tag": "4.5.2-glx-2d-ad-noexc-r4",
+      "file": "minigame4.5.2-glx-2d-ad-noexc-r4.tpz",
+      "download_url": "https://github.com/Losomz/godot-minigame/releases/download/4.5.2-glx-2d-ad-noexc-r4/minigame4.5.2-glx-2d-ad-noexc-r4.tpz",
+      "sha256": "db47796fdf50ccd90e0a963c61e57b3f0c8453ec1445b2a88ffbee2f8f54f4b1",
       "minimum_plugin": "1.0.4",
       "source_branch": "4.5",
-      "source_commit": "58fa4180250ebcac6d49a7a226561aa2c26016b6",
+      "source_commit": "05c80c8f83a9c56971f0eded8c8d724bf2101ee1",
       "status": "stable"
     }
   ]
