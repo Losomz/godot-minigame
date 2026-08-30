@@ -378,10 +378,14 @@ def verify_build_environment(profile_settings: dict[str, bool], exceptions: str,
     if variant == VARIANT_GLX:
         if exceptions == EXCEPTIONS_ENABLED:
             if "-fexceptions" not in cxxflags:
-                raise RuntimeError("GLX build with exceptions enabled is missing -fexceptions")
+                raise RuntimeError("GLX build with exceptions enabled is missing -fexceptions in CXXFLAGS")
+            if "-fexceptions" not in flags:
+                raise RuntimeError("GLX build with exceptions enabled is missing -fexceptions in LINKFLAGS")
         else:
             if "-fexceptions" in cxxflags:
-                raise RuntimeError("GLX build with exceptions disabled still has -fexceptions")
+                raise RuntimeError("GLX build with exceptions disabled still has -fexceptions in CXXFLAGS")
+            if "-fexceptions" not in flags:
+                raise RuntimeError("GLX build with exceptions disabled is missing -fexceptions in LINKFLAGS")
 
     methods = set(build_env.get("EXPORTED_RUNTIME_METHODS", []))
     missing_methods = sorted(REQUIRED_RUNTIME_METHODS - methods)
