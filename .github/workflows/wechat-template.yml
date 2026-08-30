@@ -19,9 +19,9 @@ on:
         default: "2d"
         type: string
       exceptions:
-        description: "exceptions: C++ 异常支持。enabled=兼容性最好；disabled=包体省约 1.14 MiB。示例：enabled"
+        description: "exceptions: C++ 异常支持。disabled=默认，引擎不生成异常表（约省 1.14 MiB），但保留异常运行时供 GLX 库内部 throw/catch；enabled=引擎同样带异常表。示例：disabled"
         required: false
-        default: enabled
+        default: disabled
         type: choice
         options:
           - enabled
