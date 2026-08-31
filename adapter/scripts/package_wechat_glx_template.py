@@ -138,6 +138,11 @@ REQUIRED_ARCHIVE_ENTRIES = {
     "engine/godot.js",
     "engine/godot.wasm.br",
 }
+AD_BRIDGE_PROTOCOL = 4
+REQUIRED_AD_ARCHIVE_ENTRIES = {
+    "engine/game.js",
+    "engine/wx-ad-bridge.js",
+}
 
 
 def resolve_command(command: list[str]) -> list[str]:
@@ -231,6 +236,29 @@ def normalized_lf(path: Path) -> bytes:
 def require_file(path: Path) -> None:
     if not path.is_file():
         raise RuntimeError(f"required file is missing: {path}")
+
+
+def verify_ad_component(entry_path: Path, bridge_path: Path) -> None:
+    """Reject an ad artifact whose protocol or startup ordering is ambiguous."""
+    require_file(entry_path)
+    require_file(bridge_path)
+    bridge_source = bridge_path.read_text(encoding="utf-8")
+    version_marker = f"const BRIDGE_VERSION = {AD_BRIDGE_PROTOCOL};"
+    if version_marker not in bridge_source:
+        raise RuntimeError(
+            f"WeChat ad bridge must declare protocol v{AD_BRIDGE_PROTOCOL}: {bridge_path}"
+        )
+
+    entry_source = entry_path.read_text(encoding="utf-8")
+    sdk_import = entry_source.find("import './godot-sdk'")
+    bridge_import = entry_source.find("import './wx-ad-bridge'")
+    start_game = entry_source.rfind("GODOTSDK.startGame(")
+    if entry_source.count("import './wx-ad-bridge'") != 1:
+        raise RuntimeError("engine/game.js must import wx-ad-bridge exactly once")
+    if sdk_import < 0 or bridge_import <= sdk_import or start_game <= bridge_import:
+        raise RuntimeError(
+            "engine/game.js must load godot-sdk, then wx-ad-bridge, then startGame"
+        )
 
 
 def verify_source() -> str:
@@ -508,6 +536,14 @@ def build_info(
         artifact_variant += "-ad"
     if exceptions == EXCEPTIONS_DISABLED:
         artifact_variant += "-noexc"
+    ad_details = ""
+    if ad:
+        ad_entry = sdk.parent / "game.js"
+        ad_bridge = sdk.parent / "wx-ad-bridge.js"
+        ad_details = f"""- Ad bridge protocol: `v{AD_BRIDGE_PROTOCOL}`
+- `engine/game.js`: `{sha256(ad_entry).upper()}`
+- `engine/wx-ad-bridge.js`: `{sha256(ad_bridge).upper()}`
+"""
     return f"""# Build Information
 
 - Godot: `4.5.2-stable` (`{GODOT_BASE}`)
@@ -535,7 +571,7 @@ def build_info(
 - decompressed `engine/godot.wasm`: `{raw_wasm_sha256.upper()}` (`{(BUILD_DIR / 'godot.wasm').stat().st_size}` bytes)
 - `godot-loader.js`: `{sha256(loader).upper()}`
 - `engine/godot-sdk.js`: `{sha256(sdk).upper()}`
-"""
+{ad_details}"""
 
 
 def write_deterministic_archive(source_dir: Path, archive_path: Path) -> None:
@@ -555,13 +591,14 @@ def write_deterministic_archive(source_dir: Path, archive_path: Path) -> None:
             archive.writestr(info, path.read_bytes(), compresslevel=9)
 
 
-def verify_archive(source_dir: Path, archive_path: Path) -> None:
+def verify_archive(source_dir: Path, archive_path: Path, ad: bool = False) -> None:
     expected = {
         path.relative_to(source_dir).as_posix(): path.read_bytes()
         for path in source_dir.rglob("*")
         if path.is_file()
     }
-    missing_required = sorted(REQUIRED_ARCHIVE_ENTRIES - set(expected))
+    required_entries = REQUIRED_ARCHIVE_ENTRIES | (REQUIRED_AD_ARCHIVE_ENTRIES if ad else set())
+    missing_required = sorted(required_entries - set(expected))
     if missing_required:
         raise RuntimeError(f"template is missing required files: {', '.join(missing_required)}")
 
@@ -698,8 +735,7 @@ def package_template(
             # the ad bridge is added next to it.
             ad_entry = AD_DIR / "engine" / "game.js"
             ad_bridge = AD_DIR / "engine" / "wx-ad-bridge.js"
-            require_file(ad_entry)
-            require_file(ad_bridge)
+            verify_ad_component(ad_entry, ad_bridge)
             shutil.copyfile(ad_entry, stage / "engine" / "game.js")
             shutil.copyfile(ad_bridge, stage / "engine" / "wx-ad-bridge.js")
 
@@ -726,7 +762,7 @@ def package_template(
 
         staged_archive = temp_dir / archive_path.name
         write_deterministic_archive(stage, staged_archive)
-        verify_archive(stage, staged_archive)
+        verify_archive(stage, staged_archive, ad)
 
         if out_dir.exists():
             shutil.rmtree(out_dir)
@@ -736,7 +772,7 @@ def package_template(
         atomic_write(info_bytes, build_info_path)
         atomic_write(effective_profile_bytes, profile_info_path)
 
-    verify_archive(dist_template_dir, archive_path)
+    verify_archive(dist_template_dir, archive_path, ad)
 
     checksum_paths = [
         archive_path,
@@ -747,6 +783,11 @@ def package_template(
         dist_template_dir / "godot-loader.js",
         dist_template_dir / "engine" / "godot-sdk.js",
     ]
+    if ad:
+        checksum_paths.extend([
+            dist_template_dir / "engine" / "game.js",
+            dist_template_dir / "engine" / "wx-ad-bridge.js",
+        ])
     checksums = "".join(
         f"{sha256(path)}  {path.relative_to(out_dir).as_posix()}\n"
         for path in checksum_paths

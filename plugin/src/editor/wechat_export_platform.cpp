@@ -21,6 +21,7 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/window.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 #include "core/logging.h"
 
 using namespace godot;
@@ -29,6 +30,57 @@ namespace toolkit {
 namespace editor {
 
 static constexpr const char *NATIVE_AUDIO_EXPORT_STATUS_FILE = ".godot-native-audio-export-status.json";
+
+// 递归删除导出目录中不在当前模板清单内的引擎文件(旧模板残留的 wasm/js/广告层等)
+static void _remove_stale_files_recursive(const String &p_dir, const String &p_root, const HashSet<String> &p_keep, int &r_removed) {
+    Ref<DirAccess> dir = DirAccess::open(p_dir);
+    if (dir.is_null()) {
+        return;
+    }
+    dir->list_dir_begin();
+    String name = dir->get_next();
+    while (!name.is_empty()) {
+        if (name != "." && name != "..") {
+            const String child = p_dir.path_join(name);
+            if (dir->current_is_dir()) {
+                _remove_stale_files_recursive(child, p_root, p_keep, r_removed);
+            } else {
+                const String relative = child.replace("\\", "/").trim_prefix(p_root.replace("\\", "/") + "/");
+                if (!p_keep.has(relative)) {
+                    if (DirAccess::remove_absolute(child) == OK) {
+                        r_removed++;
+                        TOOLKIT_LOG("WeChatExportPlatform: removing stale template file ", relative);
+                    }
+                }
+            }
+        }
+        name = dir->get_next();
+    }
+    dir->list_dir_end();
+}
+
+static void _cleanup_stale_engine_files(const String &p_export_dir, const PackedStringArray &p_template_entries) {
+    HashSet<String> keep;
+    for (int i = 0; i < p_template_entries.size(); i++) {
+        const String entry = String(p_template_entries[i]).replace("\\", "/");
+        if (entry.is_empty() || entry.ends_with("/")) {
+            continue;
+        }
+        keep.insert(entry);
+    }
+    // demo-pck.bin 由本次导出稍后原子写入,旧文件先保留,避免导出中断时丢失可用产物
+    keep.insert("engine/demo-pck.bin");
+
+    const String engine_dir = p_export_dir.path_join("engine");
+    if (!DirAccess::dir_exists_absolute(engine_dir)) {
+        return;
+    }
+    int removed = 0;
+    _remove_stale_files_recursive(engine_dir, p_export_dir, keep, removed);
+    if (removed > 0) {
+        TOOLKIT_LOG("WeChatExportPlatform: removed ", String::num_int64(removed), " stale engine file(s) left by previous template");
+    }
+}
 
 void WeChatExportPlatform::_bind_methods() {
 }
@@ -676,48 +728,64 @@ Error WeChatExportPlatform::_export_zip(const Ref<EditorExportPreset> &p_preset,
 }
 
 Error WeChatExportPlatform::_setup_wechat_template(const Ref<EditorExportPreset> &p_preset, const String &p_path) {
-    String game_json_path = p_path.path_join("game.json");
-
-    if (!FileAccess::file_exists(game_json_path)) {
-        TOOLKIT_LOG("WeChatExportPlatform: Setting up template at ", p_path);
-
-        if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
-            UtilityFunctions::push_warning("TemplateManager missing.");
-            return ERR_UNCONFIGURED;
-        }
-
-        templates::TemplateManager* tm = templates::TemplateManager::get_singleton();
-        Error init_err = tm->initialize_template_system();
-        if (init_err != OK) {
-            String msg = "Template system init failed: " + _describe_export_error(init_err) + " (" + String::num_int64(init_err) + ")";
-            UtilityFunctions::push_warning(msg);
-            TOOLKIT_LOG("WeChatExportPlatform: ", msg);
-            return init_err;
-        }
-        const Dictionary active_template = tm->get_active_template_info();
-        const String best_template_ref = tm->resolve_active_template_path();
-        _product_log("Active template: " + String(active_template.get("display_name", "unknown")) +
-                ", editor " + tm->get_current_godot_version());
-
-        if (best_template_ref.is_empty()) {
-            UtilityFunctions::push_warning(String::utf8("当前模板不存在或已损坏。请在 Minigame 插件设置中重新选择一个本地可用模板。"));
-            return ERR_FILE_NOT_FOUND;
-        }
-        _product_log("Resolved template: " + best_template_ref.get_file());
-
-        TOOLKIT_LOG("WeChatExportPlatform: extracting template from ", best_template_ref);
-        _simulate_export_progress(export_progress_value, 88.0, 220, String::utf8("正在解压模板..."));
-        Error extract_err = tm->extract_template(best_template_ref, p_path);
-        if (extract_err != OK) {
-            String msg = "Template extraction failed: " + _describe_export_error(extract_err) + " (" + String::num_int64(extract_err) + ")";
-            UtilityFunctions::push_warning(msg);
-            TOOLKIT_LOG("WeChatExportPlatform: ", msg);
-            return extract_err;
-        }
-
-        _modify_json_configs(p_preset, p_path);
-        _copy_export_images(p_preset, p_path);
+    // 覆盖式导出:每次导出都重新解压当前模板,并清理模板不再提供的旧引擎文件,
+    // 避免切换模板/升级插件后旧 wasm/js 残留。project.config.json 是微信开发者
+    // 工具维护的用户设置,解压前暂存、解压后回写。
+    if (!Engine::get_singleton()->has_singleton("TemplateManager")) {
+        UtilityFunctions::push_warning("TemplateManager missing.");
+        return ERR_UNCONFIGURED;
     }
+
+    templates::TemplateManager* tm = templates::TemplateManager::get_singleton();
+    Error init_err = tm->initialize_template_system();
+    if (init_err != OK) {
+        String msg = "Template system init failed: " + _describe_export_error(init_err) + " (" + String::num_int64(init_err) + ")";
+        UtilityFunctions::push_warning(msg);
+        TOOLKIT_LOG("WeChatExportPlatform: ", msg);
+        return init_err;
+    }
+    const Dictionary active_template = tm->get_active_template_info();
+    const String best_template_ref = tm->resolve_active_template_path();
+    _product_log("Active template: " + String(active_template.get("display_name", "unknown")) +
+            ", editor " + tm->get_current_godot_version());
+
+    if (best_template_ref.is_empty()) {
+        UtilityFunctions::push_warning(String::utf8("当前模板不存在或已损坏。请在 Minigame 插件设置中重新选择一个本地可用模板。"));
+        return ERR_FILE_NOT_FOUND;
+    }
+    _product_log("Resolved template: " + best_template_ref.get_file());
+
+    TOOLKIT_LOG("WeChatExportPlatform: extracting template from ", best_template_ref);
+    _simulate_export_progress(export_progress_value, 88.0, 220, String::utf8("正在解压模板..."));
+
+    const String project_config_path = p_path.path_join("project.config.json");
+    String preserved_project_config;
+    Ref<FileAccess> config_read = FileAccess::open(project_config_path, FileAccess::READ);
+    if (config_read.is_valid()) {
+        preserved_project_config = config_read->get_as_text();
+        config_read->close();
+    }
+
+    Error extract_err = tm->extract_template(best_template_ref, p_path);
+    if (extract_err != OK) {
+        String msg = "Template extraction failed: " + _describe_export_error(extract_err) + " (" + String::num_int64(extract_err) + ")";
+        UtilityFunctions::push_warning(msg);
+        TOOLKIT_LOG("WeChatExportPlatform: ", msg);
+        return extract_err;
+    }
+
+    if (!preserved_project_config.is_empty()) {
+        Ref<FileAccess> config_write = FileAccess::open(project_config_path, FileAccess::WRITE);
+        if (config_write.is_valid()) {
+            config_write->store_string(preserved_project_config);
+            config_write->close();
+        }
+    }
+
+    _cleanup_stale_engine_files(p_path, tm->get_template_entries(best_template_ref));
+
+    _modify_json_configs(p_preset, p_path);
+    _copy_export_images(p_preset, p_path);
     return OK;
 }
 
