@@ -33,3 +33,11 @@ Promote 只允许修改：
 - `plugin/resources/versions.yaml`
 
 已发布 tag、Release 资产、来源 commit 和 SHA-256 不得覆盖或复用。
+
+## Latest 徽章归属
+
+仓库 Latest 徽章(GitHub Releases 页的 "Latest" 标记)只属于插件 release,作为对外更新标记:
+
+- 插件发布(`plugin-v<semver>`)创建 Release 时显式认领 Latest,CI 发布后校验归属。
+- 模板发布(`<godot-version>-<variant>-rN`)一律不认领 Latest(`make_latest=false`,正式版也不例外),CI 发布完成后强制让出并校验;校验失败会中止模板目录自动上架。
+- 在 GitHub UI 手动把 prerelease 转为正式版会抢占 Latest,需要手动把 Latest 指回最新插件版。

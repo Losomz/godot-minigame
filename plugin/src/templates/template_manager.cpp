@@ -1925,6 +1925,56 @@ Error TemplateManager::extract_template(const String& template_path, const Strin
     return OK;
 }
 
+PackedStringArray TemplateManager::get_template_entries(const String& template_path) const {
+    PackedStringArray entries;
+
+    if (template_path.begins_with("embedded://")) {
+#ifdef EMBED_RESOURCES
+        const String filename = template_path.replace("embedded://", "");
+        const String resource_path = "resources/templates/" + filename;
+        const toolkit::resources::EmbeddedResourceEntry* resource = nullptr;
+        for (int i = 0; toolkit::resources::embedded_resources[i].path != nullptr; i++) {
+            if (String(toolkit::resources::embedded_resources[i].path) == resource_path) {
+                resource = &toolkit::resources::embedded_resources[i];
+                break;
+            }
+        }
+        if (resource != nullptr) {
+            // ZIPReader 只能从文件路径打开,把 embedded 字节落到临时文件再枚举
+            const String temp_zip_path = "user://.godot-minigame-template-entries.tmp";
+            Ref<FileAccess> temp_file = FileAccess::open(temp_zip_path, FileAccess::WRITE);
+            if (temp_file.is_valid()) {
+                PackedByteArray data;
+                data.resize(resource->size);
+                memcpy(data.ptrw(), resource->data, resource->size);
+                temp_file->store_buffer(data);
+                temp_file->close();
+
+                Ref<ZIPReader> entry_zip_reader = memnew(ZIPReader);
+                if (entry_zip_reader->open(temp_zip_path) == OK) {
+                    entries = entry_zip_reader->get_files();
+                    entry_zip_reader->close();
+                }
+                DirAccess::remove_absolute(temp_zip_path);
+            }
+        }
+#endif
+        return entries;
+    }
+
+    if (!FileAccess::file_exists(template_path)) {
+        return entries;
+    }
+
+    Ref<ZIPReader> zip_reader = memnew(ZIPReader);
+    if (zip_reader->open(template_path) != OK) {
+        return entries;
+    }
+    entries = zip_reader->get_files();
+    zip_reader->close();
+    return entries;
+}
+
 Error TemplateManager::extract_embedded_template(const String& filename, const String& output_path) {
     TOOLKIT_LOG("TemplateManager: Extracting embedded template '", filename, "' to '", output_path, "'");
 

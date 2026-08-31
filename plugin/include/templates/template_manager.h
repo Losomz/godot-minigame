@@ -114,6 +114,7 @@ public:
     // Template extraction
     Error extract_template(const String& template_path, const String& output_path);
     Error extract_embedded_template(const String& filename, const String& output_path);
+    PackedStringArray get_template_entries(const String& template_path) const;
 
     // Cache management
     Error remove_active_template_cache();
