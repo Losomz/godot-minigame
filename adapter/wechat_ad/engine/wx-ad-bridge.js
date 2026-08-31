@@ -67,6 +67,9 @@
         return result;
     }
 
+    // Console output is opt-in; state always flows to GD via the event callback.
+    const CONSOLE_DEBUG = false;
+
     function report(type, stage, ok, extra) {
         const api = wxApi();
         const method = apiName(type);
@@ -78,12 +81,13 @@
             hasWx: !!api,
             hasApi: !!(api && method && typeof api[method] === 'function')
         }, extra || {});
-        const parts = ['[GodotMinigameWxAd]', type, stage, `ok=${ok}`];
-        if (event.adUnitId) parts.push(`unit=${event.adUnitId}`);
-        if (event.requestId) parts.push(`req=${event.requestId}`);
-        if (event.errMsg) parts.push(event.errMsg);
-        if (!ok) console.error(parts.join(' '));
-        else if (stage === 'show' || stage === 'close') console.log(parts.join(' '));
+        if (CONSOLE_DEBUG) {
+            const parts = ['[WxAdBridge]', type, stage];
+            if (event.requestId) parts.push(`req=${event.requestId}`);
+            if (event.errMsg) parts.push(event.errMsg);
+            if (!ok) console.error(parts.join(' '));
+            else if (stage === 'show' || stage === 'close') console.log(parts.join(' '));
+        }
         if (typeof eventCallback === 'function') eventCallback(JSON.stringify(event));
         return event;
     }
@@ -555,7 +559,7 @@
 
     const hosts = sdkHosts();
     if (hosts.length === 0) {
-        console.error('[GodotMinigameWxAd] bridge sdk-attach ok=false GODOTSDK not available');
+        console.error('[WxAdBridge] sdk-attach failed: GODOTSDK not available');
         return;
     }
     hosts.forEach((sdk) => {
