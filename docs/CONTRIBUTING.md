@@ -16,6 +16,7 @@ python tools/product/product.py render-versions --check
 python -m unittest discover -s tests -v
 node tests/adapter/test_godot_process_glx.js
 node tests/adapter/test_min_runtime_loader.js
+node --check adapter/wechat_ad/engine/wx-ad-bridge.js
 ```
 
 插件构建入口为 `plugin/build/SConstruct`，适配模板入口为 `adapter/ci/package.py`。所有生成内容进入 `dist/` 或被忽略的 `demo/addons/`，不得提交插件二进制、TPZ 或打包暂存目录。

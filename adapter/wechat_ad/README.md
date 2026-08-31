@@ -1,325 +1,165 @@
-# Godot 微信小游戏广告接入组件
+# 微信小游戏广告桥 v4
 
-这是一个不依赖业务框架的微信小游戏广告组件，适用于：
+这是 Godot 4.5.x + Godot Minigame 1.0.4 的框架无关广告组件，支持激励视频、插屏和原生模板广告。Banner 当前未实现。
 
-- Godot 4.5.x
-- Godot Minigame 1.0.4
-- 激励视频、插屏广告、原生模板广告
+v4 是破坏性替换：旧 `WechatAd` Node、Inspector 广告位和 v2/v3 兼容接口已删除。业务直接持有 `WechatAdBridge`，广告位和展示策略由业务传入。
 
-组件使用 Godot 官方 `JavaScriptBridge` 访问 Godot Minigame 提供的全局 `GODOTSDK`，再通过 `engine/wx-ad-bridge.js` 调用微信官方 `wx.create*Ad` API。
-
-> 当前未实现 Banner。组件不包含 PowerShell、业务图片、AppID 或项目广告位。
-
-打包时使用 `python adapter/ci/package.py --ad` 即可将本组件融合进模板（产物名带 `-ad`）。本目录是独立组件，也可以手动迁移到其他 Godot 项目。
-
-## 1. 文件职责
+## 文件与加载顺序
 
 ```text
-wechat_ad/
-├── README.md
-├── wechat_ad.gd
+adapter/wechat_ad/
+├── wechat_ad_bridge.gd
 └── engine/
     ├── game.js
     └── wx-ad-bridge.js
 ```
 
-| 文件 | 作用 | 使用位置 |
-| --- | --- | --- |
-| [`wechat_ad.gd`](./wechat_ad.gd) | Godot 广告节点，保存广告位、调用 JS 并把微信事件转换成信号 | 复制到目标 Godot 项目的 `res://` |
-| [`engine/game.js`](./engine/game.js) | 完整 Godot 引擎入口，依次加载 `godot-sdk`、Godot 运行时、广告桥和 PCK | 覆盖微信导出目录的 `engine/game.js` |
-| [`engine/wx-ad-bridge.js`](./engine/wx-ad-bridge.js) | 向 `GODOTSDK` 注入 `dsWxAd*` 方法并调用微信广告 API | 复制到微信导出目录的 `engine` |
-
-根 `game.js` 不属于广告组件，也不需要修改。它继续负责微信小游戏外壳、加载界面和 `godot-loader`；广告只在 Godot 引擎分包中接入。
-
-## 2. 调用链
+微信导出产物必须按以下顺序启动：
 
 ```text
-根 game.js
-    -> godot-loader 加载 engine 分包
-
-engine/game.js
-    -> godot-sdk 创建全局 GODOTSDK
-    -> godot 加载 Godot 运行时
-    -> wx-ad-bridge 向 GODOTSDK 注入 dsWxAd* 方法
-    -> GODOTSDK.startGame() 启动 Godot
-
-GDScript
-    -> JavaScriptBridge.get_interface("GODOTSDK")
-    -> GODOTSDK.dsWxAdShow*
-    -> wx.createRewardedVideoAd / createInterstitialAd / createCustomAd
-    -> 微信回调
-    -> JSON 字符串
-    -> Godot 信号
+godot-sdk -> godot -> wx-ad-bridge -> GODOTSDK.startGame()
 ```
 
-`GODOTSDK` 只作为统一调用入口，真正的广告能力来自微信 `wx` API。
+`wx-ad-bridge.js` 只向已经存在的 `GODOTSDK` 挂载接口。缺少真实 `GODOTSDK` 时会拒绝挂载，不创建 Mock，也不静默降级。
 
-## 3. 接入 Godot
+## Godot 直接 API
 
-### 3.1 复制脚本
-
-将：
-
-```text
-wechat_ad.gd
-```
-
-复制到目标项目，例如：
-
-```text
-res://scripts/platform/wechat_ad.gd
-```
-
-脚本继承普通 `Node`，不依赖任何业务框架：
-
-- [打开 Godot 广告组件](./wechat_ad.gd#L1)
-
-### 3.2 创建唯一广告节点
-
-在不会随关卡切换销毁的启动场景中创建一个 Node，命名为 `WechatAd`，并挂载 `wechat_ad.gd`。
-
-全项目同时只能存在一个 `WechatAd` 节点，因为 JS 桥只维护一个 Godot 事件回调。脚本会检测重复实例，后创建的节点不会覆盖正在工作的回调。
-
-### 3.3 填写广告位
-
-选中 `WechatAd` 节点，在 Inspector 中填写微信后台生成的广告位：
-
-```text
-Rewarded Ad Unit Id      激励视频广告位
-Interstitial Ad Unit Id  插屏广告位
-Custom Ad Unit Id        原生模板广告位
-```
-
-- [打开微信广告配置区](./wechat_ad.gd#L22)
-
-广告位必须属于当前小游戏 AppID，并且类型必须对应：
-
-```text
-激励视频广告位 -> show_rewarded()
-插屏广告位     -> show_interstitial()
-原生模板广告位 -> show_custom()
-```
-
-原生模板的 `Custom Position` 支持 `top/bottom/left/right/absolute`：前四种由桥按窗口自动居中，`absolute` 才使用 `Custom Left/Top`，所有位置都会叠加 `Custom Offset X/Y`。坐标均为微信屏幕坐标，不是 Godot Control 节点坐标。
-
-### 3.4 连接信号并调用
+将 `wechat_ad_bridge.gd` 复制到项目并长期持有一个实例：
 
 ```gdscript
 extends Node
 
-@onready var wechat_ad: WechatAd = $WechatAd
+var wechat_ads := WechatAdBridge.new()
 
 
 func _ready() -> void:
-    wechat_ad.rewarded_closed.connect(_on_rewarded_closed)
-    wechat_ad.interstitial_closed.connect(_on_interstitial_closed)
-    wechat_ad.custom_loaded.connect(_on_custom_loaded)
-    wechat_ad.ad_error.connect(_on_ad_error)
+	var setup_error := wechat_ads.setup()
+	if not setup_error.is_empty():
+		push_warning("微信广告不可用: %s" % setup_error)
+		return
+	wechat_ads.ad_failed.connect(_on_ad_failed)
+	wechat_ads.rewarded_completed.connect(_on_rewarded_completed)
+	wechat_ads.custom_hidden.connect(_on_custom_hidden)
+	wechat_ads.prepare_rewarded("adunit-rewarded")
 
 
-func show_rewarded_ad() -> void:
-    wechat_ad.show_rewarded()
+func watch_rewarded() -> void:
+	var result := wechat_ads.show_rewarded("adunit-rewarded")
+	if not result.success:
+		push_warning(result.error)
 
 
-func _on_rewarded_closed(completed: bool) -> void:
-    if completed:
-        grant_reward()
-    else:
-        print("用户未完整观看，不发放奖励")
+func _on_rewarded_completed(_request_id: String, completed: bool) -> void:
+	if completed:
+		grant_reward()
 
 
-func _on_ad_error(ad_type: String, message: String) -> void:
-    push_warning("广告失败 type=%s message=%s" % [ad_type, message])
+func _on_ad_failed(event: Dictionary) -> void:
+	push_warning("广告失败: %s" % JSON.stringify(event))
 
 
-func grant_reward() -> void:
-    print("发放奖励")
+func _on_custom_hidden(ad_unit_id: String) -> void:
+	print("原生模板已关闭: %s" % ad_unit_id)
+
+
+func _exit_tree() -> void:
+	wechat_ads.dispose()
 ```
 
-公开接口：
+同一进程只能有一个成功 `setup()` 的实例，避免后注册者覆盖唯一 JS 回调。`setup()` 返回空字符串表示 v4 版本和完整方法表均已确认；失败实例的 `dispose()` 不会调用未知 JS 方法。
 
-- [初始化与 GODOTSDK 获取](./wechat_ad.gd#L69)
-- [激励视频](./wechat_ad.gd#L100)
-- [插屏广告](./wechat_ad.gd#L109)
-- [原生模板广告](./wechat_ad.gd#L118)
-- [隐藏原生模板](./wechat_ad.gd#L135)
-- [微信事件处理](./wechat_ad.gd#L144)
-
-`show_*()` 返回 `true` 只表示请求已经传给 JavaScript，不代表广告展示成功。激励奖励只能在 `rewarded_closed(true)` 时发放。
-
-## 4. 覆盖微信导出文件
-
-### 4.1 正常导出
-
-使用 Godot Minigame 1.0.4 导出，并确保至少存在：
+公开方法：
 
 ```text
-<微信导出目录>/game.js
-<微信导出目录>/godot-loader.js
-<微信导出目录>/engine/game.js
-<微信导出目录>/engine/godot-sdk.js
-<微信导出目录>/engine/godot.js
-<微信导出目录>/engine/demo-pck.bin
+setup() -> String
+is_ready() -> bool
+prepare_rewarded(ad_unit_id) -> Dictionary
+show_rewarded(ad_unit_id) -> Dictionary
+cancel_rewarded() -> void
+show_interstitial(ad_unit_id) -> Dictionary
+show_custom(ad_unit_id, placement) -> Dictionary
+hide_custom(ad_unit_id = "") -> Dictionary
+destroy_all() -> Dictionary
+debug_state() -> Dictionary
+dispose() -> void
 ```
 
-根 `game.js` 保持导出器生成的版本，不修改也不覆盖。
-
-### 4.2 覆盖 engine
-
-将组件目录中的：
+公开信号：
 
 ```text
-engine/
+event_received(event)
+ad_failed(event)
+rewarded_completed(request_id, completed)
+interstitial_closed(ad_unit_id)
+custom_loaded(ad_unit_id)
+custom_hidden(ad_unit_id)
 ```
 
-复制到微信导出目录的：
+方法返回的 `success=true` 只表示请求已交给 JS。展示失败通过 `ad_failed` 返回；激励奖励只能依据 `rewarded_completed(..., true)` 发放。
+
+## 原生模板位置
+
+```gdscript
+wechat_ads.show_custom("adunit-custom", {
+	"position": "bottom",
+	"width": 320.0,
+	"estimated_height": 100.0,
+	"offset_x": 0.0,
+	"offset_y": -16.0,
+})
+```
+
+`position` 支持 `top/bottom/left/right/absolute`。`absolute` 必须同时提供 `left` 和 `top`。宽高必须大于零，所有数值必须有限；无效显式配置直接返回错误，不会悄悄替换成默认值。坐标使用微信逻辑窗口坐标，不乘设备像素比，并在可见窗口内收敛。
+
+## 生命周期语义
+
+- 激励视频是进程级单例，第一次成功创建后锁定广告位且永不销毁。重叠展示会被拒绝；只有激励视频保留一次官方 `show -> load -> show` 兜底。
+- 激励请求固定 120 秒超时。超时或取消只解绑业务 requestId，微信展示仍占用槽位，直至真实 close 或最终 show 失败；这样迟到 close 不会结算下一次请求。
+- 插屏每次请求创建一个新实例，严格 `load -> show`，close、onError、load/show 拒绝都会只结算一次并销毁该实例。活动请求期间拒绝重叠展示。
+- 原生模板按 `adUnitId + style` 缓存；样式变化销毁旧槽位。`show()`、`hide()` Promise 都会被等待并上报拒绝，不使用激励视频的 load 兜底。
+- 原生模板同时监听 `onHide` 和 `onClose`，两者由同一槽位去重；用户从微信原生界面关闭后也会发出 `custom_hidden(ad_unit_id)`。
+
+## 改动点与理由
+
+| 改动 | 理由 |
+| --- | --- |
+| 协议升级到 v4，严格校验 SDK、版本和方法表 | 旧桥会伪造 `GODOTSDK` 并报告挂载成功，实际调用直到运行时才失败 |
+| 删除旧 Node/Inspector 兼容 API | 当前仓库无内部消费者，继续维护两套入口只会掩盖迁移错误 |
+| 激励请求与微信展示占用分离 | 修复并发覆盖 requestId、超时后迟到 close 串到新请求 |
+| 所有激励终态错误携带输入 requestId | 修复 API 缺失/创建失败只能等待 120 秒的问题 |
+| 插屏回调捕获具体实例并 settle-once | 修复旧 close 销毁新实例、错误路径泄漏实例的问题 |
+| Custom 等待 show/hide Promise 并监听原生关闭 | 修复 hide 拒绝未处理、用户关闭后业务仍认为广告活动的问题 |
+| 只为激励保留一次 load 重试 | 这是唯一有官方展示语义依据的兜底，避免对其他广告格式做自动重试 |
+| `--ad` 校验并记录入口、桥版本和 SHA-256 | 确保 build 产物实际包含经过审查的 v4，而不是只根据文件名判断“已融合” |
+
+## build 产物
+
+```powershell
+python adapter/ci/package.py --template 4.5.2 --variant glx --profile 2d --revision 1 --ad
+```
+
+带 `--ad` 的 TPZ 必须包含：
 
 ```text
-<微信导出目录>/engine/
+engine/game.js
+engine/wx-ad-bridge.js
 ```
 
-并覆盖同名 `game.js`。最终结构：
+打包器会在复制前校验桥声明为 v4，并校验 `engine/game.js` 的加载顺序。`BUILD_INFO.md` 会记录 `Ad merged: true`、协议 `v4` 和两个文件的 SHA-256；外部 `.sha256.txt` 同样包含这两个文件。不带 `--ad` 的产物不增加这些文件或元数据。
 
-```text
-<微信导出目录>/
-├── game.js                     导出器原文件，不修改
-├── godot-loader.js             导出器原文件
-└── engine/
-    ├── game.js                 使用组件完整覆盖
-    ├── wx-ad-bridge.js         组件新增的唯一广告桥
-    ├── godot-sdk.js            导出器原文件
-    ├── godot.js                导出器原文件
-    └── demo-pck.bin            Godot 游戏资源，不覆盖
+## 验证
+
+```powershell
+node --check adapter/wechat_ad/engine/wx-ad-bridge.js
 ```
 
-组件的 `engine` 目录只包含入口和广告桥，不会覆盖 `godot-sdk.js`、Godot 运行时或 PCK。
+真机仍需使用有效 AppID/广告位确认填充、完整观看和用户关闭行为。
 
-### 4.3 PCK 名称
+## Rush 项目后续同步清单
 
-完整引擎入口默认读取：
+本仓库不会修改 `RushSpecialForces`。迁移时需要原子替换 JS 与 GDScript 为 v4，并同时完成：
 
-```text
-/engine/demo-pck.bin
-```
-
-如果导出文件名不同，修改 [`engine/game.js` 的 `packPath`](./engine/game.js#L27)。
-
-## 5. engine/game.js 做了什么
-
-[`engine/game.js`](./engine/game.js) 是完整可覆盖文件，不是代码片段。它负责：
-
-1. 加载 `godot-sdk`，创建并暴露 `GODOTSDK`。
-2. 加载 Godot 微信运行时。
-3. 在 Godot 启动前加载唯一的广告桥。
-4. 从微信文件系统读取 `demo-pck.bin`。
-5. 将 PCK 复制到 Godot 虚拟文件系统。
-6. 调用 `GODOTSDK.startGame()`。
-
-广告桥加载顺序：
-
-- [打开广告桥导入位置](./engine/game.js#L18)
-
-PCK 读取和启动：
-
-- [打开 `load_pack1`](./engine/game.js#L35)
-- [打开 `startGame`](./engine/game.js#L43)
-
-正确顺序必须是：
-
-```text
-godot-sdk -> godot -> wx-ad-bridge -> startGame
-```
-
-## 6. wx-ad-bridge.js 做了什么
-
-[`engine/wx-ad-bridge.js`](./engine/wx-ad-bridge.js) 负责：
-
-1. 从微信运行环境取得 `wx`。
-2. 向 `GODOTSDK` 挂载 `dsWxAd*` 方法（桥协议版本 v2）。
-3. 创建并复用微信广告实例，原生模板按广告位分别管理。
-4. `show()` 失败时执行 `load()` 后再次展示。
-5. 监听微信 `onClose`、`onLoad`、`onError`，支持取消激励请求与销毁实例。
-6. 将事件转换为 JSON 字符串回调 Godot。
-
-关键位置：
-
-- [取得微信 API](./engine/wx-ad-bridge.js#L19)
-- [挂载 GODOTSDK 接口](./engine/wx-ad-bridge.js#L161)
-- [整理并发送事件](./engine/wx-ad-bridge.js#L262)
-- [展示失败后的加载兜底](./engine/wx-ad-bridge.js#L305)
-- [激励视频实例](./engine/wx-ad-bridge.js#L401)
-- [插屏广告实例](./engine/wx-ad-bridge.js#L475)
-- [原生模板实例](./engine/wx-ad-bridge.js#L514)
-
-桥接方法：
-
-```text
-dsWxAdGetBridgeVersion() -> 2
-dsWxAdSetEventCallback(callback)
-dsWxAdClearEventCallback()
-dsWxAdDebugState()
-dsWxAdShowRewarded(adUnitId, requestId)
-dsWxAdCancelRewarded(requestId)
-dsWxAdShowInterstitial(adUnitId)
-dsWxAdShowCustom(adUnitId, position, width, estimatedHeight, offsetX, offsetY, left, top)
-dsWxAdHideCustom(adUnitId)
-dsWxAdDestroyAll()
-```
-
-`dsWxAdHideCustom` 传空字符串会隐藏全部原生模板；`position` 支持 `top/bottom/left/right/absolute`。
-
-回调结构：
-
-```json
-{
-  "type": "rewarded",
-  "stage": "close",
-  "ok": true,
-  "adUnitId": "adunit-xxx",
-  "requestId": "1",
-  "isEnded": true
-}
-```
-
-`errMsg` 和微信错误码是可选诊断字段；`isEnded` 只在激励视频关闭事件中出现，`requestId` 标识一次激励请求，取消与失败事件同样携带。
-
-## 7. 验证
-
-在微信开发者工具中确认：
-
-1. 根目录不存在广告桥，也没有广告 import。
-2. `engine/wx-ad-bridge.js` 存在。
-3. `engine/game.js` 在 `godot-sdk` 之后加载广告桥。
-4. Godot 中 `WechatAd.is_available()` 返回 `true`。
-5. 激励完整观看返回 `isEnded=true`，中途关闭返回 `false`。
-6. 插屏关闭、原生模板加载和广告错误都能返回对应信号。
-
-本地 Godot 编辑器没有微信 `wx` 环境，`is_available()` 返回 `false` 是正常行为。
-
-## 8. 常见问题
-
-### `GODOTSDK` 不存在
-
-确认使用 Godot Minigame 微信导出，而不是普通 Godot Web 导出。
-
-### `dsWxAd*` 方法不存在
-
-确认 `engine/wx-ad-bridge.js` 存在，并已被 `engine/game.js` 在 `godot-sdk` 之后导入。
-
-### 找不到 PCK
-
-确认资源位于 `engine/demo-pck.bin`，或者同步修改 `packPath`。
-
-### 广告位无效
-
-广告位不能为空，必须以 `adunit-` 开头，并且属于当前小游戏 AppID。
-
-### 激励视频什么时候发奖励
-
-只能在 `rewarded_closed(true)` 时发放，不能根据按钮点击或 `show_rewarded()` 返回值发放。
-
-## 9. 微信官方 API
-
-- [wx.createRewardedVideoAd](https://developers.weixin.qq.com/minigame/dev/api/ad/wx.createRewardedVideoAd.html)
-- [wx.createInterstitialAd](https://developers.weixin.qq.com/minigame/dev/api/ad/wx.createInterstitialAd.html)
-- [wx.createCustomAd](https://developers.weixin.qq.com/minigame/dev/api/ad/wx.createCustomAd.html)
+1. 将 120 秒超时统一交给 `WechatAdBridge`，删除业务层重复 watchdog。
+2. 修正同步收到 `completed=false` 时展示函数仍返回 true 的路径。
+3. 将 `ad_failed` 和 `custom_hidden(ad_unit_id)` 映射到业务活动状态清理。
+4. 重新打包并确认 build 元数据为 `Ad merged: true`、协议 v4、哈希与实际文件一致。

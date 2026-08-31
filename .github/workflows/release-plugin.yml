@@ -162,9 +162,16 @@ jobs:
             dist/plugin/plugin-update.json \
             --repo "$GITHUB_REPOSITORY" \
             --target "$MAIN_SHA" \
-            --latest=false \
+            --latest \
             --title "Godot Minigame plugin ${{ needs.validate.outputs.version }}" \
             --notes "Installable all-platform Godot editor plugin."
+
+          # 插件 release 是仓库 Latest(更新标记):发布后校验徽章归属
+          latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          if [ "$latest_tag" != "$PLUGIN_TAG" ]; then
+              echo "插件发布后仓库 Latest 为 '${latest_tag:-<none>}',预期 $PLUGIN_TAG" >&2
+              exit 1
+          fi
 
   promote:
     name: Promote catalog to stable

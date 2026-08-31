@@ -254,6 +254,12 @@ jobs:
           "BUILD_SCRIPT=$($contract.build_script)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "BUILD_PROFILE=$($contract.profile)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Check WeChat ad bridge syntax
+        shell: pwsh
+        run: |
+          node --check adapter/wechat_ad/engine/wx-ad-bridge.js
+          if ($LASTEXITCODE -ne 0) { throw "WeChat ad bridge syntax check failed" }
+
       - name: Checkout branch-pinned Godot source
         shell: pwsh
         run: |
@@ -494,6 +500,21 @@ jobs:
             --latest=false \
             $prerelease_flag \
             --notes "$notes"
+
+          # 模板 release 不认领 Latest(徽章只属于插件 release):发布完成后直接 REST
+          # 强制 make_latest=false,绕开 gh 带附件时 draft→publish 链路可能丢参数的问题(gh#8201)
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq .id)"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -f make_latest=false
+
+          # 校验 Latest 归属:被本模板 tag 抢走则失败;被其他非插件 tag 占据则警告
+          latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          if [ "$latest_tag" = "$RELEASE_TAG" ]; then
+              echo "模板 release $RELEASE_TAG 抢占了仓库 Latest,违反插件独占约定" >&2
+              exit 1
+          fi
+          if [ -n "$latest_tag" ] && [ "${latest_tag#plugin-v}" = "$latest_tag" ]; then
+              echo "警告:仓库 Latest 是 $latest_tag(非插件 release),请把 Latest 指回最新插件版" >&2
+          fi
 
       - name: Checkout main for catalog update
         if: inputs.auto_publish
