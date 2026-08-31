@@ -38,7 +38,7 @@ static bool _parse_http_url(const String &url, String &host, int &port, String &
 namespace {
 constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
 constexpr const char *TEMPLATE_STATE_SECTION = "templates";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.10";
+constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.11";
 constexpr const char *DEFAULT_TEMPLATE_CATALOG_URL = "https://raw.githubusercontent.com/Losomz/godot-minigame/main/plugin/catalog/templates.json";
 
 bool _is_redirect_response_code(int response_code) {
