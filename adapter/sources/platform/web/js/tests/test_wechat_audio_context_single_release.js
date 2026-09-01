@@ -5,13 +5,26 @@ const vm = require("vm");
 class FakeInnerAudioContext {
 	constructor() {
 		this.listeners = new Map();
-		this.src = "";
+		this._src = "";
+		this.srcAssignments = [];
+		this.internalErrorListenerCount = 0;
+		this.destroyed = false;
 		this.autoplay = false;
 		this.loop = false;
 		this.volume = 1;
 		this.playbackRate = 1;
 		this.startTime = 0;
 		this.currentTime = 0;
+	}
+
+	get src() {
+		return this._src;
+	}
+
+	set src(value) {
+		this._src = value;
+		this.srcAssignments.push(value);
+		this.internalErrorListenerCount += 1;
 	}
 
 	on(name, callback) {
@@ -52,10 +65,11 @@ class FakeInnerAudioContext {
 	play() {}
 	pause() {}
 	stop() {}
-	destroy() {}
+	destroy() { this.destroyed = true; }
 }
 
 const heap = new Float32Array([1, 1]);
+const createdContexts = [];
 const context = {
 	ArrayBuffer,
 	DataView,
@@ -78,7 +92,11 @@ const context = {
 	autoAddDeps() {},
 	mergeInto() {},
 	wx: {
-		createInnerAudioContext: () => new FakeInnerAudioContext(),
+		createInnerAudioContext: () => {
+			const audioContext = new FakeInnerAudioContext();
+			createdContexts.push(audioContext);
+			return audioContext;
+		},
 	},
 };
 
@@ -114,4 +132,58 @@ assert.strictEqual(audio.contextPool.length, 1, "context must be returned exactl
 assert.strictEqual(audio.contextPool[0], playbackContext);
 assert.strictEqual(new Set(audio.contextPool).size, audio.contextPool.length);
 
-console.log("WeChat InnerAudioContext single-release test passed");
+godotAudio.sampleFinishedCallback = null;
+audio.streamPaths.set("stream-a", { path: "audio/a.wav", loopMode: "disabled" });
+audio.streamPaths.set("stream-b", { path: "audio/b.wav", loopMode: "disabled" });
+
+function playAndStop(playbackId, streamId) {
+	audio.startSample(playbackId, streamId, 0, 0, 1, 0);
+	const audioContext = audio.activePlaybacks.get(playbackId).ctx;
+	audio.stopSample(playbackId);
+	return audioContext;
+}
+
+const contextA = playAndStop("playback-a", "stream-a");
+const contextB = playAndStop("playback-b", "stream-b");
+
+assert.notStrictEqual(contextA, contextB, "different sources must not share a context");
+assert.deepStrictEqual(contextA.srcAssignments, ["audio/a.wav"]);
+assert.deepStrictEqual(contextB.srcAssignments, ["audio/b.wav"]);
+
+for (let index = 0; index < 30; index += 1) {
+	const useA = index % 2 === 0;
+	const reusedContext = playAndStop(
+		`alternating-playback-${index}`,
+		useA ? "stream-a" : "stream-b"
+	);
+	assert.strictEqual(reusedContext, useA ? contextA : contextB);
+}
+
+assert.strictEqual(contextA.internalErrorListenerCount, 1);
+assert.strictEqual(contextB.internalErrorListenerCount, 1);
+assert.deepStrictEqual(contextA.srcAssignments, ["audio/a.wav"]);
+assert.deepStrictEqual(contextB.srcAssignments, ["audio/b.wav"]);
+
+const uniqueContexts = [];
+for (let index = 0; index < audio.MAX_POOL_SIZE + 3; index += 1) {
+	const streamId = `unique-stream-${index}`;
+	audio.streamPaths.set(streamId, {
+		path: `audio/unique-${index}.wav`,
+		loopMode: "disabled",
+	});
+	uniqueContexts.push(playAndStop(`unique-playback-${index}`, streamId));
+}
+
+assert.strictEqual(audio.contextPool.length, audio.MAX_POOL_SIZE);
+assert.strictEqual(new Set(audio.contextPool).size, audio.contextPool.length);
+assert.strictEqual(playbackContext.destroyed, true, "the least recently used context must be evicted first");
+assert.strictEqual(contextA.destroyed, true);
+assert.strictEqual(contextB.destroyed, true);
+assert.strictEqual(uniqueContexts.at(-1).destroyed, false);
+assert.ok(audio.contextPool.includes(uniqueContexts.at(-1)), "the most recently used context must stay pooled");
+for (const audioContext of createdContexts) {
+	assert.ok(audioContext.srcAssignments.length <= 1, "a context source must be assigned at most once");
+	assert.ok(audioContext.internalErrorListenerCount <= 1, "internal error listeners must not accumulate");
+}
+
+console.log("WeChat InnerAudioContext pool regression tests passed");

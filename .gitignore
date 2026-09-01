@@ -19,6 +19,11 @@
 /release-assets/
 /.ci-emsdk/
 /.sconsign.dblite
+# 本地/CI 构建工具缓存(build_wechat_glx.ps1 自举),只保留 brotli 许可文件
+/.build-tools/*
+!/.build-tools/brotli-1.2.0/
+/.build-tools/brotli-1.2.0/*
+!/.build-tools/brotli-1.2.0/LICENSE.brotli
 /plugin/thirdparty/godot-cpp/bin/
 /plugin/thirdparty/godot-cpp/gen/
 
