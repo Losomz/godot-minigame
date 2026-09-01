@@ -1446,7 +1446,8 @@ const _GodotAudio = {
 				return Math.max(0, Math.min(1, baseVolume * busVolumeLinear));
 			},
 
-			// Get or create an InnerAudioContext from the pool
+			// Reuse only contexts already bound to the requested source. WeChat's
+			// src setter installs internal listeners that offError() cannot remove.
 			getContext: function (desiredSrc) {
 				// Try to find a context with matching src to avoid reloading
 				if (desiredSrc) {
@@ -1457,12 +1458,6 @@ const _GodotAudio = {
 						GodotAudio.WX.log(`Reusing pooled context with matching src`);
 						return ctx;
 					}
-				}
-
-				if (GodotAudio.WX.contextPool.length > 0) {
-					const ctx = GodotAudio.WX.contextPool.pop();
-					GodotAudio.WX.log(`Reusing context from pool (${GodotAudio.WX.contextPool.length} remaining)`);
-					return ctx;
 				}
 
 				const ctx = wx.createInnerAudioContext();
@@ -1478,12 +1473,12 @@ const _GodotAudio = {
 				GodotAudio.WX.resetContext(ctx);
 
 				if (GodotAudio.WX.contextPool.length >= GodotAudio.WX.MAX_POOL_SIZE) {
-					GodotAudio.WX.destroyContext(ctx);
-					GodotAudio.WX.log(`Context pool full, destroyed context`);
-					return;
+					const evicted = GodotAudio.WX.contextPool.shift();
+					GodotAudio.WX.destroyContext(evicted);
+					GodotAudio.WX.log(`Context pool full, evicted least recently used context`);
 				}
 
-				// Add to pool
+				// Recently released contexts stay at the end of the LRU pool.
 				GodotAudio.WX.contextPool.push(ctx);
 				GodotAudio.WX.log(`Context returned to pool (${GodotAudio.WX.contextPool.length} available)`);
 			},

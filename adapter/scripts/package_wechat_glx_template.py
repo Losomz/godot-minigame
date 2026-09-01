@@ -318,6 +318,33 @@ def verify_source() -> str:
             REPO_ROOT
             / "adapter"
             / "sources"
+            / "platform"
+            / "web"
+            / "js"
+            / "libs"
+            / "library_godot_audio.js",
+            GODOT_DIR / "platform" / "web" / "js" / "libs" / "library_godot_audio.js",
+        ),
+        (
+            REPO_ROOT
+            / "adapter"
+            / "sources"
+            / "platform"
+            / "web"
+            / "js"
+            / "tests"
+            / "test_wechat_audio_context_single_release.js",
+            GODOT_DIR
+            / "platform"
+            / "web"
+            / "js"
+            / "tests"
+            / "test_wechat_audio_context_single_release.js",
+        ),
+        (
+            REPO_ROOT
+            / "adapter"
+            / "sources"
             / "optional"
             / "platform"
             / "web"
@@ -356,6 +383,19 @@ def verify_tool_versions() -> tuple[str, str]:
 
     run(["node", "--version"])
     return emcc_version, brotli_version
+
+
+def verify_source_regressions() -> None:
+    audio_test = (
+        GODOT_DIR
+        / "platform"
+        / "web"
+        / "js"
+        / "tests"
+        / "test_wechat_audio_context_single_release.js"
+    )
+    require_file(audio_test)
+    run(["node", str(audio_test)], GODOT_DIR)
 
 
 def build_engine(scons: str, incremental: bool, profile_path: Path, exceptions: str, variant: str) -> None:
@@ -907,6 +947,7 @@ def main() -> int:
     godot_commit = verify_source()
     adapter_commit = run(["git", "rev-parse", "HEAD"])
     emcc_version, brotli_version = verify_tool_versions()
+    verify_source_regressions()
     profile_settings = read_profile_settings(profile_path)
     profile_sha256 = sha256_bytes(normalized_lf(profile_path))
 
