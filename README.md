@@ -2,7 +2,7 @@
 
 面向 Godot 4.4+ 的微信小游戏产品线。仓库只发布两种产品：Godot 编辑器插件和经过验证的小游戏模板。
 
-插件与模板是独立发布物：插件使用 `plugin-v*` Release，模板使用 `<godot>-<variant>-r*` Release（如 `4.5.2-glx-2d-r1`）。插件更新不依赖仓库全局 `latest`，模板也不会触发插件升级。
+插件与模板是独立发布物：插件使用 `plugin-v*` Release，模板使用 `<godot>-<variant>-r*` Release（如 `4.5.2-glx-2d-ad-noexc-r7`）。插件更新不依赖仓库全局 `latest`，模板也不会触发插件升级。
 
 如果要用 AI 协助做适配移植，请使用 `.agent/skills/godot-wechat-minigame-adapter/`。Godot 4.5.2 GLX 的原理、源码改动和产物流程见 [`adapter/WECHAT_GLX.md`](adapter/WECHAT_GLX.md)。
 
@@ -89,8 +89,8 @@ python tools/product/product.py render-versions --check
 
 ## Release 命名
 
-- 插件：`plugin-v1.0.4`
-- 模板：`4.5.2-glx-2d-r1`（版本-变体-修订号，与产物文件名一致）
+- 插件：`plugin-v1.0.11`
+- 模板：`4.5.2-glx-2d-ad-noexc-r7`（版本-变体-修订号，与产物文件名一致）
 
 一个仓库只有一个 Release 列表和一个全局 latest，因此所有产品线都使用命名空间 tag 和独立 Catalog。
 
