@@ -170,7 +170,7 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     elif update_catalog.get("tag") or update_catalog.get("platforms"):
         errors.append("Unpublished plugin catalog must not expose a tag or platform assets")
 
-    runtime_source = root / "plugin/src/templates/template_manager.cpp"
+    runtime_source = root / "plugin/include/core/plugin_version.h"
     try:
         runtime_text = runtime_source.read_text(encoding="utf-8")
     except OSError as exc:
@@ -178,7 +178,7 @@ def validate_plugin(root: Path, plugin: dict, update_catalog: dict) -> list[str]
     else:
         runtime_match = re.search(r'TOOLKIT_PLUGIN_VERSION\s*=\s*"([^"]+)"', runtime_text)
         if not runtime_match or runtime_match.group(1) != version:
-            errors.append("Template runtime plugin version must match plugin/plugin.json")
+            errors.append("Compiled plugin version must match plugin/plugin.json")
 
     return errors
 

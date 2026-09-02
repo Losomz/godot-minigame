@@ -1,4 +1,5 @@
 #include "core/update_manager.h"
+#include "core/plugin_version.h"
 #include "core/logging.h"
 #include "core/network_proxy.h"
 #include "core/plugin_state_store.h"
@@ -228,6 +229,7 @@ void UpdateManager::_bind_methods() {
     ClassDB::bind_method(D_METHOD("clear_pending_update"), &UpdateManager::clear_pending_update);
     ClassDB::bind_method(D_METHOD("restart_editor_for_update"), &UpdateManager::restart_editor_for_update);
     ClassDB::bind_method(D_METHOD("get_local_version"), &UpdateManager::get_local_version);
+    ClassDB::bind_method(D_METHOD("get_runtime_version"), &UpdateManager::get_runtime_version);
     ClassDB::bind_method(D_METHOD("get_remote_version_info"), &UpdateManager::get_remote_version_info);
     ClassDB::bind_method(D_METHOD("get_current_state"), &UpdateManager::get_current_state);
     ClassDB::bind_method(D_METHOD("get_download_file_path"), &UpdateManager::get_download_file_path);
@@ -794,6 +796,10 @@ void UpdateManager::load_last_install_result() {
 
 bool UpdateManager::is_properly_configured() const {
     return !resolve_update_manifest_url().is_empty();
+}
+
+String UpdateManager::get_runtime_version() const {
+    return TOOLKIT_PLUGIN_VERSION;
 }
 
 String UpdateManager::resolve_update_manifest_url() const {
