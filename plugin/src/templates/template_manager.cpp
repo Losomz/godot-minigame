@@ -21,6 +21,7 @@
 #include <godot_cpp/classes/v_box_container.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include "core/plugin_version.h"
 
 #ifdef EMBED_RESOURCES
 #include "resources/embedded_resources.h"
@@ -38,7 +39,6 @@ static bool _parse_http_url(const String &url, String &host, int &port, String &
 namespace {
 constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
 constexpr const char *TEMPLATE_STATE_SECTION = "templates";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.11";
 constexpr const char *DEFAULT_TEMPLATE_CATALOG_URL = "https://raw.githubusercontent.com/Losomz/godot-minigame/main/plugin/catalog/templates.json";
 
 bool _is_redirect_response_code(int response_code) {
