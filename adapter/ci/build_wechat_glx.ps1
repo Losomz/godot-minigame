@@ -4,7 +4,8 @@ param(
     [ValidateRange(1, 2147483647)]
     [int]$Revision = 1,
     [string]$Template = "4.5.2",
-    [string]$Variant = "glx",
+    [ValidateSet("glx", "webgl")]
+    [string]$Variant = "webgl",
     [string]$Profile = "2d",
     [ValidateSet("enabled", "disabled")]
     [string]$Exceptions = "enabled",
@@ -128,7 +129,7 @@ Write-Host "Brotli: $Brotli"
 Write-Host "Template: $Template"
 Write-Host "Variant: $Variant"
 Write-Host "Profile: $Profile"
-Write-Host "GLX exceptions: $Exceptions"
+Write-Host "C++ exceptions: $Exceptions"
 Write-Host "Ad merged: $Ad"
 Write-Host "Tests: disabled"
 
@@ -151,7 +152,7 @@ Push-Location $RepoRoot
 try {
     & $VenvPython @BuildArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "WeChat GLX build failed with exit code $LASTEXITCODE."
+        throw "WeChat template build failed with exit code $LASTEXITCODE."
     }
 } finally {
     Pop-Location

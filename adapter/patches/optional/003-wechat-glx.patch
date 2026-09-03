@@ -54,6 +54,34 @@ index b096a8a7f3..b258e5ddee 100644
  		SWAP(frames[frame].timestamp_names, frames[frame].timestamp_result_names);
  		SWAP(frames[frame].timestamp_cpu_values, frames[frame].timestamp_cpu_result_values);
  	}
+diff --git a/platform/web/SCsub b/platform/web/SCsub
+index 7f36efaeff..f5f2e525c8 100644
+--- a/platform/web/SCsub
++++ b/platform/web/SCsub
+@@ -65,11 +65,18 @@ sys_env.AddJSExterns(
+     ]
+ )
+ 
+-sys_env.AddJSPost(
+-    [
+-        "js/patches/patch_em_gl.js",
+-    ]
+-)
++if env["wechat_glx"]:
++    sys_env.AddJSPost(
++        [
++            "js/patches/patch_em_gl.js",
++        ]
++    )
++else:
++    sys_env.AddJSPost(
++        [
++            "js/patches/patch_standard_em_gl.js",
++        ]
++    )
+ 
+ if env["javascript_eval"]:
+     sys_env.AddJSLibraries(["js/libs/library_godot_javascript_singleton.js"])
 diff --git a/platform/web/detect.py b/platform/web/detect.py
 index 49dc2c50f5..7993a035b9 100644
 --- a/platform/web/detect.py

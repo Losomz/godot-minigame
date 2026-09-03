@@ -21,6 +21,7 @@
 #include <godot_cpp/classes/v_box_container.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include "core/plugin_version.h"
 
 #ifdef EMBED_RESOURCES
 #include "resources/embedded_resources.h"
@@ -38,7 +39,6 @@ static bool _parse_http_url(const String &url, String &host, int &port, String &
 namespace {
 constexpr const char *EDITOR_SETTING_PREFIX = "godot_minigame/templates/";
 constexpr const char *TEMPLATE_STATE_SECTION = "templates";
-constexpr const char *TOOLKIT_PLUGIN_VERSION = "1.0.11";
 constexpr const char *DEFAULT_TEMPLATE_CATALOG_URL = "https://raw.githubusercontent.com/Losomz/godot-minigame/main/plugin/catalog/templates.json";
 
 bool _is_redirect_response_code(int response_code) {
@@ -641,7 +641,7 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         Dictionary entry = templates[i];
         String status = String(entry.get("status", "")).strip_edges().to_lower();
         String minimum_plugin = String(entry.get("minimum_plugin", "")).strip_edges();
-        if (status != "stable" || !_is_semver(minimum_plugin) ||
+        if ((status != "stable" && status != "prerelease") || !_is_semver(minimum_plugin) ||
                 compare_version_numbers(minimum_plugin, TOOLKIT_PLUGIN_VERSION) > 0) {
             continue;
         }
@@ -650,6 +650,9 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         String version = String(entry.get("godot_version", "")).strip_edges();
         String filename = String(entry.get("file", "")).strip_edges();
         String release_tag = String(entry.get("tag", "")).strip_edges();
+        String variant = String(entry.get("variant", "")).strip_edges().to_lower();
+        String display_name = String(entry.get("display_name", "")).strip_edges();
+        const bool recommended = status == "stable" && bool(entry.get("recommended", false));
         String sha256 = String(entry.get("sha256", "")).strip_edges().to_lower();
         String download_url = String(entry.get("download_url", "")).strip_edges();
         const String download_filename = download_url.get_slice("?", 0).get_file();
@@ -668,13 +671,20 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         normalized_entry["download_url"] = download_url;
         normalized_entry["minimum_plugin"] = minimum_plugin;
         normalized_entry["status"] = status;
+        normalized_entry["variant"] = variant;
+        normalized_entry["display_name"] = display_name;
+        normalized_entry["recommended"] = recommended;
 
-        Dictionary major_versions;
-        if (parsed_versions.has(major)) {
-            major_versions = parsed_versions[major];
+        if (status == "stable") {
+            Dictionary major_versions;
+            if (parsed_versions.has(major)) {
+                major_versions = parsed_versions[major];
+            }
+            if (!major_versions.has(version) || recommended) {
+                major_versions[version] = normalized_entry;
+            }
+            parsed_versions[major] = major_versions;
         }
-        major_versions[version] = normalized_entry;
-        parsed_versions[major] = major_versions;
 
         Dictionary version_info;
         version_info["godot_major"] = major;
@@ -684,8 +694,17 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
         version_info["sha256"] = sha256;
         version_info["download_url"] = download_url;
         version_info["minimum_plugin"] = minimum_plugin;
+        version_info["status"] = status;
+        version_info["variant"] = variant;
+        const String variant_label = variant.is_empty() ? release_tag : variant;
+        version_info["display_name"] = display_name.is_empty() ? "Godot " + version + " [" + variant_label + "]" : display_name;
+        version_info["recommended"] = recommended;
         version_info["is_embedded"] = is_template_embedded(filename);
-        parsed_available.append(version_info);
+        if (recommended) {
+            parsed_available.push_front(version_info);
+        } else {
+            parsed_available.append(version_info);
+        }
         accepted_templates.append(entry.duplicate(true));
     }
 
@@ -702,7 +721,7 @@ Error TemplateManager::parse_templates_catalog(const String& json_content) {
     catalog_cache = accepted_catalog;
     versions_loaded = true;
     catalog_revision++;
-    TOOLKIT_LOG("TemplateManager: Accepted ", available_versions.size(), " stable compatible catalog template(s)");
+    TOOLKIT_LOG("TemplateManager: Accepted ", available_versions.size(), " compatible catalog template(s)");
     return OK;
 }
 
@@ -752,7 +771,7 @@ Array TemplateManager::get_remote_template_choices() const {
         choice["kind"] = "catalog";
         choice["provider"] = "remote";
         choice["origin"] = String::utf8("远端缓存");
-        choice["display_name"] = "Godot " + version;
+        choice["display_name"] = String(choice.get("display_name", "Godot " + version));
         choice["cached"] = cached;
         choice["bundled"] = !bundled_path.is_empty() || embedded;
         choice["available"] = cached || !bundled_path.is_empty() || embedded;
@@ -940,7 +959,8 @@ String TemplateManager::get_active_template_filename() const {
     }
     for (int i = 0; i < available_versions.size(); i++) {
         Dictionary info = available_versions[i];
-        if (String(info.get("version", "")) == active_template_version &&
+        if (String(info.get("status", "stable")) == "stable" &&
+                String(info.get("version", "")) == active_template_version &&
                 String(info.get("godot_major", "")) == get_godot_major_version()) {
             return String(info.get("filename", ""));
         }
@@ -1261,6 +1281,10 @@ Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const
     normalized["release_tag"] = fallback_release_tag.strip_edges();
     normalized["sha256"] = "";
     normalized["download_url"] = "";
+    normalized["status"] = "stable";
+    normalized["variant"] = "";
+    normalized["display_name"] = "";
+    normalized["recommended"] = false;
 
     if (entry.get_type() == Variant::STRING) {
         normalized["filename"] = String(entry).strip_edges();
@@ -1273,6 +1297,10 @@ Dictionary TemplateManager::normalize_template_entry(const Variant &entry, const
         normalized["release_tag"] = String(dict_entry.get("tag", dict_entry.get("release_tag", fallback_release_tag))).strip_edges();
         normalized["sha256"] = String(dict_entry.get("sha256", "")).strip_edges().to_lower();
         normalized["download_url"] = String(dict_entry.get("download_url", "")).strip_edges();
+        normalized["status"] = String(dict_entry.get("status", "stable")).strip_edges().to_lower();
+        normalized["variant"] = String(dict_entry.get("variant", "")).strip_edges().to_lower();
+        normalized["display_name"] = String(dict_entry.get("display_name", "")).strip_edges();
+        normalized["recommended"] = bool(dict_entry.get("recommended", false));
     }
 
     return normalized;
@@ -1507,6 +1535,9 @@ String TemplateManager::get_best_bundled_template_for_editor() const {
     Array versions = get_available_versions();
     for (int i = 0; i < versions.size(); i++) {
         Dictionary entry = versions[i];
+        if (String(entry.get("status", "stable")) != "stable") {
+            continue;
+        }
         if (String(entry.get("godot_major", "")) != major_version) {
             continue;
         }
@@ -2492,6 +2523,10 @@ Array TemplateManager::build_available_versions_from_cache() const {
             version_info["release_tag"] = String(normalized_entry.get("release_tag", "")).strip_edges();
             version_info["sha256"] = String(normalized_entry.get("sha256", "")).strip_edges();
             version_info["download_url"] = String(normalized_entry.get("download_url", "")).strip_edges();
+            version_info["status"] = String(normalized_entry.get("status", "stable"));
+            version_info["variant"] = String(normalized_entry.get("variant", ""));
+            version_info["display_name"] = String(normalized_entry.get("display_name", ""));
+            version_info["recommended"] = bool(normalized_entry.get("recommended", false));
             version_info["is_embedded"] = is_template_embedded(filename);
 
             rebuilt_versions.append(version_info);
@@ -2685,7 +2720,8 @@ void TemplateManager::ensure_default_active_template() {
     Array choices = get_remote_template_choices();
     for (int i = 0; i < choices.size(); i++) {
         Dictionary choice = choices[i];
-        if (String(choice.get("version", "")) == active_template_version && bool(choice.get("available", false))) {
+        if (String(choice.get("status", "stable")) == "stable" &&
+                String(choice.get("version", "")) == active_template_version && bool(choice.get("available", false))) {
             activate_local_template(choice, String(choice.get("path", "")));
             return;
         }
@@ -2694,6 +2730,9 @@ void TemplateManager::ensure_default_active_template() {
     Dictionary best_available;
     for (int i = 0; i < choices.size(); i++) {
         Dictionary choice = choices[i];
+        if (String(choice.get("status", "stable")) != "stable") {
+            continue;
+        }
         if (!bool(choice.get("available", false))) {
             continue;
         }
@@ -2740,6 +2779,9 @@ Array TemplateManager::get_missing_templates() const {
     // Check each available version to see if we have it locally (downloaded or embedded)
     for (int i = 0; i < available_versions.size(); i++) {
         Dictionary version_info = available_versions[i];
+        if (String(version_info.get("status", "stable")) != "stable") {
+            continue;
+        }
         String filename = version_info.get("filename", "");
 
         if (!filename.is_empty()) {

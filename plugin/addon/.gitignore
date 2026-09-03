@@ -1,0 +1,7 @@
+# Keep the immutable release payload under version control even when the
+# consuming repository ignores bin directories or native-library extensions.
+!/bin/
+!/bin/**
+
+# Godot creates Windows hot-reload copies next to the real versioned DLL.
+/bin/**/~*.dll

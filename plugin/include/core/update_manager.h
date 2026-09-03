@@ -78,6 +78,7 @@ public:
 	void restart_editor_for_update();
 
 	bool is_properly_configured() const;
+	godot::String get_runtime_version() const;
 	godot::String get_download_file_path() const;
 	godot::String get_local_version() const;
 	godot::Dictionary get_remote_version_info() const;
