@@ -1,13 +1,13 @@
 """Unified packaging entry point.
 
 Wraps adapter/scripts/package_wechat_glx_template.py with template-base
-selection (adapter/templates/manifest.json), trim-profile short names, engine
+selection (templates/manifest.json), trim-profile short names, engine
 variants, exception mode, ad merging and output directory.
 
 Examples:
-    python adapter/ci/package.py --list
-    python adapter/ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled --revision 1
-    python adapter/ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions disabled --revision 2 --ad
+    python ci/package.py --list
+    python ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled --revision 1
+    python ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions disabled --revision 2 --ad
 """
 
 from __future__ import annotations
@@ -18,22 +18,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATES_MANIFEST_PATH = REPO_ROOT / "adapter" / "templates" / "manifest.json"
-CONFIGS_DIR = REPO_ROOT / "adapter" / "configs"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TEMPLATES_MANIFEST_PATH = REPO_ROOT / "templates" / "manifest.json"
+CONFIGS_DIR = REPO_ROOT / "templates" / "configs"
 PACKAGE_SCRIPT = REPO_ROOT / "adapter" / "scripts" / "package_wechat_glx_template.py"
 
 
 def list_templates() -> None:
     manifest = json.loads(TEMPLATES_MANIFEST_PATH.read_text(encoding="utf-8"))
-    print("可用模板（打包基底，adapter/templates/manifest.json）:")
+    print("可用模板（打包基底，templates/manifest.json）:")
     if not manifest:
         print("  (无)")
     for template_id, entry in sorted(manifest.items()):
         print(f"  {template_id}: {entry['dir']}  engine={entry.get('engine', '?')}  "
               f"默认裁切={entry.get('default_profile', '-')}")
 
-    print("\n可用裁切模板（adapter/configs/）:")
+    print("\n可用裁切模板（templates/configs/）:")
     profiles = sorted(CONFIGS_DIR.glob("*.py")) if CONFIGS_DIR.is_dir() else []
     if not profiles:
         print("  (无)")
@@ -42,13 +42,13 @@ def list_templates() -> None:
         print(f"  {short:<14} -> {path.relative_to(REPO_ROOT).as_posix()}")
 
     print("\n变体维度:")
-    print("  --variant     webgl | glx（默认 webgl）")
+    print("  --variant     glx | webgl（默认 glx；webgl 运行壳暂未提供）")
     print("  --exceptions  enabled | disabled（默认 enabled；disabled 省 ~1.14 MiB）")
     print("  --ad          融合微信广告组件（adapter/wechat_ad）")
 
     print("\n示例:")
-    print("  python adapter/ci/package.py --template 4.5.2 --variant glx --profile 2d --revision 1")
-    print("  python adapter/ci/package.py --template 4.5.2 --variant glx --profile my_trim.py "
+    print("  python ci/package.py --template 4.5.2 --variant glx --profile 2d --revision 1")
+    print("  python ci/package.py --template 4.5.2 --variant glx --profile my_trim.py "
           "--exceptions disabled --revision 2 --ad")
 
 
@@ -57,8 +57,8 @@ def parse_args() -> argparse.Namespace:
         description="统一打包入口：模板基底 + 裁切模板 + 变体组合 -> dist/",
     )
     parser.add_argument("--list", action="store_true", help="列出可用模板与裁切模板")
-    parser.add_argument("--template", default="4.5.2", help="模板基底 id（adapter/templates/manifest.json）")
-    parser.add_argument("--variant", default="webgl", choices=["glx", "webgl"], help="引擎变体（默认 webgl）")
+    parser.add_argument("--template", default="4.5.2", help="模板基底 id（templates/manifest.json）")
+    parser.add_argument("--variant", default="glx", choices=["glx", "webgl"], help="引擎变体（默认 glx）")
     parser.add_argument("--profile", default=None,
                         help="裁切模板：简名（如 2d）或 .py 文件路径；默认取模板登记表的 default_profile")
     parser.add_argument("--exceptions", default="enabled", choices=["enabled", "disabled"])

@@ -47,7 +47,7 @@ scons platform=web target=template_release threads=no wasm_simd=no wechat_glx=ye
 cmd /c compress_wasm.bat
 ```
 
-`wechat_glx_exceptions` 默认 `yes`。`no` 用于完成发布的小游戏瘦身，测试阶段请保持 `yes`；体积数据与取舍见 `adapter/WECHAT_GLX.md`。裁切清单（`adapter/configs/*.py`）与异常模式也可通过 `python adapter/ci/package.py --template 4.5.2 --profile 2d --exceptions disabled` 及中央模板 workflow 输入选择。
+`wechat_glx_exceptions` 默认 `yes`。`no` 用于完成发布的小游戏瘦身，测试阶段请保持 `yes`；体积数据与取舍见 `adapter/WECHAT_GLX.md`。裁切清单（`templates/configs/*.py`）与异常模式也可通过 `python ci/package.py --template 4.5.2 --profile 2d --exceptions disabled` 及 CI 的 `build-wechat-glx.yml` 输入选择。
 
 `compress_wasm.bat` creates `bin/.web_zip/godot.wasm.br` and patches generated `godot.js`. Do not distribute a build that skipped this step.
 

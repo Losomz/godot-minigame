@@ -13,8 +13,8 @@
 
 - `plugin/plugin.json`：插件身份和版本
 - `plugin/catalog/plugin-stable.json`：稳定插件 Release
-- `plugin/catalog/templates.json`：已晋升模板 Release
-- `plugin/resources/versions.yaml`：模板目录生成投影
+- `plugin/catalog/templates.json`：稳定版与 Prerelease 模板目录，同一 Godot 版本可包含多个变体
+- `plugin/resources/versions.yaml`：每个 Godot 版本的推荐稳定模板投影
 - `adapter/adapters.json`：版本适配分支和构建契约
 
 `plugin/resources/versions.yaml` 由模板 Catalog 生成，不允许手工双写。
@@ -25,7 +25,7 @@
 
 ## 模板发布
 
-模板使用 `<godot-version>-<variant>-rN` tag。中央 `wechat-template.yml` 从 `adapter/adapters.json` 解析登记分支和构建契约，生成不可变 TPZ；完成设备验证后，将 Release 信息晋升到模板 Catalog。
+模板使用 `<godot-version>-<variant>-rN` tag，修订号在同一 Godot 版本内全局递增。中央 `wechat-template.yml` 从 `adapter/adapters.json` 解析登记分支和构建契约，生成不可变 TPZ，并将稳定版或 Prerelease 写入模板 Catalog。插件会展示两者，但只自动选择标记为推荐的稳定模板。
 
 Promote 只允许修改：
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       auto_publish:
-        description: "auto_publish: 一键发布。勾选=发布正式版并自动上架模板目录；取消=仅发布 Prerelease 预览，不动目录"
+        description: "auto_publish: 勾选=发布正式稳定版；取消=发布可在插件中手动选择的 Prerelease"
         required: false
         default: true
         type: boolean
@@ -13,6 +13,14 @@ on:
         required: false
         default: "4.5"
         type: string
+      variant:
+        description: "variant: 渲染线路。webgl=标准 WebGL2；glx=微信 EmscriptenGLX"
+        required: false
+        default: webgl
+        type: choice
+        options:
+          - webgl
+          - glx
       profile:
         description: "profile: 裁切配置，对应 adapter/configs/wechat_<名称>.py。示例：2d（标准 2D 裁切）"
         required: false
@@ -44,7 +52,7 @@ on:
       minimum_plugin:
         description: "minimum_plugin: 运行模板所需的最低插件版本。示例：1.0.4"
         required: false
-        default: "1.0.4"
+        default: "1.0.13"
         type: string
 
 permissions: {}
@@ -68,6 +76,7 @@ jobs:
       runner: ${{ steps.contract.outputs.runner }}
       godot_version: ${{ steps.contract.outputs.godot_version }}
       godot_major: ${{ steps.contract.outputs.godot_major }}
+      default_variant: ${{ steps.contract.outputs.default_variant }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -79,6 +88,7 @@ jobs:
           SOURCE_REF: ${{ inputs.source_ref }}
           AUTO_PUBLISH: ${{ inputs.auto_publish }}
           INCLUDE_AD: ${{ inputs.include_ad }}
+          VARIANT: ${{ inputs.variant }}
         shell: bash
         run: |
           python - <<'PY'
@@ -101,6 +111,15 @@ jobs:
               raise SystemExit(f"分支 {source_ref} 未登记为可正式发布的分支，请取消一键发布后重试")
           if os.environ["INCLUDE_AD"] == "true" and not build.get("supports_ad"):
               raise SystemExit(f"分支 {source_ref} 不支持广告模板变体，请取消 include_ad 后重试")
+          supported_variants = build.get("supported_variants", [])
+          variant = os.environ["VARIANT"]
+          if variant not in supported_variants:
+              raise SystemExit(
+                  f"分支 {source_ref} 不支持变体 {variant!r}；可选：{', '.join(supported_variants)}"
+              )
+          default_variant = str(build.get("default_variant", ""))
+          if default_variant not in supported_variants:
+              raise SystemExit(f"分支 {source_ref} 的 default_variant 配置无效")
 
           godot_version = str(adapter["godot_version"])
           godot_major = "godot" + godot_version.split(".")[0]
@@ -112,9 +131,9 @@ jobs:
               handle.write("build=" + json.dumps(build, separators=(",", ":")) + "\n")
               handle.write(f"godot_version={godot_version}\n")
               handle.write(f"godot_major={godot_major}\n")
+              handle.write(f"default_variant={default_variant}\n")
           PY
-      - name: 一键发布时校验修订号必须递增
-        if: inputs.auto_publish
+      - name: 校验修订号必须全局递增
         env:
           GODOT_MAJOR: ${{ steps.contract.outputs.godot_major }}
           GODOT_VERSION: ${{ steps.contract.outputs.godot_version }}
@@ -142,7 +161,7 @@ jobs:
                   ):
                       match = re.search(r"-r([1-9][0-9]*)$", str(entry.get("tag", "")))
                       if match:
-                          existing_revision = int(match.group(1))
+                          existing_revision = max(existing_revision, int(match.group(1)))
 
           if existing_revision >= incoming:
               raise SystemExit(
@@ -303,6 +322,7 @@ jobs:
         env:
           PROFILE_INPUT: ${{ inputs.profile }}
           EXCEPTIONS_INPUT: ${{ inputs.exceptions }}
+          VARIANT_INPUT: ${{ inputs.variant }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -319,11 +339,11 @@ jobs:
 
           $buildScript = Join-Path $env:GITHUB_WORKSPACE $env:BUILD_SCRIPT
           if ("${{ inputs.include_ad }}" -eq "true") {
-              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Profile $profileArg -Exceptions $env:EXCEPTIONS_INPUT -Ad
+              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Variant $env:VARIANT_INPUT -Profile $profileArg -Exceptions $env:EXCEPTIONS_INPUT -Ad
           } else {
-              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Profile $profileArg -Exceptions $env:EXCEPTIONS_INPUT
+              & $buildScript -EmsdkPath $emsdk -Revision ([int]"${{ inputs.revision }}") -Variant $env:VARIANT_INPUT -Profile $profileArg -Exceptions $env:EXCEPTIONS_INPUT
           }
-          if ($LASTEXITCODE -ne 0) { throw "WeChat GLX build failed" }
+          if ($LASTEXITCODE -ne 0) { throw "WeChat template build failed" }
 
       - name: Verify artifact identity
         id: identity
@@ -451,6 +471,7 @@ jobs:
           INCLUDE_AD: ${{ inputs.include_ad }}
           PROFILE: ${{ inputs.profile }}
           EXCEPTIONS: ${{ inputs.exceptions }}
+          VARIANT: ${{ inputs.variant }}
         shell: bash
         run: |
           set -euo pipefail
@@ -482,6 +503,7 @@ jobs:
             "- 来源分支：${SOURCE_REF}" \
             "- 来源提交：${SOURCE_COMMIT}" \
             "- 产物：${ARTIFACT_STEM}.tpz" \
+            "- 渲染线路：${VARIANT}" \
             "- 裁切配置：${PROFILE}" \
             "- C++ 异常：${EXCEPTIONS}" \
             "${ad_note}" \
@@ -517,24 +539,20 @@ jobs:
           fi
 
       - name: Checkout main for catalog update
-        if: inputs.auto_publish
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: inputs.auto_publish
         with:
           python-version: "3.13.3"
       - name: Sync with origin main
-        if: inputs.auto_publish
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main
           git reset --hard origin/main
-      - name: 自动上架到模板目录
-        if: inputs.auto_publish
+      - name: 上架到模板目录
         env:
           RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
           GODOT_MAJOR: ${{ needs.resolve.outputs.godot_major }}
@@ -544,7 +562,35 @@ jobs:
           MINIMUM_PLUGIN: ${{ inputs.minimum_plugin }}
           ARTIFACT_STEM: ${{ needs.build.outputs.artifact_stem }}
           TPZ_SHA256: ${{ needs.build.outputs.tpz_sha256 }}
+          AUTO_PUBLISH: ${{ inputs.auto_publish }}
+          VARIANT: ${{ inputs.variant }}
+          DEFAULT_VARIANT: ${{ needs.resolve.outputs.default_variant }}
+          PROFILE: ${{ inputs.profile }}
+          EXCEPTIONS: ${{ inputs.exceptions }}
+          INCLUDE_AD: ${{ inputs.include_ad }}
         run: |
+          if [ "$AUTO_PUBLISH" = "true" ]; then
+            status="stable"
+          else
+            status="prerelease"
+          fi
+
+          if [ "$VARIANT" = "webgl" ]; then
+            renderer="标准 WebGL2"
+          else
+            renderer="微信 GLX"
+          fi
+          ad_label="无广告"
+          if [ "$INCLUDE_AD" = "true" ]; then ad_label="广告"; fi
+          exception_label="有异常表"
+          if [ "$EXCEPTIONS" = "disabled" ]; then exception_label="无异常表"; fi
+          display_name="Godot $GODOT_VERSION · $renderer（$PROFILE/$ad_label/$exception_label）"
+
+          recommended_arg=()
+          if [ "$status" = "stable" ] && [ "$VARIANT" = "$DEFAULT_VARIANT" ]; then
+            recommended_arg=(--recommended)
+          fi
+
           python tools/product/product.py promote-template \
             --godot-major "$GODOT_MAJOR" \
             --godot-version "$GODOT_VERSION" \
@@ -555,10 +601,11 @@ jobs:
             --minimum-plugin "$MINIMUM_PLUGIN" \
             --source-branch "$SOURCE_BRANCH" \
             --source-commit "$SOURCE_COMMIT" \
-            --status stable
+            --status "$status" \
+            --display-name "$display_name" \
+            "${recommended_arg[@]}"
           python tools/product/product.py validate
       - name: Commit catalog to main
-        if: inputs.auto_publish
         env:
           RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
         shell: bash
@@ -567,5 +614,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add plugin/catalog/templates.json plugin/resources/versions.yaml
-          git commit -m "发布: $RELEASE_TAG"
+          if [ "${{ inputs.auto_publish }}" = "true" ]; then
+            message="发布: $RELEASE_TAG"
+          else
+            message="预发布: $RELEASE_TAG"
+          fi
+          git commit -m "$message"
           git push origin HEAD:main

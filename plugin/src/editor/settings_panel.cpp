@@ -379,6 +379,9 @@ void SettingsPanel::refresh_template_choices() {
 			if (!tag.is_empty()) {
 				text += " [" + tag + "]";
 			}
+			if (String(choice.get("status", "stable")) == "prerelease") {
+				text += String::utf8(" · 预发布");
+			}
 			text += bool(choice.get("available", false)) ? String::utf8(" · 已缓存") : String::utf8(" · 未缓存");
 		} else {
 			text += String::utf8(" · ") + String(choice.get("origin", String::utf8("本地")));

@@ -82,25 +82,66 @@ def version_key(value: str) -> tuple[int, int, int]:
     return parse_semver(value, "Godot version")
 
 
+def parse_template_tag(tag: str) -> tuple[str, str, int] | None:
+    match = TEMPLATE_TAG_RE.fullmatch(tag)
+    if not match:
+        return None
+    return match.group(1), match.group(2), int(match.group(3))
+
+
+def template_variant(entry: dict) -> str:
+    explicit = str(entry.get("variant", "")).strip()
+    if explicit:
+        return explicit
+    parsed = parse_template_tag(str(entry.get("tag", "")))
+    return parsed[1] if parsed else "legacy"
+
+
+def select_projected_template(entries: list[dict], major: str, version: str) -> dict:
+    stable = [
+        entry
+        for entry in entries
+        if entry.get("godot_major") == major
+        and entry.get("godot_version") == version
+        and entry.get("status") in {"legacy", "stable"}
+    ]
+    if not stable:
+        raise ProductError(f"No stable template can be projected for {major}/{version}")
+    recommended = [entry for entry in stable if entry.get("recommended") is True]
+    if len(recommended) > 1:
+        raise ProductError(f"Multiple recommended stable templates for {major}/{version}")
+    if recommended:
+        return recommended[0]
+    return max(stable, key=lambda entry: next_template_revision(str(entry.get("tag", ""))))
+
+
 def render_versions(catalog: dict) -> str:
     entries = catalog.get("templates")
     if not isinstance(entries, list):
         raise ProductError("plugin/catalog/templates.json must contain a templates array")
 
-    groups: dict[str, list[dict]] = {}
+    groups: dict[str, dict[str, list[dict]]] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             raise ProductError("Every template entry must be an object")
         major = entry.get("godot_major")
         if not isinstance(major, str) or not re.fullmatch(r"godot[0-9]+", major):
             raise ProductError(f"Invalid godot_major: {major!r}")
-        groups.setdefault(major, []).append(entry)
+        version = entry.get("godot_version")
+        if not isinstance(version, str):
+            raise ProductError(f"Invalid godot_version: {version!r}")
+        groups.setdefault(major, {}).setdefault(version, []).append(entry)
 
     lines: list[str] = []
     for major in sorted(groups, key=lambda item: int(item[5:])):
         lines.append(f"{major}:")
-        for entry in sorted(groups[major], key=lambda item: version_key(item["godot_version"])):
-            version = entry["godot_version"]
+        for version in sorted(groups[major], key=version_key):
+            if not any(
+                entry.get("status") in {"legacy", "stable"}
+                for entry in groups[major][version]
+            ):
+                continue
+            entry = select_projected_template(entries, major, version)
             filename = entry["file"]
             tag = entry.get("tag")
             if not tag:
@@ -238,6 +279,14 @@ def validate_adapters(root: Path, adapters: dict) -> list[str]:
             errors.append(f"Adapter {adapter_id} build.production must be boolean")
         if not isinstance(build.get("supports_ad"), bool):
             errors.append(f"Adapter {adapter_id} build.supports_ad must be boolean")
+        variants = build.get("supported_variants")
+        if not isinstance(variants, list) or not variants or not all(
+            isinstance(item, str) and re.fullmatch(r"[a-z0-9]+", item) for item in variants
+        ) or len(set(variants)) != len(variants):
+            errors.append(f"Adapter {adapter_id} build.supported_variants must be unique slugs")
+        default_variant = build.get("default_variant")
+        if not isinstance(default_variant, str) or default_variant not in (variants or []):
+            errors.append(f"Adapter {adapter_id} build.default_variant must be supported")
         required_paths = build.get("required_paths")
         if not isinstance(required_paths, list) or not required_paths or not all(
             isinstance(item, str) and item for item in required_paths
@@ -254,7 +303,10 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
     if not isinstance(entries, list) or not entries:
         return errors + ["plugin/catalog/templates.json must contain templates"]
 
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
+    seen_tags: set[str] = set()
+    seen_files: set[str] = set()
+    recommended_stable: set[tuple[str, str]] = set()
     registered_sources = {
         (str(entry.get("godot_version", "")), str(entry.get("branch", "")))
         for entry in adapters.get("adapters", [])
@@ -266,9 +318,11 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
             continue
         major = str(entry.get("godot_major", ""))
         version = str(entry.get("godot_version", ""))
-        identity = (major, version)
+        status = str(entry.get("status", ""))
+        variant = template_variant(entry)
+        identity = (major, version, variant, status)
         if identity in seen:
-            errors.append(f"Duplicate template entry: {major}/{version}")
+            errors.append(f"Duplicate template entry: {major}/{version}/{variant}/{status}")
         seen.add(identity)
         if not re.fullmatch(r"godot[0-9]+", major):
             errors.append(f"Invalid template major: {major!r}")
@@ -286,14 +340,37 @@ def validate_templates(catalog: dict, adapters: dict) -> list[str]:
             errors.append(f"Template {major}/{version} must have an HTTP(S) download_url")
         elif Path(parsed_download_url.path).name != filename:
             errors.append(f"Template {major}/{version} download_url must target {filename}")
-        status = entry.get("status")
         if status not in {"legacy", "prerelease", "stable", "retired"}:
             errors.append(f"Template {major}/{version} has an invalid status")
         if not str(entry.get("source_branch", "")):
             errors.append(f"Template {major}/{version} must identify its source_branch")
         tag = entry.get("tag")
-        if status != "legacy" and not TEMPLATE_TAG_RE.fullmatch(str(tag or "")):
+        parsed_tag = parse_template_tag(str(tag or ""))
+        if status != "legacy" and not parsed_tag:
             errors.append(f"Promoted template {major}/{version} must use a <version>-<variant>-rN tag")
+        elif status != "legacy" and parsed_tag and (parsed_tag[0] != version or parsed_tag[1] != variant):
+            errors.append(f"Template {major}/{version} variant must match its tag")
+        if status != "legacy" and (not variant or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant)):
+            errors.append(f"Template {major}/{version} has an invalid variant")
+        display_name = str(entry.get("display_name", "")).strip()
+        if status != "legacy" and not display_name:
+            errors.append(f"Template {major}/{version}/{variant} must have a display_name")
+        recommended = entry.get("recommended", False)
+        if not isinstance(recommended, bool):
+            errors.append(f"Template {major}/{version}/{variant} recommended must be boolean")
+        if status == "prerelease" and recommended is True:
+            errors.append(f"Prerelease template {major}/{version}/{variant} cannot be recommended")
+        if status == "stable" and recommended is True:
+            default_identity = (major, version)
+            if default_identity in recommended_stable:
+                errors.append(f"Multiple recommended stable templates for {major}/{version}")
+            recommended_stable.add(default_identity)
+        if tag in seen_tags:
+            errors.append(f"Duplicate template tag: {tag}")
+        seen_tags.add(str(tag))
+        if filename in seen_files:
+            errors.append(f"Duplicate template file: {filename}")
+        seen_files.add(filename)
         sha256 = entry.get("sha256")
         if status != "legacy" and not SHA256_RE.fullmatch(str(sha256 or "")):
             errors.append(f"Promoted template {major}/{version} must include SHA-256")
@@ -349,8 +426,8 @@ def command_render_versions(args: argparse.Namespace) -> None:
 
 
 def next_template_revision(tag: str) -> int:
-    match = TEMPLATE_TAG_RE.fullmatch(tag)
-    return int(match.group(3)) if match else 0
+    parsed = parse_template_tag(tag)
+    return parsed[2] if parsed else 0
 
 
 def command_promote_template(args: argparse.Namespace) -> None:
@@ -379,10 +456,16 @@ def command_promote_template(args: argparse.Namespace) -> None:
     if not isinstance(entries, list):
         raise ProductError("Template catalog has no templates array")
 
+    variant = match.group(1)
     incoming_revision = int(match.group(2))
+    if args.status == "prerelease" and args.recommended:
+        raise ProductError("Prerelease templates cannot be recommended")
     replacement = {
         "godot_major": args.godot_major,
         "godot_version": args.godot_version,
+        "variant": variant,
+        "display_name": args.display_name,
+        "recommended": bool(args.recommended and args.status == "stable"),
         "tag": args.tag,
         "file": args.file,
         "download_url": args.download_url,
@@ -393,19 +476,42 @@ def command_promote_template(args: argparse.Namespace) -> None:
         "status": args.status,
     }
 
+    existing_revisions = [
+        next_template_revision(str(entry.get("tag", "")))
+        for entry in entries
+        if entry.get("godot_major") == args.godot_major
+        and entry.get("godot_version") == args.godot_version
+    ]
+    if existing_revisions and max(existing_revisions) >= incoming_revision:
+        raise ProductError(
+            f"Template revision must increase: existing r{max(existing_revisions)}, incoming r{incoming_revision}"
+        )
+
     replaced = False
     new_entries: list[dict] = []
     for entry in entries:
-        if entry.get("godot_major") == args.godot_major and entry.get("godot_version") == args.godot_version:
-            existing_revision = next_template_revision(str(entry.get("tag", "")))
-            if existing_revision >= incoming_revision:
-                raise ProductError(
-                    f"Template revision must increase: existing r{existing_revision}, incoming r{incoming_revision}"
-                )
+        same_version = (
+            entry.get("godot_major") == args.godot_major
+            and entry.get("godot_version") == args.godot_version
+        )
+        same_variant = same_version and template_variant(entry) == variant
+        same_channel = str(entry.get("status", "")) == args.status
+        stale_prerelease = (
+            same_variant
+            and args.status == "stable"
+            and entry.get("status") == "prerelease"
+            and next_template_revision(str(entry.get("tag", ""))) <= incoming_revision
+        )
+        if same_variant and same_channel:
             new_entries.append(replacement)
             replaced = True
+        elif stale_prerelease:
+            continue
         else:
-            new_entries.append(entry)
+            retained = dict(entry)
+            if same_version and args.status == "stable" and args.recommended and retained.get("status") == "stable":
+                retained["recommended"] = False
+            new_entries.append(retained)
     if not replaced:
         new_entries.append(replacement)
     catalog["templates"] = new_entries
@@ -585,6 +691,8 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--source-branch", required=True)
     promote.add_argument("--source-commit", required=True)
     promote.add_argument("--status", choices=("prerelease", "stable"), default="prerelease")
+    promote.add_argument("--display-name", required=True)
+    promote.add_argument("--recommended", action="store_true")
     promote.set_defaults(func=command_promote_template)
 
     package = subparsers.add_parser("package-plugin", help="create a deterministic installable plugin zip")

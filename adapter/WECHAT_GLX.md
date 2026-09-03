@@ -42,7 +42,7 @@ Loader 先决定普通 WebGL 或 GLX 模式，并写入 `GameGlobal.__godotMinig
 
 ## 包体与 C++ 异常（2026-08 实测）
 
-同一份 `adapter/configs/wechat_2d.py` 裁切配置下，Brotli `godot.wasm.br` 的实测体积：
+同一份 `templates/configs/wechat_2d.py` 裁切配置下，Brotli `godot.wasm.br` 的实测体积：
 
 | 构建 | wasm.br | 函数数 | 说明 |
 | --- | --- | --- | --- |
@@ -55,8 +55,8 @@ Loader 先决定普通 WebGL 或 GLX 模式，并写入 `GameGlobal.__godotMinig
 - **GLX 静态库本身只增加约 67 KB**；6.05 MiB 与 4.85 MiB 之间约 1.14 MiB 的差异几乎全部来自 C++ 异常支持（`-fexceptions` + Emscripten 异常胶水）。
 - **为什么 GLX 需要异常**：`libemscriptenglx.a` 内部代码会 `throw`（`__cxa_throw`/`__cxa_allocate_exception` 符号已用 `llvm-nm` 验证）。异常关闭时若 GLX 库走到 throw 路径会直接 abort；正常渲染路径不抛异常时可运行。
 - **开关已实现**：`platform/web/detect.py` 提供 `wechat_glx_exceptions=yes|no`（默认 `yes`，子模块 `08024e25`）。`no` 时保持 `disable_exceptions=yes` 并跳过 `-fexceptions`。
-  - 统一入口：`python adapter/ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled|disabled`
-  - CI：`build-wechat-glx.yml` 的 `profile`（裁切清单，`adapter/configs/*.py`）与 `exceptions` 输入
+  - 统一入口：`python ci/package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled|disabled`
+  - CI：`build-wechat-glx.yml` 的 `profile`（裁切清单，`templates/configs/*.py`）与 `exceptions` 输入
   - 选择建议：**测试阶段用 `enabled`**（GLX 库抛异常有兜底）；**游戏完成发布时可用 `disabled`** 省约 1.14 MiB，前提是接受 GLX 库异常路径直接 abort 的风险。
 - 上游 godothub 的 4.6.2 GLX 模板（含 3D）为 7.52 MiB，与本仓库 4.5.2 裁切版 6.05 MiB 同属"异常开启"产物族；正式发布物不存在 5.8 MiB 级别的 4.6 GLX 模板。
 
@@ -70,7 +70,7 @@ Loader 先决定普通 WebGL 或 GLX 模式，并写入 `GameGlobal.__godotMinig
 - `adapter/thirdparty/wechat-glx/`
 - `adapter/assets/min-runtime/`
 
-`adapter/thirdparty/godot/` 是应用后并用于编译的子仓库。`dist/` 中的 `engine/godot.js` 和 `godot.wasm.br` 是生成产物，不能作为源码修复入口。
+`godot/` 是应用后并用于编译的子仓库。`dist/` 中的 `engine/godot.js` 和 `godot.wasm.br` 是生成产物，不能作为源码修复入口。
 
 ## 应用与构建
 
@@ -83,7 +83,7 @@ python adapter\scripts\apply_godot_patchset.py --include-optional wechat-glx
 
 工具箱导出还需要 `export-api` 时，应在同一次调用中添加该 optional feature。
 
-激活 Emscripten `4.0.10` 后，在 `adapter/thirdparty/godot/` 中构建：
+激活 Emscripten `4.0.10` 后，在 `godot/` 中构建：
 
 ```powershell
 scons platform=web target=template_release threads=no wasm_simd=no wechat_glx=yes
@@ -100,7 +100,7 @@ Godot 源码必须先提交并保持干净，随后在仓库根目录执行：
 统一入口（推荐）：
 
 ```powershell
-python adapter\ci\package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled --revision 1
+python ci\package.py --template 4.5.2 --variant glx --profile 2d --exceptions enabled --revision 1
 ```
 
 打包器默认先执行一次干净 SCons 构建和 Brotli/JS 后处理，然后执行以下检查和操作：
@@ -120,7 +120,7 @@ Godot source
   -> SCons
   -> godot.js + godot.wasm
   -> godot_process.js + Brotli
-  -> adapter/templates/4.5.2/（打包基底，格式文件）
+  -> templates/4.5.2/（打包基底，格式文件）
   -> dist/minigame4.5.2-glx-2d-r{N}/（完整模板）
   -> dist/minigame4.5.2-glx-2d-r{N}.tpz（分发包）
 ```

@@ -4,8 +4,7 @@ param(
     [ValidateRange(1, 2147483647)]
     [int]$Revision = 1,
     [string]$Template = "4.5.2",
-    [ValidateSet("glx", "webgl")]
-    [string]$Variant = "webgl",
+    [string]$Variant = "glx",
     [string]$Profile = "2d",
     [ValidateSet("enabled", "disabled")]
     [string]$Exceptions = "enabled",
@@ -16,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ToolRoot = Join-Path $RepoRoot ".build-tools"
 $VenvRoot = Join-Path $ToolRoot "scons-4.10.1"
 $VenvPython = Join-Path $VenvRoot "Scripts\python.exe"
@@ -26,8 +25,8 @@ $SConsWheelUrl = "https://files.pythonhosted.org/packages/ce/bf/931fb9fbb87234c3
 $SConsWheelSha256 = "BD9D1C52F908D874EBA92A8C0C0A8DCF2ED9F3B88AB956D0FCE1DA479C4E7126"
 $BrotliRoot = Join-Path $ToolRoot "brotli-1.2.0"
 $Brotli = Join-Path $BrotliRoot "brotli.exe"
-$Requirements = Join-Path $RepoRoot "adapter\ci\requirements-build.txt"
-$BuildScript = Join-Path $RepoRoot "adapter\ci\package.py"
+$Requirements = Join-Path $RepoRoot "ci\requirements-build.txt"
+$BuildScript = Join-Path $RepoRoot "ci\package.py"
 
 if (-not $EmsdkPath) {
     $EmsdkPath = $env:EMSDK
@@ -129,7 +128,7 @@ Write-Host "Brotli: $Brotli"
 Write-Host "Template: $Template"
 Write-Host "Variant: $Variant"
 Write-Host "Profile: $Profile"
-Write-Host "C++ exceptions: $Exceptions"
+Write-Host "GLX exceptions: $Exceptions"
 Write-Host "Ad merged: $Ad"
 Write-Host "Tests: disabled"
 
@@ -152,7 +151,7 @@ Push-Location $RepoRoot
 try {
     & $VenvPython @BuildArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "WeChat template build failed with exit code $LASTEXITCODE."
+        throw "WeChat GLX build failed with exit code $LASTEXITCODE."
     }
 } finally {
     Pop-Location
