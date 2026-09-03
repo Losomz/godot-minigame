@@ -57,7 +57,7 @@ class ProductToolTests(unittest.TestCase):
         header = (ROOT / "plugin/include/templates/template_manager.h").read_text(encoding="utf-8")
         export_source = (ROOT / "plugin/src/editor/wechat_export_platform.cpp").read_text(encoding="utf-8")
         settings_source = (ROOT / "plugin/src/editor/settings_panel.cpp").read_text(encoding="utf-8")
-        self.assertIn('status != "stable"', source)
+        self.assertIn('status != "stable" && status != "prerelease"', source)
         self.assertIn('minimum_plugin', source)
         self.assertIn('FileAccess::get_sha256', source)
         self.assertIn('catalog/templates.json', source)
@@ -161,8 +161,12 @@ class ProductToolTests(unittest.TestCase):
                     {
                         "godot_major": "godot4",
                         "godot_version": "4.5.2",
+                        "variant": "test",
+                        "display_name": "Test stable",
+                        "recommended": True,
                         "tag": "4.5.2-test-r1",
                         "file": "minigame4.5.2-r1.tpz",
+                        "download_url": "https://example.com/minigame4.5.2-r1.tpz",
                         "sha256": "1" * 64,
                         "minimum_plugin": "1.0.4",
                         "source_branch": "4.5",
@@ -180,16 +184,85 @@ class ProductToolTests(unittest.TestCase):
                 godot_version="4.5.2",
                 tag="4.5.2-test-r2",
                 file="minigame4.5.2-r2.tpz",
+                download_url="https://example.com/minigame4.5.2-r2.tpz",
                 sha256="2" * 64,
                 minimum_plugin="1.0.4",
                 source_branch="4.5",
                 source_commit="b" * 40,
                 status="stable",
+                display_name="Test stable r2",
+                recommended=True,
             )
             product.command_promote_template(args)
             promoted = product.load_json(catalog_path)["templates"][0]
             self.assertEqual(promoted["tag"], "4.5.2-test-r2")
             self.assertIn("tag: 4.5.2-test-r2", versions_path.read_text(encoding="utf-8"))
+
+    def test_template_variants_and_prereleases_coexist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            catalog_path = root / "templates.json"
+            versions_path = root / "versions.yaml"
+            catalog = {
+                "schema_version": 1,
+                "templates": [
+                    {
+                        "godot_major": "godot4",
+                        "godot_version": "4.5.2",
+                        "variant": "glx-2d-ad-noexc",
+                        "display_name": "GLX stable",
+                        "recommended": True,
+                        "tag": "4.5.2-glx-2d-ad-noexc-r8",
+                        "file": "minigame4.5.2-glx-2d-ad-noexc-r8.tpz",
+                        "download_url": "https://example.com/minigame4.5.2-glx-2d-ad-noexc-r8.tpz",
+                        "sha256": "1" * 64,
+                        "minimum_plugin": "1.0.4",
+                        "source_branch": "4.5",
+                        "source_commit": "a" * 40,
+                        "status": "stable",
+                    }
+                ],
+            }
+            catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+            versions_path.write_text(product.render_versions(catalog), encoding="utf-8")
+
+            prerelease = argparse.Namespace(
+                catalog=catalog_path,
+                versions=versions_path,
+                godot_major="godot4",
+                godot_version="4.5.2",
+                tag="4.5.2-webgl-2d-ad-noexc-r9",
+                file="minigame4.5.2-webgl-2d-ad-noexc-r9.tpz",
+                download_url="https://example.com/minigame4.5.2-webgl-2d-ad-noexc-r9.tpz",
+                sha256="2" * 64,
+                minimum_plugin="1.0.13",
+                source_branch="4.5",
+                source_commit="b" * 40,
+                status="prerelease",
+                display_name="WebGL2 prerelease",
+                recommended=False,
+            )
+            product.command_promote_template(prerelease)
+            entries = product.load_json(catalog_path)["templates"]
+            self.assertEqual(len(entries), 2)
+            self.assertIn("glx-2d-ad-noexc-r8", versions_path.read_text(encoding="utf-8"))
+
+            stable = argparse.Namespace(**{**vars(prerelease),
+                "tag": "4.5.2-webgl-2d-ad-noexc-r10",
+                "file": "minigame4.5.2-webgl-2d-ad-noexc-r10.tpz",
+                "download_url": "https://example.com/minigame4.5.2-webgl-2d-ad-noexc-r10.tpz",
+                "sha256": "3" * 64,
+                "source_commit": "c" * 40,
+                "status": "stable",
+                "display_name": "WebGL2 stable",
+                "recommended": True,
+            })
+            product.command_promote_template(stable)
+            entries = product.load_json(catalog_path)["templates"]
+            self.assertEqual(len(entries), 2)
+            self.assertFalse(next(item for item in entries if item["variant"].startswith("glx"))["recommended"])
+            self.assertTrue(next(item for item in entries if item["variant"].startswith("webgl"))["recommended"])
+            self.assertIn("webgl-2d-ad-noexc-r10", versions_path.read_text(encoding="utf-8"))
 
     def test_plugin_zip_has_installable_addon_prefix(self):
         version = product.load_json(ROOT / "plugin/plugin.json")["version"]

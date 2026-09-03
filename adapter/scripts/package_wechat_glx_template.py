@@ -37,7 +37,8 @@ EXCEPTIONS_ENABLED = "enabled"
 EXCEPTIONS_DISABLED = "disabled"
 VARIANT_GLX = "glx"
 VARIANT_WEBGL = "webgl"
-VARIANT_DEFAULT = VARIANT_GLX
+VARIANT_DEFAULT = VARIANT_WEBGL
+LOADER_VARIANT_MARKER = 'const ENGINE_VARIANT = "glx"; // GODOT_ENGINE_VARIANT'
 
 
 def resolve_template_dir(template: str) -> Path:
@@ -66,6 +67,7 @@ def base_arguments(variant: str) -> list[str]:
             "target=template_release",
             "threads=no",
             "wasm_simd=no",
+            "wechat_glx=no",
         ]
     raise ValueError(f"unknown variant: {variant!r}")
 
@@ -89,18 +91,25 @@ def artifact_prefix(profile_path: Path, exceptions: str, variant: str, ad: bool)
     return prefix
 
 
-def glx_exceptions_arguments(exceptions: str) -> list[str]:
-    """SCons arguments for the requested GLX exception mode."""
+def exception_arguments(exceptions: str, variant: str) -> list[str]:
+    """SCons arguments for the requested engine exception mode."""
     if exceptions == EXCEPTIONS_DISABLED:
-        return ["wechat_glx_exceptions=no"]
-    if exceptions == EXCEPTIONS_ENABLED:
-        return ["wechat_glx_exceptions=yes"]
-    raise ValueError(f"unknown exceptions mode: {exceptions!r}")
+        enabled = False
+    elif exceptions == EXCEPTIONS_ENABLED:
+        enabled = True
+    else:
+        raise ValueError(f"unknown exceptions mode: {exceptions!r}")
+
+    if variant == VARIANT_GLX:
+        return [f"wechat_glx_exceptions={'yes' if enabled else 'no'}"]
+    if variant == VARIANT_WEBGL:
+        return [f"disable_exceptions={'no' if enabled else 'yes'}"]
+    raise ValueError(f"unknown variant: {variant!r}")
 
 
 def build_command(profile_path: Path, exceptions: str, variant: str) -> str:
     return (
-        f"scons {' '.join([*base_arguments(variant), *glx_exceptions_arguments(exceptions)])} "
+        f"scons {' '.join([*base_arguments(variant), *exception_arguments(exceptions, variant)])} "
         f"profile={profile_path.relative_to(REPO_ROOT).as_posix()}"
     )
 
@@ -123,8 +132,9 @@ REQUIRED_CALLBACKS = {
     "evalBatchRenderSyncString",
     "evalBatchRenderArrayBuffer",
 }
-REQUIRED_RUNTIME_METHODS = {"ccall", "cwrap", "stringToUTF8", "lengthBytesUTF8"}
-FORBIDDEN_IMPORTS = {
+COMMON_RUNTIME_METHODS = {"cwrap"}
+GLX_RUNTIME_METHODS = {"ccall", "stringToUTF8", "lengthBytesUTF8"}
+STANDARD_WEBGL_IMPORTS = {
     "emscripten_glGenQueries",
     "emscripten_glDeleteQueries",
     "emscripten_webgl_commit_frame",
@@ -224,7 +234,7 @@ def read_profile_settings(path: Path) -> dict[str, bool]:
 def build_arguments(profile_path: Path, exceptions: str, variant: str) -> list[str]:
     return [
         *base_arguments(variant),
-        *glx_exceptions_arguments(exceptions),
+        *exception_arguments(exceptions, variant),
         f"profile={profile_path.resolve()}",
     ]
 
@@ -350,6 +360,18 @@ def verify_source() -> str:
             / "web"
             / "js"
             / "patches"
+            / "patch_standard_em_gl.js",
+            GODOT_DIR / "platform" / "web" / "js" / "patches" / "patch_standard_em_gl.js",
+        ),
+        (
+            REPO_ROOT
+            / "adapter"
+            / "sources"
+            / "optional"
+            / "platform"
+            / "web"
+            / "js"
+            / "patches"
             / "patch_em_gl.js",
             GODOT_DIR / "platform" / "web" / "js" / "patches" / "patch_em_gl.js",
         ),
@@ -441,6 +463,24 @@ def verify_build_environment(profile_settings: dict[str, bool], exceptions: str,
         missing_flags = sorted(required_flags - flags)
         if missing_flags:
             raise RuntimeError(f"missing GLX link flags: {', '.join(missing_flags)}")
+    else:
+        required_flags = {
+            "-sOFFSCREEN_FRAMEBUFFER=1",
+            "-sSUPPORT_LONGJMP='wasm'",
+        }
+        missing_flags = sorted(required_flags - flags)
+        if missing_flags:
+            raise RuntimeError(f"missing standard WebGL link flags: {', '.join(missing_flags)}")
+        forbidden_flags = {
+            "-sCHECK_NULL_WRITES=0",
+            "-sERROR_ON_UNDEFINED_SYMBOLS=0",
+            "-sSUPPORT_LONGJMP='emscripten'",
+        }
+        unexpected_flags = sorted(forbidden_flags & flags)
+        if unexpected_flags:
+            raise RuntimeError(
+                f"GLX-only link flags leaked into WebGL build: {', '.join(unexpected_flags)}"
+            )
 
     cxxflags = build_env.get("CXXFLAGS", [])
     if variant == VARIANT_GLX:
@@ -456,11 +496,26 @@ def verify_build_environment(profile_settings: dict[str, bool], exceptions: str,
                 raise RuntimeError("GLX build with exceptions disabled is missing -fexceptions in LINKFLAGS")
 
     methods = set(build_env.get("EXPORTED_RUNTIME_METHODS", []))
-    missing_methods = sorted(REQUIRED_RUNTIME_METHODS - methods)
+    required_methods = COMMON_RUNTIME_METHODS | (
+        GLX_RUNTIME_METHODS if variant == VARIANT_GLX else set()
+    )
+    missing_methods = sorted(required_methods - methods)
     if missing_methods:
         raise RuntimeError(f"missing Emscripten runtime methods: {', '.join(missing_methods)}")
-    if variant == VARIANT_GLX and "#thirdparty/wechat-glx" not in build_env.get("LIBPATH", []):
-        raise RuntimeError("GLX static library path is missing from the SCons environment")
+
+    lib_paths = {str(path) for path in build_env.get("LIBPATH", [])}
+    libraries = {str(library) for library in build_env.get("LIBS", [])}
+    definitions = json.dumps(build_env.get("CPPDEFINES", []), ensure_ascii=True)
+    if variant == VARIANT_GLX:
+        if "#thirdparty/wechat-glx" not in lib_paths or "emscriptenglx" not in libraries:
+            raise RuntimeError("GLX static library is missing from the SCons environment")
+        if "WECHAT_GLX_EXPERIMENTAL" not in definitions:
+            raise RuntimeError("GLX preprocessor definition is missing from the SCons environment")
+    else:
+        if "#thirdparty/wechat-glx" in lib_paths or "emscriptenglx" in libraries:
+            raise RuntimeError("GLX static library leaked into the WebGL build")
+        if "WECHAT_GLX_EXPERIMENTAL" in definitions:
+            raise RuntimeError("GLX preprocessor definition leaked into the WebGL build")
 
     profile_mismatches = {
         name: (build_env.get(name), expected)
@@ -493,26 +548,47 @@ console.log(JSON.stringify({
     return json.loads(run(["node", "-e", script, str(compressed_wasm)]))
 
 
-def verify_engine(engine_js: Path, compressed_wasm: Path, raw_wasm: Path) -> dict[str, object]:
+def verify_engine(
+    engine_js: Path,
+    compressed_wasm: Path,
+    raw_wasm: Path,
+    variant: str,
+) -> dict[str, object]:
     run(["node", "--check", str(engine_js)])
 
     content = engine_js.read_text(encoding="utf-8")
-    exact_fragments = {
+    glx_fragments = {
         "GLX runtime bridge": "function wxGLXGetNativeExport",
         "frame callback wrapper": "registerAfterDoFrame(function(){return Module._glxCommandBufferFlush();})",
+        "pinned context selection": "__godotMinigameWXGLXEnabled",
     }
-    for label, fragment in exact_fragments.items():
-        if content.count(fragment) != 1:
+    for label, fragment in glx_fragments.items():
+        count = content.count(fragment)
+        if variant == VARIANT_GLX and count != 1:
             raise RuntimeError(f"{label} must occur exactly once in generated godot.js")
-    if "__godotMinigameWXGLXEnabled" not in content:
-        raise RuntimeError("generated godot.js is missing pinned context selection")
+        if variant == VARIANT_WEBGL and count:
+            raise RuntimeError(f"generated WebGL godot.js contains {label}")
 
-    for method in REQUIRED_RUNTIME_METHODS:
+    runtime_methods = COMMON_RUNTIME_METHODS | (
+        GLX_RUNTIME_METHODS if variant == VARIANT_GLX else set()
+    )
+    for method in runtime_methods:
         if f'Module["{method}"]' not in content:
             raise RuntimeError(f"generated godot.js does not expose runtime method: {method}")
-    for export_name in REQUIRED_EXPORTS:
-        if f'Module["_{export_name}"]' not in content:
-            raise RuntimeError(f"generated godot.js does not bind GLX export: {export_name}")
+    if variant == VARIANT_GLX:
+        for export_name in REQUIRED_EXPORTS:
+            if f'Module["_{export_name}"]' not in content:
+                raise RuntimeError(f"generated godot.js does not bind GLX export: {export_name}")
+    else:
+        leaked_methods = sorted(
+            method for method in GLX_RUNTIME_METHODS if f'Module["{method}"]' in content
+        )
+        leaked_exports = sorted(
+            name for name in REQUIRED_EXPORTS if f'Module["_{name}"]' in content
+        )
+        if leaked_methods or leaked_exports:
+            names = leaked_methods + leaked_exports
+            raise RuntimeError(f"GLX symbols leaked into generated WebGL JS: {', '.join(names)}")
 
     forbidden_fragments = {
         "diagnostic injection": "WXGLX-DIAG",
@@ -535,17 +611,29 @@ def verify_engine(engine_js: Path, compressed_wasm: Path, raw_wasm: Path) -> dic
     exports = set(wasm["exports"])
     missing_exports = sorted(REQUIRED_EXPORTS - exports)
     missing_callbacks = sorted(REQUIRED_CALLBACKS - imports)
-    forbidden_imports = sorted(FORBIDDEN_IMPORTS & imports)
+    standard_imports = sorted(STANDARD_WEBGL_IMPORTS & imports)
     query_imports = sorted(
         name for name in imports if name.startswith("emscripten_gl") and "quer" in name.lower()
     )
-    if missing_exports:
-        raise RuntimeError(f"missing GLX exports: {', '.join(missing_exports)}")
-    if missing_callbacks:
-        raise RuntimeError(f"missing GLX callbacks: {', '.join(missing_callbacks)}")
-    if forbidden_imports or query_imports:
-        names = sorted(set(forbidden_imports + query_imports))
-        raise RuntimeError(f"forbidden GLX imports remain: {', '.join(names)}")
+    if variant == VARIANT_GLX:
+        if missing_exports:
+            raise RuntimeError(f"missing GLX exports: {', '.join(missing_exports)}")
+        if missing_callbacks:
+            raise RuntimeError(f"missing GLX callbacks: {', '.join(missing_callbacks)}")
+        if standard_imports or query_imports:
+            names = sorted(set(standard_imports + query_imports))
+            raise RuntimeError(f"forbidden GLX imports remain: {', '.join(names)}")
+    else:
+        leaked_exports = sorted(REQUIRED_EXPORTS & exports)
+        leaked_callbacks = sorted(REQUIRED_CALLBACKS & imports)
+        missing_standard_imports = sorted(STANDARD_WEBGL_IMPORTS - imports)
+        if leaked_exports or leaked_callbacks:
+            names = leaked_exports + leaked_callbacks
+            raise RuntimeError(f"GLX WASM ABI leaked into WebGL build: {', '.join(names)}")
+        if missing_standard_imports:
+            raise RuntimeError(
+                "standard WebGL imports are missing: " + ", ".join(missing_standard_imports)
+            )
     if wasm["sha256"] != sha256(raw_wasm):
         raise RuntimeError("godot.wasm.br does not decompress to the current godot.wasm")
 
@@ -584,18 +672,25 @@ def build_info(
 - `engine/game.js`: `{sha256(ad_entry).upper()}`
 - `engine/wx-ad-bridge.js`: `{sha256(ad_bridge).upper()}`
 """
+    if variant == VARIANT_GLX:
+        engine_details = f"""- Engine renderer: `WeChat EmscriptenGLX 0.1.11`
+- GLX exceptions: `{exceptions}`
+- GLX alignment source: `citizenll/godot@{GLX_ALIGNMENT}` backported to Godot 4.5.2
+"""
+    else:
+        engine_details = f"""- Engine renderer: `standard WebGL2`
+- C++ exceptions: `{exceptions}`
+"""
     return f"""# Build Information
 
 - Godot: `4.5.2-stable` (`{GODOT_BASE}`)
 - Godot Fork commit: `{godot_commit}`
 - Adapter commit: `{adapter_commit}`
 - Variant: `{artifact_variant}`
-- GLX exceptions: `{exceptions}`
+{engine_details.rstrip()}
 - Ad merged: `{str(ad).lower()}`
 - Artifact revision: `r{revision}`
-- GLX alignment source: `citizenll/godot@{GLX_ALIGNMENT}` backported to Godot 4.5.2
 - Emscripten: `4.0.10` (`{emcc_version}`)
-- WeChat EmscriptenGLX: `0.1.11`
 - Build command: `{command}`
 - Build profile: `{profile_path.relative_to(REPO_ROOT).as_posix()}`
 - Build profile SHA-256 (LF normalized): `{profile_sha256.upper()}`
@@ -695,6 +790,17 @@ def atomic_write(content: bytes, destination: Path) -> None:
         pending.unlink(missing_ok=True)
 
 
+def render_runtime_loader(loader: Path, variant: str) -> bytes:
+    source = normalized_lf(loader).decode("utf-8")
+    if source.count(LOADER_VARIANT_MARKER) != 1:
+        raise RuntimeError("godot-loader.js must contain exactly one engine variant marker")
+    rendered_marker = f'const ENGINE_VARIANT = "{variant}"; // GODOT_ENGINE_VARIANT'
+    rendered = source.replace(LOADER_VARIANT_MARKER, rendered_marker)
+    if rendered.count(rendered_marker) != 1:
+        raise RuntimeError("failed to render godot-loader.js engine variant")
+    return rendered.encode("utf-8")
+
+
 def package_template(
     godot_commit: str,
     adapter_commit: str,
@@ -739,14 +845,15 @@ def package_template(
             "filename": archive_path.name,
         },
         "source": profile_path.relative_to(REPO_ROOT).as_posix(),
-        "glx_exceptions": exceptions,
+        "engine_variant": variant,
+        "exceptions": exceptions,
         "ad_merged": ad,
         "sha256_lf_normalized": profile_sha256,
         "adapter_commit": adapter_commit,
         "godot_commit": godot_commit,
         "build_arguments": [
             *base_arguments(variant),
-            *glx_exceptions_arguments(exceptions),
+            *exception_arguments(exceptions, variant),
             f"profile={profile_path.relative_to(REPO_ROOT).as_posix()}",
         ],
         "verified_against": "adapter/thirdparty/godot/.scons_env.json",
@@ -767,7 +874,7 @@ def package_template(
         stage_sdk = stage / "engine" / "godot-sdk.js"
         shutil.copyfile(build_js, stage_js)
         shutil.copyfile(build_wasm_br, stage_wasm_br)
-        stage_loader.write_bytes(normalized_lf(runtime_loader))
+        stage_loader.write_bytes(render_runtime_loader(runtime_loader, variant))
         stage_sdk.write_bytes(normalized_lf(runtime_sdk))
 
         if ad:
@@ -845,7 +952,7 @@ def positive_int(value: str) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Clean-build, validate, and package the Godot 4.5.2 WeChat GLX template."
+        description="Clean-build, validate, and package a Godot 4.5.2 WeChat template."
     )
     parser.add_argument(
         "--scons",
@@ -871,8 +978,8 @@ def parse_args() -> argparse.Namespace:
         choices=[VARIANT_GLX, VARIANT_WEBGL],
         default=VARIANT_DEFAULT,
         help=(
-            "Engine variant: glx (WeChat EmscriptenGLX, default) or webgl "
-            "(standard WebGL; loader for webgl is not provided yet)."
+            "Engine variant: webgl (standard WebGL2, default) or glx "
+            "(WeChat EmscriptenGLX)."
         ),
     )
     parser.add_argument(
@@ -939,11 +1046,6 @@ def main() -> int:
     if not template_dir.is_dir():
         raise RuntimeError(f"template base directory is missing: {template_dir}")
     out_dir = Path(args.out).resolve()
-    if args.variant == VARIANT_WEBGL:
-        raise RuntimeError(
-            "webgl variant is not supported yet: the non-GLX runtime loader is not provided"
-        )
-
     godot_commit = verify_source()
     adapter_commit = run(["git", "rev-parse", "HEAD"])
     emcc_version, brotli_version = verify_tool_versions()
@@ -959,7 +1061,7 @@ def main() -> int:
     build_wasm_br = BUILD_DIR / "godot.wasm.br"
     for path in (build_js, build_wasm, build_wasm_br):
         require_file(path)
-    wasm = verify_engine(build_js, build_wasm_br, build_wasm)
+    wasm = verify_engine(build_js, build_wasm_br, build_wasm, args.variant)
 
     archive_path = package_template(
         godot_commit,
@@ -982,7 +1084,7 @@ def main() -> int:
     print(f"WASM: {build_wasm.stat().st_size} bytes")
     print(f"WASM Brotli: {build_wasm_br.stat().st_size} bytes")
     print(f"Profile settings verified: {len(profile_settings)}")
-    print(f"GLX exceptions: {args.exceptions}")
+    print(f"C++ exceptions: {args.exceptions}")
     stem = f"{artifact_prefix(profile_path, args.exceptions, args.variant, args.ad)}-r{args.revision}"
     print(f"Files: {sum(1 for path in (out_dir / stem).rglob('*') if path.is_file())}")
     return 0

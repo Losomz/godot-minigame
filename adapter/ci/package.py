@@ -42,7 +42,7 @@ def list_templates() -> None:
         print(f"  {short:<14} -> {path.relative_to(REPO_ROOT).as_posix()}")
 
     print("\n变体维度:")
-    print("  --variant     glx | webgl（默认 glx；webgl 运行壳暂未提供）")
+    print("  --variant     webgl | glx（默认 webgl）")
     print("  --exceptions  enabled | disabled（默认 enabled；disabled 省 ~1.14 MiB）")
     print("  --ad          融合微信广告组件（adapter/wechat_ad）")
 
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--list", action="store_true", help="列出可用模板与裁切模板")
     parser.add_argument("--template", default="4.5.2", help="模板基底 id（adapter/templates/manifest.json）")
-    parser.add_argument("--variant", default="glx", choices=["glx", "webgl"], help="引擎变体（默认 glx）")
+    parser.add_argument("--variant", default="webgl", choices=["glx", "webgl"], help="引擎变体（默认 webgl）")
     parser.add_argument("--profile", default=None,
                         help="裁切模板：简名（如 2d）或 .py 文件路径；默认取模板登记表的 default_profile")
     parser.add_argument("--exceptions", default="enabled", choices=["enabled", "disabled"])

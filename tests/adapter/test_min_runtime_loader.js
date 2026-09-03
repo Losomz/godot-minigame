@@ -3,6 +3,17 @@ const fs = require("fs");
 const vm = require("vm");
 
 const loaderPath = process.argv[2] || "adapter/assets/min-runtime/godot-loader.js";
+const loaderSource = fs.readFileSync(loaderPath, "utf8");
+const variantMarker = 'const ENGINE_VARIANT = "glx"; // GODOT_ENGINE_VARIANT';
+
+assert.strictEqual(loaderSource.split(variantMarker).length - 1, 1);
+
+function renderLoader(variant) {
+	return loaderSource.replace(
+		variantMarker,
+		`const ENGINE_VARIANT = "${variant}"; // GODOT_ENGINE_VARIANT`
+	);
+}
 
 function create2DContext() {
 	return {
@@ -74,7 +85,7 @@ function createWebGLContext(canvas) {
 	};
 }
 
-function createHarness({ disabled = false, supported = true } = {}) {
+function createHarness({ disabled = false, supported = true, variant = "glx" } = {}) {
 	const gameGlobal = {};
 	if (disabled) {
 		gameGlobal.__GODOT_DISABLE_WXGLX = true;
@@ -122,7 +133,7 @@ function createHarness({ disabled = false, supported = true } = {}) {
 	};
 
 	vm.createContext(context);
-	vm.runInContext(fs.readFileSync(loaderPath, "utf8"), context);
+	vm.runInContext(renderLoader(variant), context);
 	new context.GameGlobal.GodotLoader(screenCanvas, {
 		barConfig: {
 			style: {
@@ -168,4 +179,11 @@ function createHarness({ disabled = false, supported = true } = {}) {
 	assert.strictEqual(harness.gameGlobal.__godotMinigameWXGLXEnabled, false);
 }
 
-console.log("Minigame loader GLX context selection tests passed");
+{
+	const harness = createHarness({ variant: "webgl" });
+	assert.deepStrictEqual(harness.contextRequests, ["webgl2"]);
+	assert.strictEqual(harness.gameGlobal.__godotMinigameWXGLXEnabled, false);
+	assert.strictEqual(harness.gameGlobal.__godotMinigameEngineVariant, "webgl");
+}
+
+console.log("Minigame loader variant context selection tests passed");

@@ -4,6 +4,9 @@
     {
       "godot_major": "godot4",
       "godot_version": "4.5.2",
+      "variant": "glx-2d-ad-noexc",
+      "display_name": "Godot 4.5.2 · GLX（2D/广告/无异常表）",
+      "recommended": true,
       "tag": "4.5.2-glx-2d-ad-noexc-r8",
       "file": "minigame4.5.2-glx-2d-ad-noexc-r8.tpz",
       "download_url": "https://github.com/Losomz/godot-minigame/releases/download/4.5.2-glx-2d-ad-noexc-r8/minigame4.5.2-glx-2d-ad-noexc-r8.tpz",

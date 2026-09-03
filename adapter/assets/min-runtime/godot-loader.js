@@ -3,6 +3,7 @@
     const windowObject = root.window || root;
     const gameGlobal = root.GameGlobal || (root.GameGlobal = {});
     const wxApi = root.wx;
+    const ENGINE_VARIANT = "glx"; // GODOT_ENGINE_VARIANT
 
     class GodotLoader {
         constructor(onScreenCanvas, config) {
@@ -101,11 +102,13 @@
             };
 
             const useWXGLX =
+                ENGINE_VARIANT === "glx" &&
                 gameGlobal.__GODOT_DISABLE_WXGLX !== true &&
                 !!wxApi &&
                 !!wxApi.env &&
                 !!wxApi.env.isSupportEmscriptenGLX;
             gameGlobal.__godotMinigameWXGLXEnabled = useWXGLX;
+            gameGlobal.__godotMinigameEngineVariant = ENGINE_VARIANT;
             const contextType = useWXGLX ? "wxwebgl2" : "webgl2";
             this.gl = this.onScreenCanvas.getContext(contextType, attrs);
             if (!this.gl) {
